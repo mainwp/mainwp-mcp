@@ -169,6 +169,14 @@ Your credentials are invalid. Make sure you're using a valid WordPress Applicati
 
 For local development with self-signed certificates, set `MAINWP_SKIP_SSL_VERIFY=true`.
 
+> **Security Warning:** Setting `MAINWP_SKIP_SSL_VERIFY=true` disables SSL certificate verification, making your connection vulnerable to man-in-the-middle (MITM) attacks. Attackers on your network could intercept credentials and API responses.
+>
+> **Only use this setting for:**
+> - Local development with self-signed certificates
+> - Isolated test environments
+>
+> **Never use in production** or on untrusted networks.
+
 ### "Ability not found"
 
 The ability may not be registered or may have `show_in_rest` set to false. Check your MainWP Dashboard has the Abilities API plugin installed and abilities are enabled.

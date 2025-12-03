@@ -51,6 +51,19 @@ export function loadConfig(): Config {
   // Normalize URL (remove trailing slash)
   const normalizedUrl = dashboardUrl.replace(/\/+$/, '');
 
+  // Validate URL format
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(normalizedUrl);
+  } catch {
+    throw new Error(`Invalid MAINWP_URL: "${dashboardUrl}" is not a valid URL`);
+  }
+
+  // Warn if using insecure HTTP
+  if (parsedUrl.protocol === 'http:') {
+    console.error('WARNING: MAINWP_URL uses HTTP - credentials will be transmitted in plain text');
+  }
+
   // Prefer basic auth (Application Password) as it works with Abilities API
   if (hasBasicAuth) {
     return {

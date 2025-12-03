@@ -199,8 +199,10 @@ async function main(): Promise<void> {
 
     console.error(`MainWP MCP Server v${SERVER_VERSION}`);
     console.error(`Dashboard: ${config.dashboardUrl}`);
-    console.error(`Auth: ${config.authType === 'basic' ? `Basic (${config.username})` : 'Bearer Token'}`);
-    console.error(`SSL Verify: ${!config.skipSslVerify}`);
+    console.error(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
+    if (config.skipSslVerify) {
+      console.error('WARNING: SSL verification disabled - connection vulnerable to MITM attacks');
+    }
 
     // Pre-fetch abilities to validate connection
     try {
