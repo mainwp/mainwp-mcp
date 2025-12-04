@@ -28,12 +28,14 @@ npm run build
 
 The server requires these environment variables:
 
-| Variable | Description |
-|----------|-------------|
-| `MAINWP_URL` | Base URL of your MainWP Dashboard (e.g., `https://dashboard.example.com`) |
-| `MAINWP_USER` | WordPress admin username |
-| `MAINWP_APP_PASSWORD` | WordPress Application Password (see below) |
-| `MAINWP_SKIP_SSL_VERIFY` | Set to `true` to skip SSL verification (for local dev with self-signed certs) |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAINWP_URL` | (required) | Base URL of your MainWP Dashboard (e.g., `https://dashboard.example.com`) |
+| `MAINWP_USER` | (required) | WordPress admin username |
+| `MAINWP_APP_PASSWORD` | (required) | WordPress Application Password (see below) |
+| `MAINWP_SKIP_SSL_VERIFY` | `false` | Set to `true` to skip SSL verification (for local dev with self-signed certs) |
+| `MAINWP_ALLOW_HTTP` | `false` | Set to `true` to allow HTTP URLs (insecure, not recommended) |
+| `MAINWP_RATE_LIMIT` | `60` | Max API requests per minute (0 = disabled) |
 
 ### Creating a WordPress Application Password
 
@@ -154,6 +156,28 @@ npm run build
 # Run production build
 npm start
 ```
+
+## Security Considerations
+
+**This server is designed for local installation only.** It should run on your local machine alongside your AI assistant (e.g., Claude Code).
+
+### Why Local Only?
+
+- **Credential Storage:** Your WordPress credentials are stored in local environment variables or MCP configuration files on your machine
+- **Stdio Transport:** The server communicates via stdin/stdout with the local AI client—there is no HTTP server exposed
+- **Direct API Access:** The server makes authenticated requests directly to your MainWP Dashboard
+
+### Do Not:
+
+- Deploy this server on a shared or public server
+- Expose this server over a network
+- Store credentials in version control or shared configuration
+
+### Credential Security
+
+- Use WordPress Application Passwords (not your main password)
+- Application Passwords can be revoked individually without changing your main password
+- Consider creating a dedicated WordPress user with limited permissions for API access
 
 ## Troubleshooting
 

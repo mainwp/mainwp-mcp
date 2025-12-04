@@ -22,6 +22,10 @@ export interface Config {
   apiToken?: string;
   /** Whether to skip SSL verification (for local dev with self-signed certs) */
   skipSslVerify: boolean;
+  /** Whether HTTP URLs are explicitly allowed (insecure) */
+  allowHttp: boolean;
+  /** Rate limit: max API requests per minute (0 = disabled) */
+  rateLimit: number;
 }
 
 /**
@@ -33,6 +37,14 @@ export function loadConfig(): Config {
   const appPassword = process.env.MAINWP_APP_PASSWORD;
   const apiToken = process.env.MAINWP_TOKEN;
   const skipSslVerify = process.env.MAINWP_SKIP_SSL_VERIFY === 'true';
+  const allowHttp = process.env.MAINWP_ALLOW_HTTP === 'true';
+
+  // Parse rate limit (default: 60 requests/minute)
+  const rateLimitStr = process.env.MAINWP_RATE_LIMIT ?? '60';
+  const rateLimit = parseInt(rateLimitStr, 10);
+  if (isNaN(rateLimit) || rateLimit < 0) {
+    throw new Error('MAINWP_RATE_LIMIT must be a non-negative integer');
+  }
 
   if (!dashboardUrl) {
     throw new Error('MAINWP_URL environment variable is required');
@@ -59,8 +71,14 @@ export function loadConfig(): Config {
     throw new Error(`Invalid MAINWP_URL: "${dashboardUrl}" is not a valid URL`);
   }
 
-  // Warn if using insecure HTTP
+  // Block HTTP by default (insecure credential transmission)
   if (parsedUrl.protocol === 'http:') {
+    if (!allowHttp) {
+      throw new Error(
+        'MAINWP_URL uses HTTP which transmits credentials in plain text. ' +
+        'Use HTTPS, or set MAINWP_ALLOW_HTTP=true to allow insecure connections (not recommended).'
+      );
+    }
     console.error('WARNING: MAINWP_URL uses HTTP - credentials will be transmitted in plain text');
   }
 
@@ -72,6 +90,8 @@ export function loadConfig(): Config {
       username,
       appPassword,
       skipSslVerify,
+      allowHttp,
+      rateLimit,
     };
   }
 
@@ -80,6 +100,8 @@ export function loadConfig(): Config {
     authType: 'bearer',
     apiToken,
     skipSslVerify,
+    allowHttp,
+    rateLimit,
   };
 }
 

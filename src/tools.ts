@@ -8,6 +8,15 @@
 import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { Ability, fetchAbilities, executeAbility } from './abilities.js';
 import { Config } from './config.js';
+import { validateInput, sanitizeError } from './security.js';
+
+/**
+ * Options for tool execution
+ */
+export interface ExecuteToolOptions {
+  /** AbortSignal for cancellation support */
+  signal?: AbortSignal;
+}
 
 /**
  * Convert an Ability's JSON Schema to MCP tool input schema format
@@ -100,11 +109,25 @@ function toolNameToAbilityName(toolName: string): string {
 export async function executeTool(
   config: Config,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options?: ExecuteToolOptions
 ): Promise<TextContent[]> {
   try {
+    // Check for cancellation before starting
+    if (options?.signal?.aborted) {
+      throw new Error('Operation cancelled');
+    }
+
+    // Validate input before forwarding to API
+    validateInput(args);
+
     const abilityName = toolNameToAbilityName(toolName);
     const result = await executeAbility(config, abilityName, args);
+
+    // Check for cancellation after execution
+    if (options?.signal?.aborted) {
+      throw new Error('Operation cancelled');
+    }
 
     // Format the result as JSON for the AI to parse
     const formattedResult = JSON.stringify(result, null, 2);
@@ -122,7 +145,7 @@ export async function executeTool(
         type: 'text',
         text: JSON.stringify({
           error: true,
-          message: errorMessage,
+          message: sanitizeError(errorMessage),
         }, null, 2),
       },
     ];

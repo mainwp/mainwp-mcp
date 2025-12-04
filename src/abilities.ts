@@ -6,7 +6,21 @@
  */
 
 import { Config, getAbilitiesApiUrl, getAuthHeaders } from './config.js';
+import { RateLimiter, sanitizeError } from './security.js';
 import https from 'https';
+
+/**
+ * Rate limiter instance (initialized via initRateLimiter)
+ */
+let rateLimiter: RateLimiter | null = null;
+
+/**
+ * Initialize the rate limiter with the configured requests per minute.
+ * Called once at startup from index.ts.
+ */
+export function initRateLimiter(requestsPerMinute: number): void {
+  rateLimiter = new RateLimiter(requestsPerMinute);
+}
 
 /**
  * Ability annotation metadata
@@ -50,6 +64,32 @@ let cachedAbilities: Ability[] | null = null;
 let cachedCategories: Category[] | null = null;
 let cacheTimestamp: number = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Cache refresh callbacks
+ */
+type CacheRefreshCallback = () => void;
+const cacheRefreshCallbacks: CacheRefreshCallback[] = [];
+
+/**
+ * Register a callback to be called when the abilities cache is refreshed
+ */
+export function onCacheRefresh(callback: CacheRefreshCallback): void {
+  cacheRefreshCallbacks.push(callback);
+}
+
+/**
+ * Notify all registered callbacks that the cache was refreshed
+ */
+function notifyCacheRefresh(): void {
+  for (const callback of cacheRefreshCallbacks) {
+    try {
+      callback();
+    } catch {
+      // Ignore callback errors
+    }
+  }
+}
 
 /**
  * Create a fetch function that handles SSL verification
@@ -97,14 +137,26 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch abilities: ${response.status} ${response.statusText} - ${errorText}`);
+      throw new Error(`Failed to fetch abilities: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`);
     }
 
     const abilities = await response.json() as Ability[];
 
     // Filter to only MainWP abilities (mainwp/* namespace)
-    cachedAbilities = abilities.filter(a => a.name.startsWith('mainwp/'));
+    const newAbilities = abilities.filter(a => a.name.startsWith('mainwp/'));
+
+    // Check if abilities have changed (compare names)
+    const oldNames = cachedAbilities?.map(a => a.name).sort().join(',') ?? '';
+    const newNames = newAbilities.map(a => a.name).sort().join(',');
+    const hasChanged = oldNames !== newNames;
+
+    cachedAbilities = newAbilities;
     cacheTimestamp = Date.now();
+
+    // Notify callbacks if abilities changed
+    if (hasChanged && oldNames !== '') {
+      notifyCacheRefresh();
+    }
 
     return cachedAbilities;
   } catch (error) {
@@ -134,7 +186,7 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch categories: ${response.status} ${response.statusText} - ${errorText}`);
+      throw new Error(`Failed to fetch categories: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`);
     }
 
     const categories = await response.json() as Category[];
@@ -196,6 +248,11 @@ export async function executeAbility(
   abilityName: string,
   input?: Record<string, unknown>
 ): Promise<unknown> {
+  // Apply rate limiting
+  if (rateLimiter) {
+    await rateLimiter.acquire();
+  }
+
   const baseUrl = getAbilitiesApiUrl(config);
   const customFetch = createFetch(config);
 
@@ -225,8 +282,10 @@ export async function executeAbility(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ message: response.statusText }));
+    const errorCode = (errorData as { code?: string }).code || String(response.status);
+    const errorMsg = (errorData as { message?: string }).message || response.statusText;
     throw new Error(
-      `Ability execution failed: ${(errorData as { code?: string }).code || response.status} - ${(errorData as { message?: string }).message || response.statusText}`
+      `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}`
     );
   }
 
