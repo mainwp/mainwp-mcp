@@ -142,8 +142,13 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
 
     const abilities = await response.json() as Ability[];
 
-    // Filter to only MainWP abilities (mainwp/* namespace)
-    const newAbilities = abilities.filter(a => a.name.startsWith('mainwp/'));
+    // Filter abilities by namespace (empty namespace = all abilities)
+    const namespaceFilter = config.abilityNamespace
+      ? `${config.abilityNamespace}/`
+      : '';
+    const newAbilities = namespaceFilter
+      ? abilities.filter(a => a.name.startsWith(namespaceFilter))
+      : abilities;
 
     // Check if abilities have changed (compare names)
     const oldNames = cachedAbilities?.map(a => a.name).sort().join(',') ?? '';
@@ -191,8 +196,13 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
 
     const categories = await response.json() as Category[];
 
-    // Filter to only MainWP categories
-    cachedCategories = categories.filter(c => c.slug.startsWith('mainwp-'));
+    // Filter categories by namespace (empty namespace = all categories)
+    const categoryFilter = config.abilityNamespace
+      ? `${config.abilityNamespace}-`
+      : '';
+    cachedCategories = categoryFilter
+      ? categories.filter(c => c.slug.startsWith(categoryFilter))
+      : categories;
     cacheTimestamp = Date.now();
 
     return cachedCategories;

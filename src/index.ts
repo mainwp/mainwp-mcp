@@ -32,6 +32,7 @@ import { fetchAbilities, fetchCategories, clearCache, onCacheRefresh, executeAbi
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId } from './security.js';
+import { formatErrorResponse, McpErrorFactory } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
@@ -52,12 +53,15 @@ function validateResourceUri(uri: string): { type: string; params?: Record<strin
   if (siteMatch) {
     const siteId = parseInt(siteMatch[1], 10);
     if (siteId < 1 || siteId > Number.MAX_SAFE_INTEGER) {
-      throw new Error('Invalid site ID: must be between 1 and ' + Number.MAX_SAFE_INTEGER);
+      throw McpErrorFactory.invalidParams(
+        'Invalid site ID: must be between 1 and ' + Number.MAX_SAFE_INTEGER,
+        { uri, siteId }
+      );
     }
     return { type: 'site', params: { site_id: siteId } };
   }
 
-  throw new Error(`Unknown resource URI: ${uri}`);
+  throw McpErrorFactory.resourceNotFound(uri);
 }
 
 /**
@@ -108,12 +112,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       );
       return { content };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ error: true, message: sanitizeError(errorMessage) }, null, 2),
+            text: formatErrorResponse(error, sanitizeError),
           },
         ],
         isError: true,
@@ -232,13 +235,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       // If we get here, the URI was valid but not handled by the code above
       throw new Error(`Unhandled resource type: ${parsed.type}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         contents: [
           {
             uri,
             mimeType: 'application/json',
-            text: JSON.stringify({ error: true, message: sanitizeError(errorMessage) }, null, 2),
+            text: formatErrorResponse(error, sanitizeError),
           },
         ],
       };
@@ -358,6 +360,7 @@ async function main(): Promise<void> {
     startupLogger.info(`MainWP MCP Server v${SERVER_VERSION}`);
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
+    startupLogger.info(`Namespace: ${config.abilityNamespace ? config.abilityNamespace + '/*' : '(all abilities)'}`);
     if (config.skipSslVerify) {
       startupLogger.error('╔══════════════════════════════════════════════════════════════╗');
       startupLogger.error('║  WARNING: SSL verification disabled                          ║');

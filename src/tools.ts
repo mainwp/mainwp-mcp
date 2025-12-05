@@ -9,6 +9,7 @@ import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { Ability, fetchAbilities, executeAbility } from './abilities.js';
 import { Config } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
+import { McpErrorFactory, formatErrorResponse } from './errors.js';
 
 /**
  * Options for tool execution
@@ -95,7 +96,10 @@ function toolNameToAbilityName(toolName: string): string {
   // First underscore becomes slash, rest become hyphens
   const parts = toolName.split('_');
   if (parts.length < 2) {
-    throw new Error(`Invalid tool name format: ${toolName}`);
+    throw McpErrorFactory.invalidParams(
+      `Invalid tool name format: ${toolName}`,
+      { tool: toolName }
+    );
   }
 
   const namespace = parts[0];
@@ -115,7 +119,7 @@ export async function executeTool(
   try {
     // Check for cancellation before starting
     if (options?.signal?.aborted) {
-      throw new Error('Operation cancelled');
+      throw McpErrorFactory.cancelled();
     }
 
     // Validate input before forwarding to API
@@ -126,7 +130,7 @@ export async function executeTool(
 
     // Check for cancellation after execution
     if (options?.signal?.aborted) {
-      throw new Error('Operation cancelled');
+      throw McpErrorFactory.cancelled();
     }
 
     // Format the result as JSON for the AI to parse
@@ -139,14 +143,11 @@ export async function executeTool(
       },
     ];
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    // Use standardized error format with code
     return [
       {
         type: 'text',
-        text: JSON.stringify({
-          error: true,
-          message: sanitizeError(errorMessage),
-        }, null, 2),
+        text: formatErrorResponse(error, sanitizeError),
       },
     ];
   }

@@ -5,15 +5,21 @@
  * and rate limiting.
  */
 
+import { McpErrorFactory } from './errors.js';
+
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
+ * Throws McpError with INVALID_PARAMS code on validation failure.
  */
 export function validateInput(args: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(args)) {
     // String length check
     if (typeof value === 'string' && value.length > 10000) {
-      throw new Error(`Parameter "${key}" exceeds maximum length`);
+      throw McpErrorFactory.invalidParams(
+        `Parameter "${key}" exceeds maximum length (10000 characters)`,
+        { parameter: key, maxLength: 10000 }
+      );
     }
 
     // ID fields: accept number or numeric string, must be positive integer
@@ -21,7 +27,10 @@ export function validateInput(args: Record<string, unknown>): void {
       const numValue = typeof value === 'string' ? parseInt(value, 10) : value;
       if (typeof numValue === 'number') {
         if (!Number.isInteger(numValue) || numValue < 1 || numValue > Number.MAX_SAFE_INTEGER) {
-          throw new Error(`Parameter "${key}" must be a positive integer`);
+          throw McpErrorFactory.invalidParams(
+            `Parameter "${key}" must be a positive integer`,
+            { parameter: key }
+          );
         }
       }
     }
@@ -29,12 +38,18 @@ export function validateInput(args: Record<string, unknown>): void {
     // Array validation
     if (Array.isArray(value)) {
       if (value.length > 1000) {
-        throw new Error(`Parameter "${key}" has too many elements (max 1000)`);
+        throw McpErrorFactory.invalidParams(
+          `Parameter "${key}" has too many elements (max 1000)`,
+          { parameter: key, maxElements: 1000, actualElements: value.length }
+        );
       }
       // Validate array elements
       for (const item of value) {
         if (typeof item === 'string' && item.length > 10000) {
-          throw new Error(`Element in "${key}" exceeds maximum length`);
+          throw McpErrorFactory.invalidParams(
+            `Element in "${key}" exceeds maximum length (10000 characters)`,
+            { parameter: key, maxLength: 10000 }
+          );
         }
       }
     }
@@ -43,7 +58,10 @@ export function validateInput(args: Record<string, unknown>): void {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const depth = getObjectDepth(value as Record<string, unknown>);
       if (depth > 5) {
-        throw new Error(`Parameter "${key}" is too deeply nested`);
+        throw McpErrorFactory.invalidParams(
+          `Parameter "${key}" is too deeply nested (max depth: 5)`,
+          { parameter: key, maxDepth: 5 }
+        );
       }
     }
   }

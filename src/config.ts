@@ -26,6 +26,8 @@ export interface Config {
   allowHttp: boolean;
   /** Rate limit: max API requests per minute (0 = disabled) */
   rateLimit: number;
+  /** Ability namespace filter (default: 'mainwp') */
+  abilityNamespace: string;
 }
 
 /**
@@ -45,6 +47,9 @@ export function loadConfig(): Config {
   if (isNaN(rateLimit) || rateLimit < 0) {
     throw new Error('MAINWP_RATE_LIMIT must be a non-negative integer');
   }
+
+  // Parse ability namespace (default: 'mainwp', strip trailing slashes)
+  const abilityNamespace = (process.env.MAINWP_ABILITY_NAMESPACE || 'mainwp').replace(/\/+$/, '');
 
   if (!dashboardUrl) {
     throw new Error('MAINWP_URL environment variable is required');
@@ -92,6 +97,7 @@ export function loadConfig(): Config {
       skipSslVerify,
       allowHttp,
       rateLimit,
+      abilityNamespace,
     };
   }
 
@@ -102,6 +108,7 @@ export function loadConfig(): Config {
     skipSslVerify,
     allowHttp,
     rateLimit,
+    abilityNamespace,
   };
 }
 
