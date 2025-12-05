@@ -310,3 +310,132 @@ export function clearCache(): void {
   cachedCategories = null;
   cacheTimestamp = 0;
 }
+
+// =============================================================================
+// Help Documentation Generation
+// =============================================================================
+
+/**
+ * Help documentation for a single tool
+ */
+export interface ToolHelp {
+  toolName: string;
+  abilityName: string;
+  label: string;
+  description: string;
+  category: string;
+  annotations: {
+    readonly: boolean;
+    destructive: boolean;
+    idempotent: boolean;
+    instructions?: string;
+  };
+  safetyFeatures: {
+    supportsDryRun: boolean;
+    requiresConfirm: boolean;
+  };
+  parameters: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+  }>;
+}
+
+/**
+ * Complete help document structure
+ */
+export interface HelpDocument {
+  version: string;
+  generated: string;
+  overview: {
+    totalTools: number;
+    categories: string[];
+    safetyConventions: Record<string, string>;
+  };
+  destructiveTools: string[];
+  toolsWithDryRun: string[];
+  toolsRequiringConfirm: string[];
+  toolsByCategory: Record<string, ToolHelp[]>;
+}
+
+/**
+ * Convert ability name to MCP tool name (local helper to avoid circular import)
+ * e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
+ */
+function abilityNameToToolName(abilityName: string): string {
+  return abilityName.replace(/\//g, '_').replace(/-/g, '_');
+}
+
+/**
+ * Generate help documentation for a single ability
+ */
+export function generateToolHelp(ability: Ability): ToolHelp {
+  const toolName = abilityNameToToolName(ability.name);
+  const props = (ability.input_schema?.properties || {}) as Record<string, Record<string, unknown>>;
+  const required = (ability.input_schema?.required as string[]) || [];
+
+  const parameters = Object.entries(props).map(([name, prop]) => ({
+    name,
+    type: String(prop.type || 'unknown'),
+    required: required.includes(name),
+    description: prop.description as string | undefined,
+  }));
+
+  return {
+    toolName,
+    abilityName: ability.name,
+    label: ability.label,
+    description: ability.description,
+    category: ability.category,
+    annotations: {
+      readonly: ability.meta?.annotations?.readonly ?? false,
+      destructive: ability.meta?.annotations?.destructive ?? false,
+      idempotent: ability.meta?.annotations?.idempotent ?? true,
+      instructions: ability.meta?.annotations?.instructions,
+    },
+    safetyFeatures: {
+      supportsDryRun: 'dry_run' in props,
+      requiresConfirm: 'confirm' in props,
+    },
+    parameters,
+  };
+}
+
+/**
+ * Generate complete help document from all abilities
+ */
+export function generateHelpDocument(abilities: Ability[]): HelpDocument {
+  const toolHelps = abilities.map(generateToolHelp);
+  // Use normalized categories matching toolsByCategory grouping logic
+  const categories = [...new Set(toolHelps.map(h =>
+    (h.category && h.category.trim()) || 'uncategorized'
+  ))].sort();
+
+  const toolsByCategory: Record<string, ToolHelp[]> = {};
+  for (const help of toolHelps) {
+    // Handle empty string, null, undefined as 'uncategorized'
+    const cat = (help.category && help.category.trim()) || 'uncategorized';
+    if (!toolsByCategory[cat]) toolsByCategory[cat] = [];
+    toolsByCategory[cat].push(help);
+  }
+
+  return {
+    version: '1.0',
+    generated: new Date().toISOString(),
+    overview: {
+      totalTools: abilities.length,
+      categories,
+      safetyConventions: {
+        dryRun: 'Pass dry_run: true to preview the operation without making changes',
+        confirm: 'Pass confirm: true to execute destructive operations',
+        destructive: 'These tools can permanently delete or modify data',
+        readonly: 'These tools only read data and never modify anything',
+      },
+    },
+    destructiveTools: toolHelps.filter(h => h.annotations.destructive).map(h => h.toolName),
+    toolsWithDryRun: toolHelps.filter(h => h.safetyFeatures.supportsDryRun).map(h => h.toolName),
+    toolsRequiringConfirm: toolHelps.filter(h => h.safetyFeatures.requiresConfirm).map(h => h.toolName),
+    toolsByCategory,
+  };
+}

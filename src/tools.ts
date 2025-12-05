@@ -51,23 +51,48 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
 
 /**
  * Convert a MainWP Ability to an MCP Tool definition
+ *
+ * Enhances tool metadata with:
+ * - MCP semantic annotations (readOnlyHint, destructiveHint, idempotentHint)
+ * - Highlighted safety parameters (dry_run, confirm) in descriptions
  */
 function abilityToTool(ability: Ability): Tool {
   // Create a tool name from the ability name
   // e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
-  const toolName = ability.name.replace(/\//g, '_').replace(/-/g, '_');
+  const toolName = abilityNameToToolName(ability.name);
+  const meta = ability.meta?.annotations;
+  const inputSchema = convertInputSchema(ability);
 
-  // Build description with annotations
+  // Build description with safety hints
   let description = ability.description;
-  const annotations = ability.meta?.annotations;
 
-  if (annotations) {
+  // Add custom instructions from annotations if present
+  if (meta?.instructions) {
+    description += ` ${meta.instructions}`;
+  }
+
+  // Detect safety parameters in schema
+  const props = (inputSchema.properties || {}) as Record<string, object>;
+  const hasDryRun = 'dry_run' in props;
+  const hasConfirm = 'confirm' in props;
+
+  // Build description tags based on tool characteristics
+  if (meta?.destructive) {
+    // Destructive tools: highlight safety requirements prominently
+    const hints: string[] = [];
+    if (hasConfirm) hints.push('Requires confirm: true');
+    if (hasDryRun) hints.push('Supports dry_run');
+    if (!meta.idempotent) hints.push('Not idempotent');
+    if (hints.length > 0) {
+      description += ` [DESTRUCTIVE, ${hints.join(', ')}]`;
+    } else {
+      description += ' [DESTRUCTIVE]';
+    }
+  } else {
+    // Non-destructive tools: note available features
     const notes: string[] = [];
-    if (annotations.readonly) notes.push('Read-only');
-    if (annotations.destructive) notes.push('DESTRUCTIVE');
-    if (!annotations.idempotent) notes.push('Not idempotent');
-    if (annotations.instructions) notes.push(annotations.instructions);
-
+    if (hasDryRun) notes.push('Supports dry_run');
+    if (meta?.readonly) notes.push('Read-only');
     if (notes.length > 0) {
       description += ` [${notes.join(', ')}]`;
     }
@@ -76,7 +101,13 @@ function abilityToTool(ability: Ability): Tool {
   return {
     name: toolName,
     description,
-    inputSchema: convertInputSchema(ability),
+    inputSchema,
+    // MCP semantic annotations for client UI hints
+    annotations: meta ? {
+      readOnlyHint: meta.readonly,
+      destructiveHint: meta.destructive,
+      idempotentHint: meta.idempotent,
+    } : undefined,
   };
 }
 
@@ -89,10 +120,18 @@ export async function getTools(config: Config): Promise<Tool[]> {
 }
 
 /**
+ * Convert ability name to MCP tool name
+ * e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
+ */
+export function abilityNameToToolName(abilityName: string): string {
+  return abilityName.replace(/\//g, '_').replace(/-/g, '_');
+}
+
+/**
  * Map MCP tool name back to ability name
  * e.g., "mainwp_list_sites_v1" -> "mainwp/list-sites-v1"
  */
-function toolNameToAbilityName(toolName: string): string {
+export function toolNameToAbilityName(toolName: string): string {
   // First underscore becomes slash, rest become hyphens
   const parts = toolName.split('_');
   if (parts.length < 2) {

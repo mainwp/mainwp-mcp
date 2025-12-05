@@ -27,8 +27,8 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config } from './config.js';
-import { getTools, executeTool } from './tools.js';
-import { fetchAbilities, fetchCategories, clearCache, onCacheRefresh, executeAbility, initRateLimiter } from './abilities.js';
+import { getTools, executeTool, toolNameToAbilityName } from './tools.js';
+import { fetchAbilities, fetchCategories, clearCache, onCacheRefresh, executeAbility, initRateLimiter, getAbility, generateHelpDocument, generateToolHelp } from './abilities.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId } from './security.js';
@@ -42,8 +42,8 @@ const SERVER_VERSION = '1.0.0';
  * Validate and parse a resource URI.
  * Only allows known URI patterns to prevent injection attacks.
  */
-function validateResourceUri(uri: string): { type: string; params?: Record<string, number> } {
-  const staticUris = ['mainwp://abilities', 'mainwp://categories', 'mainwp://status'];
+function validateResourceUri(uri: string): { type: string; params?: Record<string, string | number> } {
+  const staticUris = ['mainwp://abilities', 'mainwp://categories', 'mainwp://status', 'mainwp://help'];
   if (staticUris.includes(uri)) {
     return { type: uri.replace('mainwp://', '') };
   }
@@ -59,6 +59,12 @@ function validateResourceUri(uri: string): { type: string; params?: Record<strin
       );
     }
     return { type: 'site', params: { site_id: siteId } };
+  }
+
+  // Match mainwp://help/tool/{tool_name} pattern (lowercase only, matches tool name format)
+  const toolHelpMatch = uri.match(/^mainwp:\/\/help\/tool\/([a-z0-9_]+)$/);
+  if (toolHelpMatch) {
+    return { type: 'tool-help', params: { tool_name: toolHelpMatch[1] } };
   }
 
   throw McpErrorFactory.resourceNotFound(uri);
@@ -124,7 +130,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
     }
   });
 
-  // Handler: List available resources (abilities info, categories)
+  // Handler: List available resources (abilities info, categories, help)
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     return {
       resources: [
@@ -144,6 +150,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
           uri: 'mainwp://status',
           name: 'Connection Status',
           description: 'Current connection status to MainWP Dashboard',
+          mimeType: 'application/json',
+        },
+        {
+          uri: 'mainwp://help',
+          name: 'MainWP MCP Help',
+          description: 'Tool documentation, safety conventions (dry_run, confirm), and usage guides',
           mimeType: 'application/json',
         },
       ],
@@ -217,6 +229,19 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
         }
       }
 
+      // Handle help resource: comprehensive documentation
+      if (uri === 'mainwp://help') {
+        const abilities = await fetchAbilities(config);
+        const helpDoc = generateHelpDocument(abilities);
+        return {
+          contents: [{
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(helpDoc, null, 2),
+          }],
+        };
+      }
+
       // Validate and parse the resource URI (throws on invalid URIs)
       const parsed = validateResourceUri(uri);
 
@@ -228,6 +253,26 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             uri,
             mimeType: 'application/json',
             text: JSON.stringify(result, null, 2),
+          }],
+        };
+      }
+
+      // Handle tool help resource template: mainwp://help/tool/{tool_name}
+      if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
+        const toolName = parsed.params.tool_name as string;
+        // Use shared utility to convert tool name to ability name
+        const abilityName = toolNameToAbilityName(toolName);
+
+        const ability = await getAbility(config, abilityName);
+        if (!ability) {
+          throw McpErrorFactory.resourceNotFound(uri);
+        }
+
+        return {
+          contents: [{
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(generateToolHelp(ability), null, 2),
           }],
         };
       }
@@ -327,6 +372,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
           uriTemplate: 'mainwp://site/{site_id}',
           name: 'Site Details',
           description: 'Get detailed information about a specific site by ID',
+          mimeType: 'application/json',
+        },
+        {
+          uriTemplate: 'mainwp://help/tool/{tool_name}',
+          name: 'Tool Documentation',
+          description: 'Get detailed documentation for a specific tool including parameters and safety features',
           mimeType: 'application/json',
         },
       ],
