@@ -36,7 +36,7 @@ import { formatErrorResponse, McpErrorFactory } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '1.0.0-alpha.2';
 
 /**
  * Validate and parse a resource URI.
@@ -261,7 +261,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
         const toolName = parsed.params.tool_name as string;
         // Use shared utility to convert tool name to ability name
-        const abilityName = toolNameToAbilityName(toolName);
+        const abilityName = toolNameToAbilityName(toolName, config.abilityNamespace);
 
         const ability = await getAbility(config, abilityName);
         if (!ability) {

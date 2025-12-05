@@ -121,29 +121,30 @@ export async function getTools(config: Config): Promise<Tool[]> {
 
 /**
  * Convert ability name to MCP tool name
- * e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
+ * Strips namespace prefix since MCP server name provides context.
+ * e.g., "mainwp/list-sites-v1" -> "list_sites_v1"
  */
 export function abilityNameToToolName(abilityName: string): string {
-  return abilityName.replace(/\//g, '_').replace(/-/g, '_');
+  // Strip namespace prefix: "mainwp/list-sites-v1" → "list-sites-v1"
+  const slashIndex = abilityName.indexOf('/');
+  if (slashIndex === -1) {
+    throw new Error(`Invalid ability name format (missing namespace): ${abilityName}`);
+  }
+  const withoutNamespace = abilityName.slice(slashIndex + 1);
+  // Convert hyphens to underscores: "list-sites-v1" → "list_sites_v1"
+  return withoutNamespace.replace(/-/g, '_');
 }
 
 /**
  * Map MCP tool name back to ability name
- * e.g., "mainwp_list_sites_v1" -> "mainwp/list-sites-v1"
+ * Uses configured namespace since tool names don't include it.
+ * e.g., "list_sites_v1" + "mainwp" -> "mainwp/list-sites-v1"
  */
-export function toolNameToAbilityName(toolName: string): string {
-  // First underscore becomes slash, rest become hyphens
-  const parts = toolName.split('_');
-  if (parts.length < 2) {
-    throw McpErrorFactory.invalidParams(
-      `Invalid tool name format: ${toolName}`,
-      { tool: toolName }
-    );
-  }
-
-  const namespace = parts[0];
-  const rest = parts.slice(1).join('-');
-  return `${namespace}/${rest}`;
+export function toolNameToAbilityName(toolName: string, namespace: string): string {
+  // Convert underscores back to hyphens: "list_sites_v1" → "list-sites-v1"
+  const withHyphens = toolName.replace(/_/g, '-');
+  // Prepend namespace: "mainwp/list-sites-v1"
+  return `${namespace}/${withHyphens}`;
 }
 
 /**
@@ -164,7 +165,7 @@ export async function executeTool(
     // Validate input before forwarding to API
     validateInput(args);
 
-    const abilityName = toolNameToAbilityName(toolName);
+    const abilityName = toolNameToAbilityName(toolName, config.abilityNamespace);
     const result = await executeAbility(config, abilityName, args);
 
     // Check for cancellation after execution
