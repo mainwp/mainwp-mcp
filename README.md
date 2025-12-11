@@ -45,6 +45,54 @@ The server requires these environment variables:
 | `MAINWP_SAFE_MODE` | `false` | Set to `true` to block destructive operations (strips `confirm` parameter from tool calls). |
 | `MAINWP_MAX_SESSION_DATA` | `52428800` | Maximum cumulative response data per server session in bytes (50MB default). Tool calls that would exceed this limit fail with RESOURCE_EXHAUSTED error. |
 
+### Configuration File
+
+As an alternative to environment variables, you can use a `settings.json` file for configuration. This is particularly useful for local development.
+
+**Precedence:** Environment variables take precedence over file settings, which take precedence over defaults.
+
+**Search paths** (checked in order):
+1. `./settings.json` (current working directory)
+2. `~/.config/mainwp-mcp/settings.json` (user config directory)
+
+**Example `settings.json`:**
+
+```json
+{
+  "dashboardUrl": "https://dashboard.example.com",
+  "username": "admin",
+  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx",
+  "skipSslVerify": false,
+  "rateLimit": 60,
+  "allowedTools": ["list_sites_v1", "get_site_v1"]
+}
+```
+
+**Field mapping:**
+
+| settings.json field | Environment variable | Type |
+|---------------------|---------------------|------|
+| `dashboardUrl` | `MAINWP_URL` | string |
+| `username` | `MAINWP_USER` | string |
+| `appPassword` | `MAINWP_APP_PASSWORD` | string |
+| `apiToken` | `MAINWP_TOKEN` | string |
+| `skipSslVerify` | `MAINWP_SKIP_SSL_VERIFY` | boolean |
+| `allowHttp` | `MAINWP_ALLOW_HTTP` | boolean |
+| `safeMode` | `MAINWP_SAFE_MODE` | boolean |
+| `rateLimit` | `MAINWP_RATE_LIMIT` | number |
+| `requestTimeout` | `MAINWP_REQUEST_TIMEOUT` | number |
+| `maxResponseSize` | `MAINWP_MAX_RESPONSE_SIZE` | number |
+| `maxSessionData` | `MAINWP_MAX_SESSION_DATA` | number |
+| `abilityNamespace` | `MAINWP_ABILITY_NAMESPACE` | string |
+| `allowedTools` | `MAINWP_ALLOWED_TOOLS` | string[] |
+| `blockedTools` | `MAINWP_BLOCKED_TOOLS` | string[] |
+
+**Notes:**
+- All fields are optional
+- Copy `settings.example.json` to `settings.json` and customize
+- IDE autocompletion is available via `settings.schema.json`
+- See "Security Best Practices" below for file permission recommendations
+
 ### Creating a WordPress Application Password
 
 The Abilities API uses WordPress's standard REST API authentication. You need to create an Application Password:
@@ -71,6 +119,34 @@ MAINWP_SKIP_SSL_VERIFY=true \
 node dist/index.js
 ```
 
+### With Configuration File
+
+```bash
+# Create settings.json in the project directory
+cat > settings.json << 'EOF'
+{
+  "dashboardUrl": "https://dashboard.example.com",
+  "username": "admin",
+  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx",
+  "skipSslVerify": true
+}
+EOF
+
+# Secure the file
+chmod 600 settings.json
+
+# Run the server (reads settings.json automatically)
+node dist/index.js
+```
+
+**Mixing approaches:** You can use `settings.json` for base configuration and override specific values with environment variables:
+
+```bash
+# settings.json contains dashboardUrl, username, appPassword
+# Override just the rate limit via environment variable
+MAINWP_RATE_LIMIT=120 node dist/index.js
+```
+
 ### With Claude Code
 
 Add to your Claude Code MCP configuration (`~/.claude/settings.json`):
@@ -91,6 +167,21 @@ Add to your Claude Code MCP configuration (`~/.claude/settings.json`):
   }
 }
 ```
+
+**Alternative:** If using `settings.json` in `~/.config/mainwp-mcp/`, you can simplify the MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "mainwp": {
+      "command": "node",
+      "args": ["/path/to/mainwp-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+The server will automatically load credentials from `~/.config/mainwp-mcp/settings.json`. You can still override specific settings via the `env` field if needed.
 
 ### Testing with MCP Inspector
 
@@ -193,18 +284,25 @@ npm start
 
 ### Credential File Permissions
 
-If storing credentials in a `.env` file:
+If storing credentials in a `.env` file or `settings.json`:
 
 ```bash
 # Restrict file to owner read/write only
 chmod 600 .env
+chmod 600 settings.json
 
 # Verify permissions
-ls -l .env
+ls -l .env settings.json
 # Should show: -rw------- (600)
 ```
 
-**Never commit `.env` files to version control.** Add `.env` to `.gitignore`.
+**Never commit credential files to version control.** Both `.env` and `settings.json` are already in `.gitignore`.
+
+**Configuration file security:**
+- `settings.json` is loaded from the current directory or `~/.config/mainwp-mcp/`
+- Ensure the file is readable only by your user account
+- For shared systems, prefer `~/.config/mainwp-mcp/settings.json` with `chmod 600`
+- Environment variables still take precedence, allowing runtime overrides without modifying the file
 
 ### Using Secrets Managers
 

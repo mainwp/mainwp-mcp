@@ -36,7 +36,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.4';
+const SERVER_VERSION = '1.0.0-alpha.5';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -500,6 +500,7 @@ async function main(): Promise<void> {
     startupLogger.info(`MainWP MCP Server v${SERVER_VERSION}`);
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
+    startupLogger.info(`Config source: ${config.configSource}`);
     startupLogger.info(`Namespace: ${config.abilityNamespace ? config.abilityNamespace + '/*' : '(all abilities)'}`);
     startupLogger.info(`Session data limit: ${(config.maxSessionData / 1048576).toFixed(1)}MB`);
     if (config.skipSslVerify) {

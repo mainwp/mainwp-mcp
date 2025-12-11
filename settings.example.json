@@ -1,0 +1,23 @@
+{
+  "_comment": "MainWP MCP Server Settings - Copy this file to settings.json and customize. All fields are optional. Environment variables take precedence over settings file values. Authentication requires either username+appPassword OR apiToken. If both are provided, Basic Auth (username+appPassword) takes precedence over apiToken.",
+
+  "dashboardUrl": "https://dashboard.example.com",
+
+  "username": "admin",
+  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx",
+
+  "apiToken": "your-mainwp-token-here",
+
+  "skipSslVerify": false,
+  "allowHttp": false,
+  "safeMode": false,
+
+  "rateLimit": 60,
+  "requestTimeout": 30000,
+  "maxResponseSize": 10485760,
+  "maxSessionData": 52428800,
+
+  "abilityNamespace": "mainwp",
+  "allowedTools": ["list_sites_v1", "get_site_v1"],
+  "blockedTools": ["delete_site_v1"]
+}

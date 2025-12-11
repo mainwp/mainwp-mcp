@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mainwp.com/schemas/mcp-settings.json",
+  "title": "MainWP MCP Server Settings",
+  "description": "Configuration file for MainWP MCP Server. All fields are optional. Environment variables take precedence over file settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "_comment": {
+      "type": "string",
+      "description": "Optional comment field for documentation purposes. Ignored by the server."
+    },
+    "dashboardUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "Base URL of the MainWP Dashboard (e.g., https://dashboard.example.com). Required unless set via MAINWP_URL environment variable."
+    },
+    "username": {
+      "type": "string",
+      "description": "WordPress username for Basic Auth. Used with appPassword for WordPress Application Password authentication. When both Basic Auth and apiToken are provided, Basic Auth takes precedence."
+    },
+    "appPassword": {
+      "type": "string",
+      "description": "WordPress Application Password for Basic Auth. Generate from WordPress Dashboard > Users > Profile > Application Passwords. When both Basic Auth and apiToken are provided, Basic Auth takes precedence."
+    },
+    "apiToken": {
+      "type": "string",
+      "description": "MainWP REST API Bearer token. Alternative to username+appPassword authentication. Only used if username+appPassword are not set (Basic Auth takes precedence when both are provided)."
+    },
+    "skipSslVerify": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip SSL certificate verification. WARNING: Only use for local development with self-signed certificates. Enables man-in-the-middle attacks."
+    },
+    "allowHttp": {
+      "type": "boolean",
+      "default": false,
+      "description": "Allow HTTP URLs (insecure). WARNING: Credentials will be transmitted in plain text. Use HTTPS in production."
+    },
+    "safeMode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Prevent destructive operations by stripping the 'confirm' parameter from tool calls. Useful for testing or read-only access."
+    },
+    "rateLimit": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 60,
+      "description": "Maximum API requests per minute. Set to 0 to disable rate limiting."
+    },
+    "requestTimeout": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 30000,
+      "description": "Request timeout in milliseconds. Default is 30000 (30 seconds)."
+    },
+    "maxResponseSize": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10485760,
+      "description": "Maximum response size in bytes. Default is 10485760 (10MB)."
+    },
+    "maxSessionData": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 52428800,
+      "description": "Maximum cumulative response data per server session in bytes. Default is 52428800 (50MB)."
+    },
+    "abilityNamespace": {
+      "type": "string",
+      "default": "mainwp",
+      "description": "Ability namespace filter. Only abilities matching this namespace prefix are exposed as tools."
+    },
+    "allowedTools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "Whitelist of tool names to expose. If set, only these tools are available. Cannot conflict with blockedTools."
+    },
+    "blockedTools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "Blacklist of tool names to hide. These tools are never exposed. Cannot conflict with allowedTools."
+    }
+  }
+}
