@@ -338,8 +338,10 @@ export function getPrompt(name: string, args?: Record<string, string>): GetPromp
 
 /**
  * Get prompt argument values for completions
+ * @param _promptName - Reserved for future prompt-specific completions
+ * @param argumentName - The argument to get completions for
  */
-export function getPromptArgumentCompletions(promptName: string, argumentName: string): string[] {
+export function getPromptArgumentCompletions(_promptName: string, argumentName: string): string[] {
   if (argumentName === 'update_type') {
     return ['plugins', 'themes', 'core', 'all'];
   }

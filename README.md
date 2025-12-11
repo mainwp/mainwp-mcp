@@ -20,9 +20,11 @@ This server allows AI assistants to interact with your MainWP Dashboard by:
 
 ```bash
 cd mainwp-mcp
-npm install
+npm ci          # Use 'npm ci' for production (reproducible builds from package-lock.json)
 npm run build
 ```
+
+**Development**: Use `npm install` to update dependencies; use `npm ci` for production deployments to ensure exact versions from `package-lock.json`.
 
 ## Configuration
 
@@ -36,6 +38,12 @@ The server requires these environment variables:
 | `MAINWP_SKIP_SSL_VERIFY` | `false` | Set to `true` to skip SSL verification (for local dev with self-signed certs) |
 | `MAINWP_ALLOW_HTTP` | `false` | Set to `true` to allow HTTP URLs (insecure, not recommended) |
 | `MAINWP_RATE_LIMIT` | `60` | Max API requests per minute (0 = disabled) |
+| `MAINWP_ALLOWED_TOOLS` | (none) | Comma-separated whitelist of tool names to expose (e.g., `list_sites_v1,get_site_v1`). If set, only these tools are available. |
+| `MAINWP_BLOCKED_TOOLS` | (none) | Comma-separated blacklist of tool names to hide. Cannot overlap with `MAINWP_ALLOWED_TOOLS`. |
+| `MAINWP_REQUEST_TIMEOUT` | `30000` | API request timeout in milliseconds (30 seconds default). |
+| `MAINWP_MAX_RESPONSE_SIZE` | `10485760` | Maximum response size in bytes (10MB default). Rejects larger responses. |
+| `MAINWP_SAFE_MODE` | `false` | Set to `true` to block destructive operations (strips `confirm` parameter from tool calls). |
+| `MAINWP_MAX_SESSION_DATA` | `52428800` | Maximum cumulative response data per server session in bytes (50MB default). Tool calls that would exceed this limit fail with RESOURCE_EXHAUSTED error. |
 
 ### Creating a WordPress Application Password
 
@@ -94,24 +102,26 @@ npm run inspect
 
 Once connected, the following tools become available (depending on your MainWP abilities):
 
+> **Note:** Tool names omit the `mainwp` namespace prefix since the MCP server name already provides context. The ability `mainwp/list-sites-v1` becomes the tool `list_sites_v1`.
+
 ### Sites Category
 
 | Tool | Description |
 |------|-------------|
-| `mainwp_list_sites_v1` | List MainWP child sites with pagination and filtering |
-| `mainwp_get_site_v1` | Get detailed information about a single site |
-| `mainwp_sync_sites_v1` | Trigger synchronization for one or more sites |
-| `mainwp_get_site_plugins_v1` | Get plugins installed on a child site |
-| `mainwp_get_site_themes_v1` | Get themes installed on a child site |
+| `list_sites_v1` | List MainWP child sites with pagination and filtering |
+| `get_site_v1` | Get detailed information about a single site |
+| `sync_sites_v1` | Trigger synchronization for one or more sites |
+| `get_site_plugins_v1` | Get plugins installed on a child site |
+| `get_site_themes_v1` | Get themes installed on a child site |
 
 ### Updates Category
 
 | Tool | Description |
 |------|-------------|
-| `mainwp_list_updates_v1` | List available updates across sites |
-| `mainwp_run_updates_v1` | Execute updates on child sites |
-| `mainwp_list_ignored_updates_v1` | List ignored updates |
-| `mainwp_set_ignored_updates_v1` | Manage ignored updates |
+| `list_updates_v1` | List available updates across sites |
+| `run_updates_v1` | Execute updates on child sites |
+| `list_ignored_updates_v1` | List ignored updates |
+| `set_ignored_updates_v1` | Manage ignored updates |
 
 ## Resources
 
@@ -129,15 +139,15 @@ Once configured, you can interact naturally:
 
 ```
 You: What MainWP sites do I have?
-Claude: [Calls mainwp_list_sites_v1]
+Claude: [Calls list_sites_v1]
         You have 5 connected sites...
 
 You: Which ones need updates?
-Claude: [Calls mainwp_list_updates_v1]
+Claude: [Calls list_updates_v1]
         3 sites have pending plugin updates...
 
 You: Sync all my sites
-Claude: [Calls mainwp_sync_sites_v1]
+Claude: [Calls sync_sites_v1]
         Sync initiated for 5 sites...
 ```
 
@@ -178,6 +188,108 @@ npm start
 - Use WordPress Application Passwords (not your main password)
 - Application Passwords can be revoked individually without changing your main password
 - Consider creating a dedicated WordPress user with limited permissions for API access
+
+## Security Best Practices
+
+### Credential File Permissions
+
+If storing credentials in a `.env` file:
+
+```bash
+# Restrict file to owner read/write only
+chmod 600 .env
+
+# Verify permissions
+ls -l .env
+# Should show: -rw------- (600)
+```
+
+**Never commit `.env` files to version control.** Add `.env` to `.gitignore`.
+
+### Using Secrets Managers
+
+For production or team environments, use a secrets manager instead of plain `.env` files:
+
+**1Password CLI**:
+```bash
+# Store credentials in 1Password, then inject at runtime
+op run --env-file=".env.template" -- node dist/index.js
+```
+
+**HashiCorp Vault**:
+```bash
+# Fetch secrets from Vault and export as env vars
+export MAINWP_URL=$(vault kv get -field=url secret/mainwp)
+export MAINWP_USER=$(vault kv get -field=user secret/mainwp)
+export MAINWP_APP_PASSWORD=$(vault kv get -field=password secret/mainwp)
+node dist/index.js
+```
+
+### Dedicated WordPress Users
+
+**Create a dedicated WordPress user for API access** instead of using your admin account:
+
+1. Go to **Users → Add New** in WordPress
+2. Create user with username like `mainwp-mcp-bot`
+3. Assign **Administrator** role (required for MainWP Dashboard access)
+4. Generate an Application Password for this user (Users → Profile → Application Passwords)
+5. Use this dedicated user's credentials in `MAINWP_USER` and `MAINWP_APP_PASSWORD`
+
+**Benefits**:
+- Audit trail: API actions appear under the bot user in logs
+- Revocation: Disable the bot user without affecting your admin access
+- Principle of least privilege: Future versions may support lower-privilege roles
+
+### Trust Model and MAINWP_URL Security
+
+**Critical**: `MAINWP_URL` is a **fully trusted endpoint**. The server:
+- Sends your WordPress credentials to this URL
+- Executes operations returned by this URL's API
+- Trusts all ability definitions from this URL
+
+**Ensure**:
+- `MAINWP_URL` points to **your own MainWP Dashboard** (not a third-party service)
+- The URL uses HTTPS with a valid certificate (or `MAINWP_SKIP_SSL_VERIFY=true` for local dev only)
+- The Dashboard server is secured (firewall, updated software, strong passwords)
+
+**Never** point `MAINWP_URL` to an untrusted server—it would receive your credentials and could return malicious ability definitions.
+
+### Tool Access Control
+
+Limit exposed tools using allow/block lists:
+
+```bash
+# Whitelist: Only expose read-only tools
+export MAINWP_ALLOWED_TOOLS="list_sites_v1,get_site_v1,list_updates_v1"
+
+# Blacklist: Hide destructive operations
+export MAINWP_BLOCKED_TOOLS="run_updates_v1,delete_site_v1"
+```
+
+**Use safe mode** to prevent accidental destructive operations during testing:
+
+```bash
+export MAINWP_SAFE_MODE=true
+```
+
+When enabled, the server strips `confirm: true` from tool arguments, causing destructive operations to fail safely.
+
+### Resource Limits
+
+Configure limits to prevent resource exhaustion:
+
+```bash
+# Timeout slow requests after 15 seconds
+export MAINWP_REQUEST_TIMEOUT=15000
+
+# Reject responses larger than 5MB
+export MAINWP_MAX_RESPONSE_SIZE=5242880
+
+# Limit total session data to 20MB
+export MAINWP_MAX_SESSION_DATA=20971520
+```
+
+**Session data limit**: The server tracks cumulative response data across all tool calls. When a tool call would exceed `MAINWP_MAX_SESSION_DATA`, the call fails with a `RESOURCE_EXHAUSTED` error and the session counter remains unchanged. The server continues running, allowing smaller subsequent calls to succeed. Restart the server to reset the session data counter.
 
 ## Troubleshooting
 

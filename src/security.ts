@@ -7,6 +7,11 @@
 
 import { McpErrorFactory } from './errors.js';
 
+// Input validation limits
+const MAX_STRING_LENGTH = 10000;
+const MAX_ARRAY_ELEMENTS = 1000;
+const MAX_OBJECT_DEPTH = 5;
+
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
@@ -15,10 +20,10 @@ import { McpErrorFactory } from './errors.js';
 export function validateInput(args: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(args)) {
     // String length check
-    if (typeof value === 'string' && value.length > 10000) {
+    if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
       throw McpErrorFactory.invalidParams(
-        `Parameter "${key}" exceeds maximum length (10000 characters)`,
-        { parameter: key, maxLength: 10000 }
+        `Parameter "${key}" exceeds maximum length (${MAX_STRING_LENGTH} characters)`,
+        { parameter: key, maxLength: MAX_STRING_LENGTH }
       );
     }
 
@@ -37,18 +42,18 @@ export function validateInput(args: Record<string, unknown>): void {
 
     // Array validation
     if (Array.isArray(value)) {
-      if (value.length > 1000) {
+      if (value.length > MAX_ARRAY_ELEMENTS) {
         throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" has too many elements (max 1000)`,
-          { parameter: key, maxElements: 1000, actualElements: value.length }
+          `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
+          { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
         );
       }
       // Validate array elements
       for (const item of value) {
-        if (typeof item === 'string' && item.length > 10000) {
+        if (typeof item === 'string' && item.length > MAX_STRING_LENGTH) {
           throw McpErrorFactory.invalidParams(
-            `Element in "${key}" exceeds maximum length (10000 characters)`,
-            { parameter: key, maxLength: 10000 }
+            `Element in "${key}" exceeds maximum length (${MAX_STRING_LENGTH} characters)`,
+            { parameter: key, maxLength: MAX_STRING_LENGTH }
           );
         }
       }
@@ -57,10 +62,10 @@ export function validateInput(args: Record<string, unknown>): void {
     // Nested object depth check (prevent deeply nested payloads)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const depth = getObjectDepth(value as Record<string, unknown>);
-      if (depth > 5) {
+      if (depth > MAX_OBJECT_DEPTH) {
         throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" is too deeply nested (max depth: 5)`,
-          { parameter: key, maxDepth: 5 }
+          `Parameter "${key}" is too deeply nested (max depth: ${MAX_OBJECT_DEPTH})`,
+          { parameter: key, maxDepth: MAX_OBJECT_DEPTH }
         );
       }
     }
@@ -71,7 +76,7 @@ export function validateInput(args: Record<string, unknown>): void {
  * Calculate the nesting depth of an object
  */
 function getObjectDepth(obj: Record<string, unknown>, current = 0): number {
-  if (current > 5) return current; // Short-circuit
+  if (current > MAX_OBJECT_DEPTH) return current; // Short-circuit
   let maxDepth = current;
   for (const val of Object.values(obj)) {
     if (typeof val === 'object' && val !== null) {

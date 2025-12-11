@@ -92,7 +92,8 @@ function notifyCacheRefresh(): void {
 }
 
 /**
- * Create a fetch function that handles SSL verification
+ * Create a fetch function that handles SSL verification, request timeout, and response size limits.
+ * Wraps any caller-provided AbortSignal to enforce timeout while preserving external cancellation.
  */
 function createFetch(config: Config) {
   const agent = config.skipSslVerify
@@ -100,22 +101,57 @@ function createFetch(config: Config) {
     : undefined;
 
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
-    const fetchOptions: RequestInit & { agent?: https.Agent } = {
-      ...options,
-      headers: {
-        ...getAuthHeaders(config),
-        ...options.headers,
-      },
-    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), config.requestTimeout);
 
-    // For Node.js fetch with custom agent
-    if (agent) {
-      (fetchOptions as unknown as { agent: https.Agent }).agent = agent;
+    // Forward external signal abort to our controller (preserves caller cancellation)
+    const externalSignal = options.signal;
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
     }
 
-    // Use native fetch (Node 18+) with agent support
-    const response = await fetch(url, fetchOptions);
-    return response;
+    try {
+      const fetchOptions: RequestInit & { agent?: https.Agent } = {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...getAuthHeaders(config),
+          ...options.headers,
+        },
+      };
+
+      // For Node.js fetch with custom agent
+      if (agent) {
+        (fetchOptions as unknown as { agent: https.Agent }).agent = agent;
+      }
+
+      // Use native fetch (Node 18+) with agent support
+      const response = await fetch(url, fetchOptions);
+      clearTimeout(timeoutId);
+
+      // Check response size before parsing (if content-length is provided)
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        const size = parseInt(contentLength, 10);
+        if (size > config.maxResponseSize) {
+          throw new Error(
+            `Response size ${size} bytes exceeds maximum allowed ${config.maxResponseSize} bytes`
+          );
+        }
+      }
+
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if ((error as Error).name === 'AbortError') {
+        throw new Error(`Request timeout after ${config.requestTimeout}ms: ${url}`);
+      }
+      throw error;
+    }
   };
 }
 

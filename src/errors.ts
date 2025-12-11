@@ -24,6 +24,7 @@ export const MCP_ERROR_CODES = {
   TOOL_NOT_FOUND: -32003,
   PROMPT_NOT_FOUND: -32004,
   ABILITY_NOT_FOUND: -32005,
+  RESOURCE_EXHAUSTED: -32006,
   PERMISSION_DENIED: -32008,
   UNAUTHORIZED: -32010,
   RATE_LIMITED: -32029,
@@ -130,6 +131,13 @@ export const McpErrorFactory = {
   },
 
   /**
+   * Resource exhausted error (e.g., session data limit exceeded)
+   */
+  resourceExhausted(message: string, data?: Record<string, unknown>): McpError {
+    return new McpError(MCP_ERROR_CODES.RESOURCE_EXHAUSTED, message, data);
+  },
+
+  /**
    * Internal server error
    */
   internal(message: string, data?: Record<string, unknown>): McpError {
@@ -207,6 +215,8 @@ export function toMcpErrorResponse(error: unknown, sanitize?: (msg: string) => s
     code = MCP_ERROR_CODES.CANCELLED;
   } else if (message.includes('not found') || message.includes('Unknown')) {
     code = MCP_ERROR_CODES.RESOURCE_NOT_FOUND;
+  } else if (message.includes('limit exceeded') || message.includes('exhausted')) {
+    code = MCP_ERROR_CODES.RESOURCE_EXHAUSTED;
   } else if (message.includes('invalid') || message.includes('must be') || message.includes('exceeds')) {
     code = MCP_ERROR_CODES.INVALID_PARAMS;
   } else if (message.includes('unauthorized') || message.includes('authentication')) {

@@ -28,6 +28,18 @@ export interface Config {
   rateLimit: number;
   /** Ability namespace filter (default: 'mainwp') */
   abilityNamespace: string;
+  /** Optional list of allowed tool names (whitelist). If set, only these tools are exposed. */
+  allowedTools?: string[];
+  /** Optional list of blocked tool names (blacklist). These tools are never exposed. */
+  blockedTools?: string[];
+  /** Request timeout in milliseconds (default: 30000) */
+  requestTimeout: number;
+  /** Maximum response size in bytes (default: 10485760 = 10MB) */
+  maxResponseSize: number;
+  /** Safe mode: prevents destructive operations by stripping confirm parameter */
+  safeMode: boolean;
+  /** Maximum cumulative response data per server session in bytes (default: 52428800 = 50MB) */
+  maxSessionData: number;
 }
 
 /**
@@ -40,6 +52,7 @@ export function loadConfig(): Config {
   const apiToken = process.env.MAINWP_TOKEN;
   const skipSslVerify = process.env.MAINWP_SKIP_SSL_VERIFY === 'true';
   const allowHttp = process.env.MAINWP_ALLOW_HTTP === 'true';
+  const safeMode = process.env.MAINWP_SAFE_MODE === 'true';
 
   // Parse rate limit (default: 60 requests/minute)
   const rateLimitStr = process.env.MAINWP_RATE_LIMIT ?? '60';
@@ -48,8 +61,50 @@ export function loadConfig(): Config {
     throw new Error('MAINWP_RATE_LIMIT must be a non-negative integer');
   }
 
+  // Parse request timeout (default: 30000ms = 30 seconds)
+  const timeoutStr = process.env.MAINWP_REQUEST_TIMEOUT ?? '30000';
+  const requestTimeout = parseInt(timeoutStr, 10);
+  if (isNaN(requestTimeout) || requestTimeout <= 0) {
+    throw new Error('MAINWP_REQUEST_TIMEOUT must be a positive integer');
+  }
+
+  // Parse max response size (default: 10485760 bytes = 10MB)
+  const maxSizeStr = process.env.MAINWP_MAX_RESPONSE_SIZE ?? '10485760';
+  const maxResponseSize = parseInt(maxSizeStr, 10);
+  if (isNaN(maxResponseSize) || maxResponseSize <= 0) {
+    throw new Error('MAINWP_MAX_RESPONSE_SIZE must be a positive integer');
+  }
+
+  // Parse max session data (default: 52428800 bytes = 50MB)
+  const maxSessionDataStr = process.env.MAINWP_MAX_SESSION_DATA ?? '52428800';
+  const maxSessionData = parseInt(maxSessionDataStr, 10);
+  if (isNaN(maxSessionData) || maxSessionData <= 0) {
+    throw new Error('MAINWP_MAX_SESSION_DATA must be a positive integer');
+  }
+
   // Parse ability namespace (default: 'mainwp', strip trailing slashes)
   const abilityNamespace = (process.env.MAINWP_ABILITY_NAMESPACE || 'mainwp').replace(/\/+$/, '');
+
+  // Parse allowed/blocked tool lists (comma-separated)
+  const allowedTools = process.env.MAINWP_ALLOWED_TOOLS
+    ?.split(',')
+    .map(s => s.trim())
+    .filter(Boolean) ?? [];
+  const blockedTools = process.env.MAINWP_BLOCKED_TOOLS
+    ?.split(',')
+    .map(s => s.trim())
+    .filter(Boolean) ?? [];
+
+  // Validate no conflicts between allowed and blocked lists
+  if (allowedTools.length > 0 && blockedTools.length > 0) {
+    const allowedSet = new Set(allowedTools);
+    const conflicts = blockedTools.filter(tool => allowedSet.has(tool));
+    if (conflicts.length > 0) {
+      throw new Error(
+        `Tool allow/block list conflict: ${conflicts.join(', ')} appear in both MAINWP_ALLOWED_TOOLS and MAINWP_BLOCKED_TOOLS`
+      );
+    }
+  }
 
   if (!dashboardUrl) {
     throw new Error('MAINWP_URL environment variable is required');
@@ -98,6 +153,12 @@ export function loadConfig(): Config {
       allowHttp,
       rateLimit,
       abilityNamespace,
+      requestTimeout,
+      maxResponseSize,
+      safeMode,
+      maxSessionData,
+      ...(allowedTools.length > 0 ? { allowedTools } : {}),
+      ...(blockedTools.length > 0 ? { blockedTools } : {}),
     };
   }
 
@@ -109,6 +170,12 @@ export function loadConfig(): Config {
     allowHttp,
     rateLimit,
     abilityNamespace,
+    requestTimeout,
+    maxResponseSize,
+    safeMode,
+    maxSessionData,
+    ...(allowedTools.length > 0 ? { allowedTools } : {}),
+    ...(blockedTools.length > 0 ? { blockedTools } : {}),
   };
 }
 

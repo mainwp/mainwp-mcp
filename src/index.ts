@@ -28,28 +28,44 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config } from './config.js';
 import { getTools, executeTool, toolNameToAbilityName } from './tools.js';
-import { fetchAbilities, fetchCategories, clearCache, onCacheRefresh, executeAbility, initRateLimiter, getAbility, generateHelpDocument, generateToolHelp } from './abilities.js';
+import { fetchAbilities, fetchCategories, clearCache, onCacheRefresh, executeAbility, initRateLimiter, getAbility, generateHelpDocument, generateToolHelp, type Ability } from './abilities.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { sanitizeError, isValidId } from './security.js';
-import { formatErrorResponse, McpErrorFactory } from './errors.js';
+import { sanitizeError, isValidId, validateInput } from './security.js';
+import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.2';
+const SERVER_VERSION = '1.0.0-alpha.4';
+
+// Completion limits
+const MAX_COMPLETION_SUGGESTIONS = 20;
 
 /**
  * Validate and parse a resource URI.
  * Only allows known URI patterns to prevent injection attacks.
+ * Decodes URL-encoded characters before validation.
  */
 function validateResourceUri(uri: string): { type: string; params?: Record<string, string | number> } {
+  // Decode URI to handle URL-encoded characters (e.g., %20, %2F)
+  let decodedUri: string;
+  try {
+    decodedUri = decodeURIComponent(uri);
+  } catch (error) {
+    // Handle malformed URIs (invalid percent-encoding)
+    throw McpErrorFactory.invalidParams(
+      'Malformed URI: invalid percent-encoding',
+      { uri, error: error instanceof Error ? error.message : String(error) }
+    );
+  }
+
   const staticUris = ['mainwp://abilities', 'mainwp://categories', 'mainwp://status', 'mainwp://help'];
-  if (staticUris.includes(uri)) {
-    return { type: uri.replace('mainwp://', '') };
+  if (staticUris.includes(decodedUri)) {
+    return { type: decodedUri.replace('mainwp://', '') };
   }
 
   // Match mainwp://site/{id} pattern with strict numeric ID
-  const siteMatch = uri.match(/^mainwp:\/\/site\/(\d+)$/);
+  const siteMatch = decodedUri.match(/^mainwp:\/\/site\/(\d+)$/);
   if (siteMatch) {
     const siteId = parseInt(siteMatch[1], 10);
     if (siteId < 1 || siteId > Number.MAX_SAFE_INTEGER) {
@@ -62,7 +78,7 @@ function validateResourceUri(uri: string): { type: string; params?: Record<strin
   }
 
   // Match mainwp://help/tool/{tool_name} pattern (lowercase only, matches tool name format)
-  const toolHelpMatch = uri.match(/^mainwp:\/\/help\/tool\/([a-z0-9_]+)$/);
+  const toolHelpMatch = decodedUri.match(/^mainwp:\/\/help\/tool\/([a-z0-9_]+)$/);
   if (toolHelpMatch) {
     return { type: 'tool-help', params: { tool_name: toolHelpMatch[1] } };
   }
@@ -114,6 +130,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
         config,
         name,
         args as Record<string, unknown> ?? {},
+        logger,
         { signal: extra.signal }
       );
       return { content };
@@ -301,8 +318,17 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
+      // Validate prompt arguments before processing
+      if (args) {
+        validateInput(args as Record<string, unknown>);
+      }
       return getPrompt(name, args);
     } catch (error) {
+      // Preserve structured MCP errors (e.g., from validateInput)
+      if (error instanceof McpError) {
+        throw error;
+      }
+      // Sanitize unexpected errors
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(sanitizeError(errorMessage));
     }
@@ -347,8 +373,8 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       return {
         completion: {
-          values: filteredValues.slice(0, 20), // Limit to 20 suggestions
-          hasMore: filteredValues.length > 20,
+          values: filteredValues.slice(0, MAX_COMPLETION_SUGGESTIONS),
+          hasMore: filteredValues.length > MAX_COMPLETION_SUGGESTIONS,
           total: filteredValues.length,
         },
       };
@@ -395,6 +421,69 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 }
 
 /**
+ * Validate credentials by attempting to fetch abilities from the MainWP Dashboard.
+ * Provides enhanced error messages for common failure scenarios.
+ *
+ * @param config - Server configuration
+ * @param logger - Logger for status messages
+ * @returns The fetched abilities array on success
+ * @throws Error with actionable message on failure
+ */
+async function validateCredentials(config: Config, logger: Logger): Promise<Ability[]> {
+  try {
+    const abilities = await fetchAbilities(config);
+    logger.info('Credential validation successful: Connected to MainWP Dashboard');
+    return abilities;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const lowerMessage = message.toLowerCase();
+
+    // Authentication failures (401/403)
+    if (lowerMessage.includes('401') || lowerMessage.includes('403') ||
+        lowerMessage.includes('unauthorized') || lowerMessage.includes('forbidden')) {
+      throw new Error(
+        'Authentication failed: Invalid credentials. Verify MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN are correct and the user has REST API access.'
+      );
+    }
+
+    // Endpoint not found (404) - likely missing Abilities API plugin
+    if (lowerMessage.includes('404') || lowerMessage.includes('not found')) {
+      throw new Error(
+        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.'
+      );
+    }
+
+    // Connection timeout
+    if (lowerMessage.includes('timeout')) {
+      throw new Error(
+        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.'
+      );
+    }
+
+    // SSL/TLS certificate errors
+    if (lowerMessage.includes('certificate') || lowerMessage.includes('ssl') ||
+        lowerMessage.includes('tls') || lowerMessage.includes('self-signed') ||
+        lowerMessage.includes('unable to verify')) {
+      throw new Error(
+        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).'
+      );
+    }
+
+    // Network connectivity errors
+    if (lowerMessage.includes('enotfound') || lowerMessage.includes('econnrefused') ||
+        lowerMessage.includes('network') || lowerMessage.includes('getaddrinfo') ||
+        lowerMessage.includes('econnreset')) {
+      throw new Error(
+        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.'
+      );
+    }
+
+    // Other errors - re-throw with prefix
+    throw new Error(`Credential validation failed: ${message}`);
+  }
+}
+
+/**
  * Main entry point
  */
 async function main(): Promise<void> {
@@ -412,6 +501,7 @@ async function main(): Promise<void> {
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
     startupLogger.info(`Namespace: ${config.abilityNamespace ? config.abilityNamespace + '/*' : '(all abilities)'}`);
+    startupLogger.info(`Session data limit: ${(config.maxSessionData / 1048576).toFixed(1)}MB`);
     if (config.skipSslVerify) {
       startupLogger.error('╔══════════════════════════════════════════════════════════════╗');
       startupLogger.error('║  WARNING: SSL verification disabled                          ║');
@@ -420,15 +510,11 @@ async function main(): Promise<void> {
       startupLogger.error('╚══════════════════════════════════════════════════════════════╝');
     }
 
-    // Pre-fetch abilities to validate connection
-    try {
-      const abilities = await fetchAbilities(config);
-      startupLogger.info(`Connected! Found ${abilities.length} abilities`);
-      abilities.forEach(a => startupLogger.debug(`  - ${a.name}: ${a.label}`));
-    } catch (error) {
-      startupLogger.warning(`Could not pre-fetch abilities: ${error instanceof Error ? error.message : error}`);
-      startupLogger.info('Server will start anyway and retry on first request.');
-    }
+    // Validate credentials with fail-fast behavior
+    startupLogger.info('Validating credentials...');
+    const abilities = await validateCredentials(config, startupLogger);
+    startupLogger.info(`Connected! Found ${abilities.length} abilities`);
+    abilities.forEach(a => startupLogger.debug(`  - ${a.name}: ${a.label}`))
 
     // Create server (returns server + structured logger)
     const { server, logger } = await createServer(config);
