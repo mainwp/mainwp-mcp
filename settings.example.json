@@ -1,5 +1,5 @@
 {
-  "_comment": "MainWP MCP Server Settings - Copy this file to settings.json and customize. All fields are optional. Environment variables take precedence over settings file values. Authentication requires either username+appPassword OR apiToken. If both are provided, Basic Auth (username+appPassword) takes precedence over apiToken.",
+  "_comment": "MainWP MCP Server Settings - Copy this file to settings.json and customize. All fields are optional. Environment variables take precedence over settings file values. Authentication requires either username+appPassword OR apiToken. If both are provided, Basic Auth (username+appPassword) takes precedence over apiToken. Set schemaVerbosity to 'compact' to reduce token usage by ~30%.",
 
   "dashboardUrl": "https://dashboard.example.com",
 
@@ -19,5 +19,6 @@
 
   "abilityNamespace": "mainwp",
   "allowedTools": ["list_sites_v1", "get_site_v1"],
-  "blockedTools": ["delete_site_v1"]
+  "blockedTools": ["delete_site_v1"],
+  "schemaVerbosity": "standard"
 }

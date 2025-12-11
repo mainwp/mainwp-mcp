@@ -44,6 +44,7 @@ The server requires these environment variables:
 | `MAINWP_MAX_RESPONSE_SIZE` | `10485760` | Maximum response size in bytes (10MB default). Rejects larger responses. |
 | `MAINWP_SAFE_MODE` | `false` | Set to `true` to block destructive operations (strips `confirm` parameter from tool calls). |
 | `MAINWP_MAX_SESSION_DATA` | `52428800` | Maximum cumulative response data per server session in bytes (50MB default). Tool calls that would exceed this limit fail with RESOURCE_EXHAUSTED error. |
+| `MAINWP_SCHEMA_VERBOSITY` | `standard` | Schema verbosity level: `standard` (full descriptions, examples, safety tags) or `compact` (~30% token reduction, minimal descriptions). See Schema Verbosity section below. |
 
 ### Configuration File
 
@@ -86,12 +87,71 @@ As an alternative to environment variables, you can use a `settings.json` file f
 | `abilityNamespace` | `MAINWP_ABILITY_NAMESPACE` | string |
 | `allowedTools` | `MAINWP_ALLOWED_TOOLS` | string[] |
 | `blockedTools` | `MAINWP_BLOCKED_TOOLS` | string[] |
+| `schemaVerbosity` | `MAINWP_SCHEMA_VERBOSITY` | string |
 
 **Notes:**
 - All fields are optional
 - Copy `settings.example.json` to `settings.json` and customize
 - IDE autocompletion is available via `settings.schema.json`
 - See "Security Best Practices" below for file permission recommendations
+
+### Schema Verbosity
+
+Control the verbosity of tool schema descriptions to optimize token usage in AI contexts.
+
+**Available modes:**
+
+| Mode | Token Usage | Description Content | Use Case |
+|------|-------------|---------------------|----------|
+| `standard` | Full (~41,500 tokens) | Complete descriptions, examples, safety tags, instructions | Default; maximum context for AI decision-making |
+| `compact` | Reduced (~30% savings) | First sentence or 60 chars per parameter; omits examples and safety tags | Token-constrained scenarios; relies on MCP annotations |
+
+**Token savings:** Compact mode reduces schema overhead by approximately **10,000-14,500 tokens** (~30%), freeing context window space for conversation history.
+
+**Tradeoffs:**
+- **Standard mode** (default): Full parameter descriptions, inline safety warnings, usage examples. Recommended for complex operations or when AI needs maximum context.
+- **Compact mode**: Minimal descriptions, no inline examples. Safety information relies on MCP semantic annotations. May reduce AI accuracy for tools with similar parameters.
+
+**MCP client compatibility:** Compact mode requires MCP clients that display semantic annotations (MCP SDK 1.0+). Verify your client (e.g., Claude Code) shows tool annotations before using compact mode in production.
+
+**Configuration examples:**
+
+Environment variable:
+```bash
+# Reduce token usage by ~30%
+export MAINWP_SCHEMA_VERBOSITY=compact
+node dist/index.js
+```
+
+settings.json:
+```json
+{
+  "dashboardUrl": "https://dashboard.example.com",
+  "username": "admin",
+  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx",
+  "schemaVerbosity": "compact"
+}
+```
+
+Claude Code MCP configuration:
+```json
+{
+  "mcpServers": {
+    "mainwp": {
+      "command": "node",
+      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "env": {
+        "MAINWP_URL": "https://dashboard.example.com",
+        "MAINWP_USER": "admin",
+        "MAINWP_APP_PASSWORD": "xxxx xxxx xxxx xxxx xxxx xxxx",
+        "MAINWP_SCHEMA_VERBOSITY": "compact"
+      }
+    }
+  }
+}
+```
+
+**Validation:** Invalid values (e.g., `verbose`, `minimal`) will cause startup failure with a clear error message. Only `standard` and `compact` are accepted.
 
 ### Creating a WordPress Application Password
 

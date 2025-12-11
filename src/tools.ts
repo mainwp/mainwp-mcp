@@ -7,7 +7,7 @@
 
 import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { Ability, fetchAbilities, executeAbility, getAbility } from './abilities.js';
-import { Config } from './config.js';
+import { Config, SchemaVerbosity } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
 import { Logger } from './logging.js';
@@ -71,51 +71,162 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
 }
 
 /**
+ * Truncate a description to the first sentence or ~60 characters
+ *
+ * Strategy:
+ * - Preserve full description if already ≤60 characters
+ * - Return first sentence if it's within limit (≤65 chars, small tolerance)
+ * - Otherwise truncate to 57 characters with ellipsis
+ */
+function truncateDescription(description: string | undefined | null): string {
+  if (!description) {
+    return '';
+  }
+
+  // If already short enough, return as-is
+  if (description.length <= 60) {
+    return description;
+  }
+
+  // Try to find first sentence boundary
+  const sentenceMatch = description.match(/^[^.!?]+[.!?](?:\s|$)/);
+  if (sentenceMatch) {
+    const sentence = sentenceMatch[0].trim();
+    // Only use sentence if it's within limit (allow small tolerance of 5 chars)
+    if (sentence.length <= 65) {
+      return sentence;
+    }
+  }
+
+  // No suitable sentence found, truncate to ~60 chars
+  return description.slice(0, 57) + '...';
+}
+
+/**
+ * Recursively compress a JSON Schema by truncating descriptions
+ *
+ * Preserves critical fields: type, enum, items, default, minimum, maximum, required, format
+ * Removes: examples field
+ */
+function compressSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  // If no properties field, return schema as-is
+  if (!schema.properties || typeof schema.properties !== 'object') {
+    return schema;
+  }
+
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  const compressedProperties: Record<string, Record<string, unknown>> = {};
+
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!prop || typeof prop !== 'object') {
+      compressedProperties[key] = prop;
+      continue;
+    }
+
+    // Create compressed property, preserving critical fields
+    const compressedProp: Record<string, unknown> = {};
+
+    // Always preserve these critical fields
+    const criticalFields = ['type', 'enum', 'default', 'minimum', 'maximum', 'format', 'required', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern'];
+    for (const field of criticalFields) {
+      if (field in prop) {
+        compressedProp[field] = prop[field];
+      }
+    }
+
+    // Truncate description
+    if (typeof prop.description === 'string') {
+      compressedProp.description = truncateDescription(prop.description);
+    }
+
+    // Handle items (for arrays) - recursively compress if it has properties
+    if (prop.items && typeof prop.items === 'object') {
+      const items = prop.items as Record<string, unknown>;
+      if (items.properties) {
+        compressedProp.items = compressSchema(items);
+      } else {
+        // Simple items (e.g., { type: 'string' })
+        compressedProp.items = items;
+      }
+    }
+
+    // Handle nested properties (for objects) - recursively compress
+    if (prop.properties && typeof prop.properties === 'object') {
+      const nested = compressSchema(prop as Record<string, unknown>);
+      compressedProp.properties = nested.properties;
+      if (nested.required) {
+        compressedProp.required = nested.required;
+      }
+    }
+
+    // Note: 'examples' field is intentionally NOT copied (removed in compact mode)
+
+    compressedProperties[key] = compressedProp;
+  }
+
+  return {
+    ...schema,
+    properties: compressedProperties,
+  };
+}
+
+/**
  * Convert a MainWP Ability to an MCP Tool definition
  *
  * Enhances tool metadata with:
  * - MCP semantic annotations (readOnlyHint, destructiveHint, idempotentHint)
  * - Highlighted safety parameters (dry_run, confirm) in descriptions
+ *
+ * @param ability - The MainWP ability to convert
+ * @param verbosity - Schema verbosity level ('compact' or 'standard')
  */
-function abilityToTool(ability: Ability): Tool {
+function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'): Tool {
   // Create a tool name from the ability name
   // e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
   const toolName = abilityNameToToolName(ability.name);
   const meta = ability.meta?.annotations;
-  const inputSchema = convertInputSchema(ability);
+  let inputSchema = convertInputSchema(ability);
 
-  // Build description with safety hints
-  let description = ability.description;
-
-  // Add custom instructions from annotations if present
-  if (meta?.instructions) {
-    description += ` ${meta.instructions}`;
+  // Apply schema compression in compact mode
+  if (verbosity === 'compact') {
+    inputSchema = compressSchema(inputSchema as Record<string, unknown>) as Tool['inputSchema'];
   }
 
-  // Detect safety parameters in schema
-  const props = (inputSchema.properties || {}) as Record<string, object>;
-  const hasDryRun = 'dry_run' in props;
-  const hasConfirm = 'confirm' in props;
+  // Build description - base description is always included
+  let description = ability.description;
 
-  // Build description tags based on tool characteristics
-  if (meta?.destructive) {
-    // Destructive tools: highlight safety requirements prominently
-    const hints: string[] = [];
-    if (hasConfirm) hints.push('Requires confirm: true');
-    if (hasDryRun) hints.push('Supports dry_run');
-    if (!meta.idempotent) hints.push('Not idempotent');
-    if (hints.length > 0) {
-      description += ` [DESTRUCTIVE, ${hints.join(', ')}]`;
-    } else {
-      description += ' [DESTRUCTIVE]';
+  // In standard mode, add custom instructions and safety tags
+  if (verbosity === 'standard') {
+    // Add custom instructions from annotations if present
+    if (meta?.instructions) {
+      description += ` ${meta.instructions}`;
     }
-  } else {
-    // Non-destructive tools: note available features
-    const notes: string[] = [];
-    if (hasDryRun) notes.push('Supports dry_run');
-    if (meta?.readonly) notes.push('Read-only');
-    if (notes.length > 0) {
-      description += ` [${notes.join(', ')}]`;
+
+    // Detect safety parameters in schema
+    const props = (inputSchema.properties || {}) as Record<string, object>;
+    const hasDryRun = 'dry_run' in props;
+    const hasConfirm = 'confirm' in props;
+
+    // Build description tags based on tool characteristics
+    if (meta?.destructive) {
+      // Destructive tools: highlight safety requirements prominently
+      const hints: string[] = [];
+      if (hasConfirm) hints.push('Requires confirm: true');
+      if (hasDryRun) hints.push('Supports dry_run');
+      if (!meta.idempotent) hints.push('Not idempotent');
+      if (hints.length > 0) {
+        description += ` [DESTRUCTIVE, ${hints.join(', ')}]`;
+      } else {
+        description += ' [DESTRUCTIVE]';
+      }
+    } else {
+      // Non-destructive tools: note available features
+      const notes: string[] = [];
+      if (hasDryRun) notes.push('Supports dry_run');
+      if (meta?.readonly) notes.push('Read-only');
+      if (notes.length > 0) {
+        description += ` [${notes.join(', ')}]`;
+      }
     }
   }
 
@@ -123,7 +234,7 @@ function abilityToTool(ability: Ability): Tool {
     name: toolName,
     description,
     inputSchema,
-    // MCP semantic annotations for client UI hints
+    // MCP semantic annotations for client UI hints (always included regardless of verbosity)
     annotations: meta ? {
       readOnlyHint: meta.readonly,
       destructiveHint: meta.destructive,
@@ -141,7 +252,7 @@ function abilityToTool(ability: Ability): Tool {
  */
 export async function getTools(config: Config): Promise<Tool[]> {
   const abilities = await fetchAbilities(config);
-  let tools = abilities.map(abilityToTool);
+  let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
@@ -163,6 +274,14 @@ export async function getTools(config: Config): Promise<Tool[]> {
     console.error(
       `[mainwp-mcp] Tool filtering: ${originalCount} → ${tools.length} tools ` +
       `(allowed: ${allowedCount}, blocked: ${blockedCount})`
+    );
+  }
+
+  // Log when non-default schema verbosity is active
+  if (config.schemaVerbosity !== 'standard') {
+    console.error(
+      `[mainwp-mcp] Schema verbosity: ${config.schemaVerbosity} ` +
+      `(reduces token usage by ~30% with minimal descriptions)`
     );
   }
 

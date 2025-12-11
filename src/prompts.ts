@@ -40,9 +40,9 @@ const promptDefinitions: PromptDefinition[] = [
         text: `Please diagnose issues with site ID ${args?.site_id || '[site_id]'}.${args?.issue_type ? ` Focus on: ${args.issue_type}.` : ''}
 
 Steps to follow:
-1. Use mainwp_get_site_v1 to get site details and check connectivity status
+1. Use get_site_v1 to get site details and check connectivity status
 2. Check the last sync time - if stale, there may be connectivity issues
-3. Use mainwp_list_updates_v1 to check for pending updates
+3. Use list_updates_v1 to check for pending updates
 4. Review any error messages or warnings
 
 Provide a summary of:
@@ -65,8 +65,8 @@ Provide a summary of:
         text: `Run a comprehensive maintenance check across all managed sites.
 
 Steps to follow:
-1. Use mainwp_list_sites_v1 to get all sites
-2. Use mainwp_list_updates_v1 to check for pending updates
+1. Use list_sites_v1 to get all sites
+2. Use list_updates_v1 to check for pending updates
 3. Identify sites that haven't synced recently (check last_sync timestamps)
 
 Generate a maintenance summary including:
@@ -97,7 +97,7 @@ Generate a maintenance summary including:
 Guide me through this update workflow:
 
 1. **Pre-update Assessment**
-   - List all pending ${args?.update_type || ''} updates using mainwp_list_updates_v1
+   - List all pending ${args?.update_type || ''} updates using list_updates_v1
    - Identify any updates that might have compatibility issues
    - Check which sites are affected
 
@@ -167,7 +167,7 @@ Format the report in a clear, scannable format.`,
         text: `Generate a network-wide summary of all managed WordPress sites.
 
 Steps to follow:
-1. Use mainwp_list_sites_v1 to get all sites
+1. Use list_sites_v1 to get all sites
 2. Aggregate statistics across the network
 
 Create a summary report including:

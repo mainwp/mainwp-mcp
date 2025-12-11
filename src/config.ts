@@ -13,6 +13,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+/** Allowed schema verbosity values */
+export const SCHEMA_VERBOSITY_VALUES = ['compact', 'standard'] as const;
+
+/** Schema verbosity type derived from allowed values */
+export type SchemaVerbosity = (typeof SCHEMA_VERBOSITY_VALUES)[number];
+
 export interface Config {
   /** Base URL of the MainWP Dashboard */
   dashboardUrl: string;
@@ -44,6 +50,8 @@ export interface Config {
   safeMode: boolean;
   /** Maximum cumulative response data per server session in bytes (default: 52428800 = 50MB) */
   maxSessionData: number;
+  /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
+  schemaVerbosity: SchemaVerbosity;
   /** Configuration source: 'environment', 'settings file', or 'mixed' */
   configSource: 'environment' | 'settings file' | 'mixed';
 }
@@ -80,6 +88,8 @@ export interface SettingsFile {
   allowedTools?: string[];
   /** Optional list of blocked tool names (blacklist). These tools are never exposed. */
   blockedTools?: string[];
+  /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
+  schemaVerbosity?: SchemaVerbosity;
 }
 
 const SETTINGS_FILENAME = 'settings.json';
@@ -97,7 +107,7 @@ function validateSettingsFile(settings: any, filePath: string): void {
   const errors: string[] = [];
 
   // Define expected field types
-  const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'abilityNamespace'];
+  const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'abilityNamespace', 'schemaVerbosity'];
   const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode'];
   const numberFields = ['rateLimit', 'requestTimeout', 'maxResponseSize', 'maxSessionData'];
   const arrayFields = ['allowedTools', 'blockedTools'];
@@ -133,8 +143,16 @@ function validateSettingsFile(settings: any, filePath: string): void {
     }
   }
 
+  // Validate schemaVerbosity enum
+  if (settings.schemaVerbosity !== undefined) {
+    if (!SCHEMA_VERBOSITY_VALUES.includes(settings.schemaVerbosity)) {
+      errors.push(`"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${settings.schemaVerbosity}"`);
+    }
+  }
+
   // Detect unknown fields
-  const validFields = new Set([...stringFields, ...booleanFields, ...numberFields, ...arrayFields]);
+  // Valid fields: all SettingsFile properties plus _comment (for inline documentation per schema)
+  const validFields = new Set([...stringFields, ...booleanFields, ...numberFields, ...arrayFields, '_comment']);
   for (const key of Object.keys(settings)) {
     if (!validFields.has(key)) {
       errors.push(`Unknown field "${key}"`);
@@ -276,7 +294,8 @@ export function loadConfig(): Config {
     process.env.MAINWP_MAX_SESSION_DATA ||
     process.env.MAINWP_ABILITY_NAMESPACE ||
     process.env.MAINWP_ALLOWED_TOOLS ||
-    process.env.MAINWP_BLOCKED_TOOLS
+    process.env.MAINWP_BLOCKED_TOOLS ||
+    process.env.MAINWP_SCHEMA_VERBOSITY
   );
 
   const configSource: 'environment' | 'settings file' | 'mixed' =
@@ -331,6 +350,21 @@ export function loadConfig(): Config {
   // Parse allowed/blocked tool lists
   const allowedTools = getStringArray(process.env.MAINWP_ALLOWED_TOOLS, settings?.allowedTools, []);
   const blockedTools = getStringArray(process.env.MAINWP_BLOCKED_TOOLS, settings?.blockedTools, []);
+
+  // Parse schema verbosity (default: 'standard' for backwards compatibility)
+  const schemaVerbosity = getString(
+    process.env.MAINWP_SCHEMA_VERBOSITY,
+    settings?.schemaVerbosity,
+    'standard'
+  ) as SchemaVerbosity;
+
+  // Validate enum value
+  if (!SCHEMA_VERBOSITY_VALUES.includes(schemaVerbosity as any)) {
+    throw new Error(
+      `MAINWP_SCHEMA_VERBOSITY must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${schemaVerbosity}" ` +
+      `(set via environment variable or settings.json)`
+    );
+  }
 
   // Validate no conflicts between allowed and blocked lists
   if (allowedTools.length > 0 && blockedTools.length > 0) {
@@ -394,6 +428,7 @@ export function loadConfig(): Config {
       maxResponseSize,
       safeMode,
       maxSessionData,
+      schemaVerbosity,
       configSource,
       ...(allowedTools.length > 0 ? { allowedTools } : {}),
       ...(blockedTools.length > 0 ? { blockedTools } : {}),
@@ -412,6 +447,7 @@ export function loadConfig(): Config {
     maxResponseSize,
     safeMode,
     maxSessionData,
+    schemaVerbosity,
     configSource,
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(blockedTools.length > 0 ? { blockedTools } : {}),

@@ -328,9 +328,27 @@ export async function executeAbility(
   }
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ message: response.statusText }));
-    const errorCode = (errorData as { code?: string }).code || String(response.status);
-    const errorMsg = (errorData as { message?: string }).message || response.statusText;
+    // Read body as text first, then try to parse as JSON
+    // This handles non-JSON error responses gracefully
+    const bodyText = await response.text();
+    let errorCode = String(response.status);
+    let errorMsg = response.statusText;
+
+    // Only try to parse as JSON if the body looks like JSON
+    if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
+      try {
+        const errorData = JSON.parse(bodyText);
+        errorCode = (errorData as { code?: string }).code || errorCode;
+        errorMsg = (errorData as { message?: string }).message || errorMsg;
+      } catch {
+        // JSON parse failed - use raw text as message
+        errorMsg = bodyText || response.statusText;
+      }
+    } else if (bodyText) {
+      // Non-JSON response body - use as error message
+      errorMsg = bodyText;
+    }
+
     throw new Error(
       `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}`
     );

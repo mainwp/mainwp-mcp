@@ -86,6 +86,12 @@
       },
       "uniqueItems": true,
       "description": "Blacklist of tool names to hide. These tools are never exposed. Cannot conflict with allowedTools."
+    },
+    "schemaVerbosity": {
+      "type": "string",
+      "enum": ["compact", "standard"],
+      "default": "standard",
+      "description": "Schema verbosity level. 'compact' reduces token usage by ~30% with shorter descriptions. 'standard' provides full descriptions with examples and safety information. Default is 'standard'."
     }
   }
 }

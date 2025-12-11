@@ -36,7 +36,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.6';
+const SERVER_VERSION = '1.0.0-alpha.7';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -180,10 +180,17 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
   });
 
   // Handler: Read a resource
+  // URI Handling Convention:
+  // - Static URIs (mainwp://abilities, mainwp://categories, mainwp://status, mainwp://help)
+  //   use direct equality checks for performance.
+  // - Dynamic/parameterized URIs (mainwp://site/{id}, mainwp://help/tool/{name})
+  //   MUST be routed through validateResourceUri() for security validation.
+  // - Do not introduce new dynamic URI patterns without using validateResourceUri().
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
 
     try {
+      // Static URI handlers (no validation needed - exact match)
       if (uri === 'mainwp://abilities') {
         const abilities = await fetchAbilities(config);
         return {
@@ -438,12 +445,13 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
     const message = error instanceof Error ? error.message : String(error);
     const lowerMessage = message.toLowerCase();
 
-    // Authentication failures (401/403)
+    // Authentication failures (401/403) - provide auth-type specific guidance
     if (lowerMessage.includes('401') || lowerMessage.includes('403') ||
         lowerMessage.includes('unauthorized') || lowerMessage.includes('forbidden')) {
-      throw new Error(
-        'Authentication failed: Invalid credentials. Verify MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN are correct and the user has REST API access.'
-      );
+      const authHint = config.authType === 'basic'
+        ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
+        : 'Verify MAINWP_TOKEN (or apiToken in settings.json) is correct and has not expired.';
+      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`);
     }
 
     // Endpoint not found (404) - likely missing Abilities API plugin
