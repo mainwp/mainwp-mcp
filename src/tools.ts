@@ -11,6 +11,7 @@ import { Config } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
 import { Logger } from './logging.js';
+import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
 
 /**
  * Session-level cumulative data tracking.
@@ -168,33 +169,8 @@ export async function getTools(config: Config): Promise<Tool[]> {
   return tools;
 }
 
-/**
- * Convert ability name to MCP tool name
- * Strips namespace prefix since MCP server name provides context.
- * e.g., "mainwp/list-sites-v1" -> "list_sites_v1"
- */
-export function abilityNameToToolName(abilityName: string): string {
-  // Strip namespace prefix: "mainwp/list-sites-v1" → "list-sites-v1"
-  const slashIndex = abilityName.indexOf('/');
-  if (slashIndex === -1) {
-    throw new Error(`Invalid ability name format (missing namespace): ${abilityName}`);
-  }
-  const withoutNamespace = abilityName.slice(slashIndex + 1);
-  // Convert hyphens to underscores: "list-sites-v1" → "list_sites_v1"
-  return withoutNamespace.replace(/-/g, '_');
-}
-
-/**
- * Map MCP tool name back to ability name
- * Uses configured namespace since tool names don't include it.
- * e.g., "list_sites_v1" + "mainwp" -> "mainwp/list-sites-v1"
- */
-export function toolNameToAbilityName(toolName: string, namespace: string): string {
-  // Convert underscores back to hyphens: "list_sites_v1" → "list-sites-v1"
-  const withHyphens = toolName.replace(/_/g, '-');
-  // Prepend namespace: "mainwp/list-sites-v1"
-  return `${namespace}/${withHyphens}`;
-}
+// Re-export naming functions for backward compatibility
+export { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
 
 /**
  * Execute an MCP tool call by forwarding to the corresponding ability
@@ -209,6 +185,8 @@ export async function executeTool(
   const startTime = performance.now();
   const hasArguments = Object.keys(args).length > 0;
 
+  // SECURITY: Only log metadata (toolName, hasArguments boolean), never log actual
+  // argument values or response content as they may contain sensitive data.
   logger.debug('Tool execution started', { toolName, hasArguments });
 
   try {

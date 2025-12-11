@@ -320,6 +320,14 @@ export function loadConfig(): Config {
   // Parse ability namespace (default: 'mainwp', strip trailing slashes)
   const abilityNamespace = getString(process.env.MAINWP_ABILITY_NAMESPACE, settings?.abilityNamespace, 'mainwp').replace(/\/+$/, '');
 
+  // Security warning: empty namespace exposes ALL abilities from the API
+  if (!abilityNamespace) {
+    console.error(
+      'WARNING: Empty abilityNamespace exposes ALL abilities from the Abilities API. ' +
+      'This may include abilities from other plugins. Set abilityNamespace to restrict exposure.'
+    );
+  }
+
   // Parse allowed/blocked tool lists
   const allowedTools = getStringArray(process.env.MAINWP_ALLOWED_TOOLS, settings?.allowedTools, []);
   const blockedTools = getStringArray(process.env.MAINWP_BLOCKED_TOOLS, settings?.blockedTools, []);

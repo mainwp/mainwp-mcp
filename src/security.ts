@@ -98,6 +98,13 @@ export function sanitizeError(message: string): string {
     .replace(/[A-Z]:\\[\w\-\\./]+/gi, '[path]')
     // Remove credentials in URLs (user:pass@host)
     .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
+    // Remove Bearer tokens (Authorization: Bearer xxx)
+    .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
+    // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
+    // Matches: TOKEN=xxx, _TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", etc.
+    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*"[^"]*"/gi, '$1=[redacted]')
+    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*'[^']*'/gi, '$1=[redacted]')
+    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[\w\-._~+/]+=*/gi, '$1=[redacted]')
     // Remove stack traces (at Function.name (file:line:col))
     .replace(/\s+at\s+.+\(.+:\d+:\d+\)/g, '')
     // Remove Node.js internal paths

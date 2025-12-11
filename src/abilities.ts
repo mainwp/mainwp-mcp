@@ -7,6 +7,7 @@
 
 import { Config, getAbilitiesApiUrl, getAuthHeaders } from './config.js';
 import { RateLimiter, sanitizeError } from './security.js';
+import { abilityNameToToolName } from './naming.js';
 import https from 'https';
 
 /**
@@ -393,22 +394,6 @@ export interface HelpDocument {
   toolsWithDryRun: string[];
   toolsRequiringConfirm: string[];
   toolsByCategory: Record<string, ToolHelp[]>;
-}
-
-/**
- * Convert ability name to MCP tool name (local helper to avoid circular import)
- * Strips namespace prefix since MCP server name provides context.
- * e.g., "mainwp/list-sites-v1" -> "list_sites_v1"
- */
-function abilityNameToToolName(abilityName: string): string {
-  // Strip namespace prefix: "mainwp/list-sites-v1" → "list-sites-v1"
-  const slashIndex = abilityName.indexOf('/');
-  if (slashIndex === -1) {
-    throw new Error(`Invalid ability name format (missing namespace): ${abilityName}`);
-  }
-  const withoutNamespace = abilityName.slice(slashIndex + 1);
-  // Convert hyphens to underscores: "list-sites-v1" → "list_sites_v1"
-  return withoutNamespace.replace(/-/g, '_');
 }
 
 /**
