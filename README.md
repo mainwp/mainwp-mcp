@@ -34,6 +34,8 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 4. Start chatting: "What sites need updates?" or "Sync all my sites"
 
+Need inspiration? See the [Example Prompts](docs/example-prompts.md) for more ideas.
+
 ---
 
 ## Credential Configuration
