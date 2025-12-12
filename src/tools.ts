@@ -12,6 +12,14 @@ import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
 import { Logger } from './logging.js';
 import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
+import {
+  buildSafeModeBlockedResponse,
+  buildInvalidParameterResponse,
+  buildConflictingParametersResponse,
+  buildConfirmationRequiredResponse,
+  buildPreviewRequiredResponse,
+  buildPreviewExpiredResponse,
+} from './confirmation-responses.js';
 
 /**
  * Session-level cumulative data tracking.
@@ -26,10 +34,69 @@ import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
 let sessionDataBytes = 0;
 
 /**
+ * Preview tracking for two-phase confirmation flow.
+ * Maps preview keys to timestamps for validation and expiry.
+ */
+const pendingPreviews = new Map<string, number>();
+
+/** Preview expiry time: 5 minutes in milliseconds */
+const PREVIEW_EXPIRY_MS = 5 * 60 * 1000;
+
+/** Maximum number of pending previews to prevent memory exhaustion */
+const MAX_PENDING_PREVIEWS = 100;
+
+/**
  * Get the current cumulative session data usage in bytes.
  */
 export function getSessionDataUsage(): number {
   return sessionDataBytes;
+}
+
+/**
+ * Generate a unique preview key for a tool call.
+ * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
+ * from the key to ensure preview and execution calls match.
+ *
+ * Note: Uses JSON.stringify with sorted top-level keys. Nested object key
+ * ordering is not normalized, which may cause different keys for semantically
+ * identical nested structures.
+ */
+function getPreviewKey(toolName: string, args: Record<string, unknown>): string {
+  const { confirm, user_confirmed, dry_run, ...relevantArgs } = args;
+  const sortedKeys = Object.keys(relevantArgs).sort();
+  return `${toolName}:${JSON.stringify(relevantArgs, sortedKeys)}`;
+}
+
+/**
+ * Clean up expired preview keys and enforce maximum preview limit.
+ * Two-pass cleanup strategy:
+ * 1. Remove all expired entries (older than PREVIEW_EXPIRY_MS)
+ * 2. If still over MAX_PENDING_PREVIEWS, remove oldest entries until at limit
+ *
+ * This bounds memory without requiring periodic timers (suitable for stdio server).
+ */
+function cleanupExpiredPreviews(): void {
+  const now = Date.now();
+
+  // First pass: Remove expired entries
+  for (const [key, timestamp] of pendingPreviews.entries()) {
+    if (now - timestamp > PREVIEW_EXPIRY_MS) {
+      pendingPreviews.delete(key);
+    }
+  }
+
+  // Second pass: Enforce max size limit by removing oldest entries
+  if (pendingPreviews.size > MAX_PENDING_PREVIEWS) {
+    // Sort by timestamp (oldest first)
+    const sortedEntries = Array.from(pendingPreviews.entries())
+      .sort((a, b) => a[1] - b[1]);
+
+    // Remove oldest entries until at limit
+    const toRemove = sortedEntries.slice(0, pendingPreviews.size - MAX_PENDING_PREVIEWS);
+    for (const [key] of toRemove) {
+      pendingPreviews.delete(key);
+    }
+  }
 }
 
 /**
@@ -187,7 +254,26 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
   const meta = ability.meta?.annotations;
   let inputSchema = convertInputSchema(ability);
 
-  // Apply schema compression in compact mode
+  // Detect safety parameters in schema (before compression, needed for user_confirmed injection)
+  const props = (inputSchema.properties || {}) as Record<string, object>;
+  const hasDryRun = 'dry_run' in props;
+  const hasConfirm = 'confirm' in props;
+  const isDestructive = meta?.destructive ?? false;
+
+  // Add user_confirmed parameter for destructive tools with confirm parameter
+  // This must happen BEFORE schema compression so it applies to all verbosity modes
+  if (isDestructive && hasConfirm) {
+    const mutableProps = inputSchema.properties as Record<string, object>;
+    mutableProps['user_confirmed'] = {
+      type: 'boolean',
+      description: 'Set to true ONLY after showing the preview to the user and receiving their explicit confirmation. ' +
+                   'WORKFLOW: 1) Call with confirm:true (without user_confirmed) to get preview. ' +
+                   '2) Show preview to user. 3) If user confirms, call again with user_confirmed:true. ' +
+                   'NEVER set user_confirmed:true without first requesting a preview.'
+    };
+  }
+
+  // Apply schema compression in compact mode (after user_confirmed injection)
   if (verbosity === 'compact') {
     inputSchema = compressSchema(inputSchema as Record<string, unknown>) as Tool['inputSchema'];
   }
@@ -202,22 +288,26 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
       description += ` ${meta.instructions}`;
     }
 
-    // Detect safety parameters in schema
-    const props = (inputSchema.properties || {}) as Record<string, object>;
-    const hasDryRun = 'dry_run' in props;
-    const hasConfirm = 'confirm' in props;
-
     // Build description tags based on tool characteristics
-    if (meta?.destructive) {
+    if (isDestructive) {
       // Destructive tools: highlight safety requirements prominently
       const hints: string[] = [];
-      if (hasConfirm) hints.push('Requires confirm: true');
+      if (hasConfirm) hints.push('Requires two-step confirmation');
       if (hasDryRun) hints.push('Supports dry_run');
-      if (!meta.idempotent) hints.push('Not idempotent');
+      if (!meta?.idempotent) hints.push('Not idempotent');
       if (hints.length > 0) {
         description += ` [DESTRUCTIVE, ${hints.join(', ')}]`;
       } else {
         description += ' [DESTRUCTIVE]';
+      }
+
+      // Add confirmation workflow instructions for tools with confirm parameter
+      if (hasConfirm) {
+        description += '\n\nCONFIRMATION FLOW: ' +
+          '1) Call with confirm:true to preview what will be affected. ' +
+          '2) Show preview to user and ask for confirmation. ' +
+          '3) If confirmed, call again with user_confirmed:true to execute. ' +
+          'Do NOT set user_confirmed:true without explicit user consent.';
       }
     } else {
       // Non-destructive tools: note available features
@@ -360,22 +450,162 @@ export async function executeTool(
       // runaway API responses, not small fixed-size local error messages.
       if (isDestructive) {
         logger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
+        const ctx = { tool: toolName, ability: abilityName };
 
         return [
           {
             type: 'text',
-            text: JSON.stringify({
-              error: 'SAFE_MODE_BLOCKED',
-              message: `Safe mode blocked destructive operation: ${toolName}`,
-              details: {
-                tool: toolName,
-                ability: abilityName,
-                reason: 'Destructive operations are disabled in safe mode.',
-                resolution: 'To execute this operation, disable safe mode by setting MAINWP_SAFE_MODE=false or use a non-production environment.',
-              },
-            }, null, 2),
+            text: JSON.stringify(buildSafeModeBlockedResponse(ctx), null, 2),
           },
         ];
+      }
+    }
+
+    // Two-phase confirmation flow for destructive operations
+    // Only applies when requireUserConfirmation is enabled and tool is destructive
+    if (config.requireUserConfirmation && isDestructive) {
+      // Check if tool supports confirmation parameter
+      const schemaProps = ability.input_schema?.properties;
+      const hasConfirmParam = schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
+
+      // Validation: user_confirmed on tools without confirm parameter
+      if (!hasConfirmParam && args.user_confirmed === true) {
+        logger.warning('Invalid parameter: user_confirmed on tool without confirm support', {
+          toolName,
+          abilityName,
+        });
+
+        // Note: This fixed-size local error message is intentionally excluded from
+        // sessionDataBytes tracking. The session data limit targets runaway API
+        // responses, not small validation errors.
+        const ctx = { tool: toolName, ability: abilityName };
+        const errorResponse = JSON.stringify(buildInvalidParameterResponse(ctx), null, 2);
+
+        return [{ type: 'text', text: errorResponse }];
+      }
+
+      if (hasConfirmParam) {
+        // Validation: Conflicting parameters (user_confirmed + dry_run)
+        if (args.user_confirmed === true && args.dry_run === true) {
+          logger.warning('Conflicting parameters: user_confirmed and dry_run both set', {
+            toolName,
+            abilityName,
+            userConfirmed: args.user_confirmed,
+            dryRun: args.dry_run,
+          });
+
+          // Note: This fixed-size local error message is intentionally excluded from
+          // sessionDataBytes tracking. The session data limit targets runaway API
+          // responses, not small validation errors.
+          const ctx = { tool: toolName, ability: abilityName };
+          const errorResponse = JSON.stringify(buildConflictingParametersResponse(ctx), null, 2);
+
+          return [{ type: 'text', text: errorResponse }];
+        }
+
+        // Case 1: Explicit dry_run bypass - skip confirmation flow entirely
+        if (args.dry_run === true) {
+          logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
+          // Proceed to normal execution with effectiveArgs unchanged
+        }
+        // Case 2: Preview request (confirm: true without user_confirmed)
+        else if (args.confirm === true && args.user_confirmed !== true) {
+          cleanupExpiredPreviews();
+
+          // Execute preview with dry_run: true
+          const previewArgs = { ...effectiveArgs, dry_run: true, confirm: undefined };
+          const previewResult = await executeAbility(config, abilityName, previewArgs);
+
+          // Store preview for later validation
+          const previewKey = getPreviewKey(toolName, args);
+          pendingPreviews.set(previewKey, Date.now());
+
+          logger.info('Preview generated for confirmation', { toolName, previewKey });
+
+          // Return structured preview response
+          const ctx = { tool: toolName, ability: abilityName };
+          const previewResponse = JSON.stringify(
+            buildConfirmationRequiredResponse(ctx, previewResult),
+            null,
+            2
+          );
+
+          // Track preview response size (contains API data that could be large)
+          const previewBytes = Buffer.byteLength(previewResponse, 'utf8');
+          if (sessionDataBytes + previewBytes > config.maxSessionData) {
+            logger.error('Session data limit exceeded during preview', {
+              toolName,
+              previewBytes,
+              sessionDataBytes,
+              maxSessionData: config.maxSessionData,
+              wouldBe: sessionDataBytes + previewBytes,
+            });
+            throw McpErrorFactory.resourceExhausted(
+              `Session data limit exceeded: ${sessionDataBytes + previewBytes} bytes would exceed ${config.maxSessionData} bytes limit`
+            );
+          }
+          sessionDataBytes += previewBytes;
+
+          return [{ type: 'text', text: previewResponse }];
+        }
+        // Case 3: Confirmed execution (user_confirmed: true)
+        else if (args.user_confirmed === true) {
+          // Warning: Ambiguous parameters (confirm + user_confirmed both set)
+          // Per PRD line 319: allow execution but log for tracking
+          if (args.confirm === true) {
+            logger.warning('Ambiguous parameters: both confirm and user_confirmed set, treating as confirmation', {
+              toolName,
+              abilityName,
+            });
+          }
+
+          cleanupExpiredPreviews();
+
+          const previewKey = getPreviewKey(toolName, args);
+          const previewTimestamp = pendingPreviews.get(previewKey);
+
+          // Check if preview exists
+          if (previewTimestamp === undefined) {
+            logger.warning('Confirmation failed - no preview found', { toolName, previewKey });
+
+            // Note: This fixed-size local error message is intentionally excluded from
+            // sessionDataBytes tracking. The session data limit targets runaway API
+            // responses, not small validation errors.
+            const ctx = { tool: toolName, ability: abilityName };
+            const errorResponse = JSON.stringify(buildPreviewRequiredResponse(ctx), null, 2);
+
+            return [{ type: 'text', text: errorResponse }];
+          }
+
+          // Check if preview expired
+          if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
+            pendingPreviews.delete(previewKey);
+            logger.warning('Confirmation failed - preview expired', { toolName, previewKey });
+
+            // Note: This fixed-size local error message is intentionally excluded from
+            // sessionDataBytes tracking. The session data limit targets runaway API
+            // responses, not small validation errors.
+            const ctx = { tool: toolName, ability: abilityName };
+            const errorResponse = JSON.stringify(buildPreviewExpiredResponse(ctx), null, 2);
+
+            return [{ type: 'text', text: errorResponse }];
+          }
+
+          // Preview is valid - proceed with execution
+          pendingPreviews.delete(previewKey);
+          const previewAge = Date.now() - previewTimestamp;
+          logger.info('User confirmation validated', { toolName, previewKey, previewAge });
+
+          // Remove user_confirmed flag, keep confirm: true for the actual execution
+          const { user_confirmed, ...confirmedArgs } = effectiveArgs;
+          effectiveArgs = { ...confirmedArgs, confirm: true };
+        }
+        // Default case: no confirm or user_confirmed provided
+        else {
+          // This shouldn't happen for tools with confirm param if schema is properly enforced
+          // Log warning but proceed to maintain backward compatibility
+          logger.warning('Destructive tool called without confirmation parameters', { toolName, abilityName });
+        }
       }
     }
 

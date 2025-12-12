@@ -78,6 +78,22 @@ Store your credentials once in `~/.config/mainwp-mcp/settings.json`:
 
 This keeps credentials in one place for all your AI tools. When you need to rotate passwords, you only update one file. You can also set restrictive permissions with `chmod 600` and safely share your MCP configs without exposing credentials.
 
+If you manage multiple dashboards, this approach works well. The server checks the current working directory for `settings.json` first, so you can create separate folders for each dashboard and use the `cwd` option to point at them:
+
+```json
+{
+  "mcpServers": {
+    "mainwp": {
+      "command": "node",
+      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "cwd": "/path/to/dashboard-credentials"
+    }
+  }
+}
+```
+
+Each folder just needs its own `settings.json` with that dashboard's credentials. To switch dashboards, change the `cwd` path or create multiple server entries with different names.
+
 The downside is you have an extra file to manage, and all tools share the same password.
 
 ### Which Should I Use?
@@ -366,6 +382,7 @@ For Windsurf and other hosts, see the [Installation Guide](docs/installation.md)
 | `MAINWP_APP_PASSWORD` | Yes | | WordPress Application Password |
 | `MAINWP_SKIP_SSL_VERIFY` | No | `false` | Skip SSL verification (dev only) |
 | `MAINWP_SAFE_MODE` | No | `false` | Block destructive operations |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No | `true` | Require two-step confirmation for destructive operations |
 | `MAINWP_ALLOWED_TOOLS` | No | | Whitelist of tools to expose |
 | `MAINWP_BLOCKED_TOOLS` | No | | Blacklist of tools to hide |
 | `MAINWP_SCHEMA_VERBOSITY` | No | `standard` | `standard` or `compact` |
@@ -385,6 +402,75 @@ Instead of environment variables, you can use a `settings.json` file:
 ```
 
 The server checks `./settings.json` and `~/.config/mainwp-mcp/settings.json` in order. Environment variables override file settings.
+
+---
+
+## Two-Step Confirmation Flow
+
+Destructive operations (deletions) require explicit user confirmation to prevent accidental data loss. When you ask the AI to delete something, it shows you a preview first and waits for your approval.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant AI
+    participant Server
+    participant MainWP
+
+    User->>AI: Delete site 3
+    AI->>Server: delete_site_v1(site_id: 3, confirm: true)
+    Server->>MainWP: dry_run preview request
+    MainWP-->>Server: site details
+    Server-->>AI: PREVIEW with site info
+    AI->>User: Shows: "Example Site (https://example.com)<br/>Confirm deletion?"
+    User->>AI: Yes, proceed
+    AI->>Server: delete_site_v1(site_id: 3, user_confirmed: true)
+    Server->>MainWP: execute deletion
+    MainWP-->>Server: success
+    Server-->>AI: deletion complete
+    AI->>User: Site deleted successfully
+```
+
+**Example Conversation:**
+
+```
+You: Delete site 3
+
+AI: I found site 3: Example Site (https://example.com)
+    This will permanently remove it from your MainWP Dashboard.
+    Do you want me to proceed with deletion?
+
+You: Yes
+
+AI: Site 3 has been deleted successfully.
+```
+
+### Affected Operations
+
+These destructive tools require two-step confirmation:
+- `delete_site_v1` - Delete a child site
+- `delete_client_v1` - Delete a client record
+- `delete_tag_v1` - Delete a tag
+- `delete_site_plugins_v1` - Delete plugins from a site
+- `delete_site_themes_v1` - Delete themes from a site
+
+### Disabling for Automation
+
+If you're running automated scripts that need to delete without interaction:
+
+```json
+{
+  "requireUserConfirmation": false
+}
+```
+
+Or as an environment variable:
+```bash
+MAINWP_REQUIRE_USER_CONFIRMATION=false
+```
+
+See the [Security Guide](docs/security.md#confirmation-guardrails) for more details.
 
 ---
 
@@ -444,10 +530,11 @@ Over 60 tools organized by category. Each tool shows parameters with type, requi
   - `tag_ids`: Tag IDs to assign (number[], optional)
   - `client_id`: Client ID to assign (number, optional)
 
-- **delete_site_v1** - Delete a child site. Requires confirmation. [DESTRUCTIVE]
+- **delete_site_v1** - Delete a child site. Requires two-step confirmation: preview then user approval. [DESTRUCTIVE]
   - `site_id_or_domain`: Site ID or domain (string|number, required)
-  - `confirm`: Must be true to execute (boolean, required)
+  - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
+  - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
 
 - **reconnect_site_v1** - Reconnect a disconnected site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -494,21 +581,23 @@ Over 60 tools organized by category. Each tool shows parameters with type, requi
   - `site_id_or_domain`: Site ID or domain (string|number, required)
   - `plugins`: Plugin slugs to deactivate (string[], required)
 
-- **delete_site_plugins_v1** - Delete plugins from a site. [DESTRUCTIVE]
+- **delete_site_plugins_v1** - Delete plugins from a site. Requires two-step confirmation: preview then user approval. [DESTRUCTIVE]
   - `site_id_or_domain`: Site ID or domain (string|number, required)
   - `plugins`: Plugin slugs to delete (string[], required)
-  - `confirm`: Must be true to execute (boolean, required)
+  - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
+  - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
 
 - **activate_site_theme_v1** - Activate a theme on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
   - `theme`: Theme slug to activate (string, required)
 
-- **delete_site_themes_v1** - Delete themes from a site. [DESTRUCTIVE]
+- **delete_site_themes_v1** - Delete themes from a site. Requires two-step confirmation: preview then user approval. [DESTRUCTIVE]
   - `site_id_or_domain`: Site ID or domain (string|number, required)
   - `themes`: Theme slugs to delete (string[], required)
-  - `confirm`: Must be true to execute (boolean, required)
+  - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
+  - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
 
 - **get_abandoned_plugins_v1** - Get abandoned plugins on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -644,10 +733,11 @@ Over 60 tools organized by category. Each tool shows parameters with type, requi
   - `note`: Notes (string, optional)
   - `selected_sites`: Site IDs to assign (number[], optional)
 
-- **delete_client_v1** - Delete a client. [DESTRUCTIVE]
+- **delete_client_v1** - Delete a client. Requires two-step confirmation: preview then user approval. [DESTRUCTIVE]
   - `client_id_or_email`: Client ID or email (string|number, required)
-  - `confirm`: Must be true to execute (boolean, required)
+  - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
+  - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
 
 - **suspend_client_v1** - Suspend a client
   - `client_id_or_email`: Client ID or email (string|number, required)
@@ -688,10 +778,11 @@ Over 60 tools organized by category. Each tool shows parameters with type, requi
   - `name`: Tag name (string, optional)
   - `color`: Tag color in hex format (string, optional)
 
-- **delete_tag_v1** - Delete a tag. [DESTRUCTIVE]
+- **delete_tag_v1** - Delete a tag. Requires two-step confirmation: preview then user approval. [DESTRUCTIVE]
   - `tag_id`: Tag ID (number, required)
-  - `confirm`: Must be true to execute (boolean, required)
+  - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
+  - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
 
 - **get_tag_sites_v1** - Get sites associated with a tag
   - `tag_id`: Tag ID (number, required)

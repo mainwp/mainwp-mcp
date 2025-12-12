@@ -48,6 +48,8 @@ export interface Config {
   maxResponseSize: number;
   /** Safe mode: prevents destructive operations by stripping confirm parameter */
   safeMode: boolean;
+  /** Require explicit user confirmation for destructive operations via two-phase preview flow */
+  requireUserConfirmation: boolean;
   /** Maximum cumulative response data per server session in bytes (default: 52428800 = 50MB) */
   maxSessionData: number;
   /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
@@ -74,6 +76,8 @@ export interface SettingsFile {
   allowHttp?: boolean;
   /** Safe mode: prevents destructive operations by stripping confirm parameter */
   safeMode?: boolean;
+  /** Require explicit user confirmation for destructive operations via two-phase preview flow */
+  requireUserConfirmation?: boolean;
   /** Rate limit: max API requests per minute (0 = disabled) */
   rateLimit?: number;
   /** Request timeout in milliseconds (default: 30000) */
@@ -108,7 +112,7 @@ function validateSettingsFile(settings: any, filePath: string): void {
 
   // Define expected field types
   const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'abilityNamespace', 'schemaVerbosity'];
-  const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode'];
+  const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode', 'requireUserConfirmation'];
   const numberFields = ['rateLimit', 'requestTimeout', 'maxResponseSize', 'maxSessionData'];
   const arrayFields = ['allowedTools', 'blockedTools'];
 
@@ -288,6 +292,7 @@ export function loadConfig(): Config {
     process.env.MAINWP_SKIP_SSL_VERIFY ||
     process.env.MAINWP_ALLOW_HTTP ||
     process.env.MAINWP_SAFE_MODE ||
+    process.env.MAINWP_REQUIRE_USER_CONFIRMATION ||
     process.env.MAINWP_RATE_LIMIT ||
     process.env.MAINWP_REQUEST_TIMEOUT ||
     process.env.MAINWP_MAX_RESPONSE_SIZE ||
@@ -311,6 +316,7 @@ export function loadConfig(): Config {
   const skipSslVerify = getBoolean(process.env.MAINWP_SKIP_SSL_VERIFY, settings?.skipSslVerify, false);
   const allowHttp = getBoolean(process.env.MAINWP_ALLOW_HTTP, settings?.allowHttp, false);
   const safeMode = getBoolean(process.env.MAINWP_SAFE_MODE, settings?.safeMode, false);
+  const requireUserConfirmation = getBoolean(process.env.MAINWP_REQUIRE_USER_CONFIRMATION, settings?.requireUserConfirmation, true);
 
   // Parse rate limit (default: 60 requests/minute)
   const rateLimit = getNumber(process.env.MAINWP_RATE_LIMIT, settings?.rateLimit, 60);
@@ -427,6 +433,7 @@ export function loadConfig(): Config {
       requestTimeout,
       maxResponseSize,
       safeMode,
+      requireUserConfirmation,
       maxSessionData,
       schemaVerbosity,
       configSource,
@@ -446,6 +453,7 @@ export function loadConfig(): Config {
     requestTimeout,
     maxResponseSize,
     safeMode,
+    requireUserConfirmation,
     maxSessionData,
     schemaVerbosity,
     configSource,

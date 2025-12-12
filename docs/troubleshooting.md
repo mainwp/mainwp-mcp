@@ -157,11 +157,145 @@ MAINWP_SAFE_MODE=false
 
 **Symptoms**: Destructive operation returns an error about missing confirmation.
 
-**Cause**: Destructive tools require `confirm: true` parameter.
+**Cause**: Destructive tools require a two-step confirmation flow.
 
-**Fix**: The AI should pass `confirm: true`. If it's not:
-1. Check if safe mode is stripping the parameter
-2. Verify the AI understands the confirmation requirement (the tool description includes this)
+**Expected Flow**:
+1. AI calls with `confirm: true` → Gets preview
+2. AI shows you the preview
+3. You confirm
+4. AI calls with `user_confirmed: true` → Executes
+
+**If the AI isn't following this flow:**
+1. Check if safe mode is enabled (it blocks all destructive operations)
+2. Try being explicit: "Show me what will be deleted first"
+3. Verify `requireUserConfirmation` is enabled (default: `true`)
+
+**For automation scripts**, disable the confirmation flow:
+```json
+{
+  "requireUserConfirmation": false
+}
+```
+
+---
+
+## Confirmation Flow Errors
+
+### "PREVIEW_REQUIRED"
+
+**Symptoms**:
+```json
+{
+  "error": "PREVIEW_REQUIRED",
+  "message": "No preview found. You must first call with confirm: true to generate a preview.",
+  "details": {
+    "tool": "delete_site_v1",
+    "ability": "mainwp/delete-site-v1",
+    "reason": "user_confirmed: true requires a prior preview request",
+    "resolution": "Call the tool with confirm: true (without user_confirmed) to generate a preview first."
+  }
+}
+```
+
+**Cause**: The AI tried to execute a destructive operation with `user_confirmed: true` without first requesting a preview.
+
+**What Happened**: The two-step confirmation flow requires the AI to show you a preview before executing. The AI skipped the preview step.
+
+**Fix**: This is usually an AI behavior issue. The AI should:
+1. First call with `confirm: true` (no `user_confirmed`)
+2. Show you the preview
+3. Then call with `user_confirmed: true` after you approve
+
+If you see this repeatedly, the AI may be confused about the workflow. Try rephrasing: "Show me what will be deleted first, then I'll confirm."
+
+### "PREVIEW_EXPIRED"
+
+**Symptoms**:
+```json
+{
+  "error": "PREVIEW_EXPIRED",
+  "message": "Preview has expired. Please request a new preview.",
+  "details": {
+    "tool": "delete_site_v1",
+    "ability": "mainwp/delete-site-v1",
+    "reason": "Preview expired after 5 minutes",
+    "resolution": "Call the tool again with confirm: true to generate a fresh preview."
+  }
+}
+```
+
+**Cause**: You waited more than 5 minutes between seeing the preview and confirming the operation.
+
+**Fix**: Request a new preview. The AI will automatically do this if you just say "yes" or "proceed."
+
+**Example:**
+```
+AI: Do you want to delete site 3?
+[You wait 6 minutes]
+You: Yes
+
+AI: The preview expired. Let me get a fresh one...
+    [Shows new preview]
+    Do you want to proceed?
+```
+
+### "CONFLICTING_PARAMETERS"
+
+**Symptoms**:
+```json
+{
+  "error": "CONFLICTING_PARAMETERS",
+  "message": "Cannot use user_confirmed and dry_run together.",
+  "detail": "user_confirmed means 'execute after preview', but dry_run means 'preview only'. These are contradictory."
+}
+```
+
+**Cause**: The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneously.
+
+**Fix**: This is an AI error. The parameters have contradictory meanings:
+- `user_confirmed: true` = "Execute this operation"
+- `dry_run: true` = "Just show me what would happen"
+
+The AI should use one or the other, not both.
+
+### "INVALID_PARAMETER: user_confirmed not supported"
+
+**Symptoms**:
+```json
+{
+  "error": "INVALID_PARAMETER",
+  "message": "user_confirmed parameter is not supported for this tool.",
+  "detail": "Only destructive tools with confirm parameter support user_confirmed."
+}
+```
+
+**Cause**: The AI tried to use `user_confirmed: true` on a non-destructive tool.
+
+**Fix**: This is an AI error. Only these tools support `user_confirmed`:
+- `delete_site_v1`
+- `delete_client_v1`
+- `delete_tag_v1`
+- `delete_site_plugins_v1`
+- `delete_site_themes_v1`
+
+Other tools don't need confirmation and should be called normally.
+
+### Disabling Confirmation Flow
+
+If you're running automation scripts and don't want the two-step flow:
+
+```json
+{
+  "requireUserConfirmation": false
+}
+```
+
+Or:
+```bash
+MAINWP_REQUIRE_USER_CONFIRMATION=false
+```
+
+**Warning:** This allows the AI to delete resources with just `confirm: true` and no preview. Only use for trusted automation.
 
 ---
 

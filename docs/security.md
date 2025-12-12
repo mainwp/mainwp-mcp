@@ -132,6 +132,138 @@ All read operations and non-destructive writes:
 
 ---
 
+## Confirmation Guardrails
+
+The two-step confirmation flow prevents accidental destructive operations by requiring the AI to show you a preview before executing deletions.
+
+### How It Works
+
+When you ask the AI to delete something, the server intercepts the request and returns a preview instead of executing immediately. The AI shows you what will be deleted and asks for explicit confirmation. Only after you confirm does the server execute the operation.
+
+**Phase 1 - Preview:**
+1. AI calls the destructive tool with `confirm: true`
+2. Server runs a dry-run preview and returns details
+3. AI shows you what will be affected
+4. AI waits for your response
+
+**Phase 2 - Execute:**
+1. You confirm the action
+2. AI calls the tool again with `user_confirmed: true`
+3. Server validates the preview was shown (within last 5 minutes)
+4. Server executes the deletion
+
+### Example Flow
+
+```
+You: Delete the "staging" tag
+
+AI: [Calls delete_tag_v1(tag_id: 5, confirm: true)]
+    Server returns preview:
+    {
+      "tag_id": 5,
+      "name": "staging",
+      "sites_affected": 12,
+      "clients_affected": 3
+    }
+
+AI: I found the "staging" tag (ID: 5).
+    This will affect 12 sites and 3 clients.
+    Do you want me to delete it?
+
+You: Yes
+
+AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true)]
+    Tag deleted successfully.
+```
+
+### Comparison with Safe Mode
+
+| Feature | Safe Mode | Confirmation Flow |
+|---------|-----------|-------------------|
+| **Purpose** | Block all destructive operations | Allow destructive operations with user approval |
+| **Use Case** | Testing, read-only access, training | Production with trusted AI |
+| **Destructive Ops** | Completely blocked | Allowed after confirmation |
+| **User Experience** | AI says "I can't do that" | AI shows preview and asks for approval |
+| **Automation** | Not suitable | Can be disabled for scripts |
+| **Default** | Disabled (`false`) | Enabled (`true`) |
+
+### When to Use Each
+
+**Use Safe Mode when:**
+- Testing integrations without risk of data loss
+- Providing read-only access to reporting tools
+- Training users who are learning the system
+- You never want AI to delete anything
+
+**Use Confirmation Flow when:**
+- Running production operations with AI assistance
+- You want safety but also need destructive capabilities
+- Working with a trusted AI assistant
+- You want to review changes before they happen
+
+**Use Both when:**
+- Safe Mode takes precedence and blocks everything
+- Not recommended (redundant)
+
+### Precedence Order
+
+When both are configured, Safe Mode takes precedence:
+
+```
+1. Safe Mode Check
+   ↓ If enabled → BLOCK all destructive operations
+   ↓ If disabled → Continue
+
+2. Confirmation Flow Check
+   ↓ If enabled → Require preview + user_confirmed
+   ↓ If disabled → Allow with just confirm: true
+
+3. Execute Operation
+```
+
+### Preview Expiry
+
+Previews expire after **5 minutes** for security. If you wait too long to confirm, you'll need to request a new preview.
+
+**Example:**
+```
+AI: Do you want to delete site 3?
+[You wait 6 minutes]
+You: Yes
+
+AI: The preview has expired. Let me get a fresh preview...
+    [Shows new preview]
+    Do you want to proceed?
+```
+
+### Disabling for Automation
+
+Automated scripts that need to delete without interaction can disable the confirmation flow:
+
+In `settings.json`:
+```json
+{
+  "requireUserConfirmation": false
+}
+```
+
+As an environment variable:
+```bash
+MAINWP_REQUIRE_USER_CONFIRMATION=false
+```
+
+**Warning:** Only disable this for trusted automation scripts. With confirmation disabled, the AI can delete resources with just `confirm: true` and no user interaction.
+
+### Security Notes
+
+- Previews are stored in memory (cleared on server restart)
+- Each preview is tied to specific operation parameters
+- Changing any parameter requires a new preview
+- Maximum 100 pending previews to prevent memory exhaustion
+- Preview keys use deterministic hashing of operation parameters
+
+---
+
 ## Tool Filtering
 
 Limit which tools the AI can access. This reduces attack surface and prevents accidental misuse.

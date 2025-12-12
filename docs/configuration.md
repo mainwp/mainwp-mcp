@@ -20,6 +20,7 @@ Environment variables always override file settings. This lets you use a base co
 | `MAINWP_APP_PASSWORD` | Yes | | WordPress Application Password |
 | `MAINWP_SKIP_SSL_VERIFY` | No | `false` | Skip SSL certificate verification |
 | `MAINWP_SAFE_MODE` | No | `false` | Block all destructive operations |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No | `true` | Require two-step confirmation for destructive operations |
 | `MAINWP_ALLOWED_TOOLS` | No | | Comma-separated whitelist of tools |
 | `MAINWP_BLOCKED_TOOLS` | No | | Comma-separated blacklist of tools |
 | `MAINWP_SCHEMA_VERBOSITY` | No | `standard` | Schema detail level: `standard` or `compact` |
@@ -60,6 +61,7 @@ Example `settings.json`:
 | `apiToken` | `MAINWP_TOKEN` | string |
 | `skipSslVerify` | `MAINWP_SKIP_SSL_VERIFY` | boolean |
 | `safeMode` | `MAINWP_SAFE_MODE` | boolean |
+| `requireUserConfirmation` | `MAINWP_REQUIRE_USER_CONFIRMATION` | boolean |
 | `allowedTools` | `MAINWP_ALLOWED_TOOLS` | string[] |
 | `blockedTools` | `MAINWP_BLOCKED_TOOLS` | string[] |
 | `schemaVerbosity` | `MAINWP_SCHEMA_VERBOSITY` | string |
@@ -177,6 +179,52 @@ Use safe mode for:
 - Training users on the system
 
 See the [Security Guide](security.md) for more on protecting destructive operations.
+
+---
+
+## User Confirmation
+
+Control whether destructive operations require two-step confirmation (preview then user approval).
+
+In `settings.json`:
+```json
+{
+  "requireUserConfirmation": true
+}
+```
+
+As an environment variable:
+```bash
+MAINWP_REQUIRE_USER_CONFIRMATION=true
+```
+
+When enabled (default), destructive tools like `delete_site_v1` require the AI to:
+1. First call with `confirm: true` to get a preview
+2. Show the preview to you
+3. Call again with `user_confirmed: true` after you approve
+
+This prevents accidental deletions while still allowing destructive operations when needed.
+
+### When to Disable
+
+Set to `false` for:
+- Automated scripts that need to delete without interaction
+- CI/CD pipelines
+- Batch operations where you've already verified the targets
+
+**Example for automation:**
+```json
+{
+  "requireUserConfirmation": false,
+  "allowedTools": [
+    "delete_site_v1",
+    "list_sites_v1",
+    "get_site_v1"
+  ]
+}
+```
+
+See the [Security Guide](security.md#confirmation-guardrails) for detailed explanation and examples.
 
 ---
 

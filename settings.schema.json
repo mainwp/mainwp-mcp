@@ -42,6 +42,11 @@
       "default": false,
       "description": "Prevent destructive operations by stripping the 'confirm' parameter from tool calls. Useful for testing or read-only access."
     },
+    "requireUserConfirmation": {
+      "type": "boolean",
+      "default": true,
+      "description": "Require explicit user confirmation for destructive operations. When enabled, destructive tools require a two-phase flow: first call with confirm:true to get a preview, then call with user_confirmed:true to execute. Set to false for automation scripts."
+    },
     "rateLimit": {
       "type": "integer",
       "minimum": 0,
