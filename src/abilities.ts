@@ -63,7 +63,8 @@ export interface Category {
  */
 let cachedAbilities: Ability[] | null = null;
 let cachedCategories: Category[] | null = null;
-let cacheTimestamp: number = 0;
+let abilitiesCacheTimestamp: number = 0;
+let categoriesCacheTimestamp: number = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
@@ -161,7 +162,7 @@ function createFetch(config: Config) {
  */
 export async function fetchAbilities(config: Config, forceRefresh = false): Promise<Ability[]> {
   // Return cached data if still valid
-  if (!forceRefresh && cachedAbilities && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+  if (!forceRefresh && cachedAbilities && Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS) {
     return cachedAbilities;
   }
 
@@ -193,7 +194,7 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
     const hasChanged = oldNames !== newNames;
 
     cachedAbilities = newAbilities;
-    cacheTimestamp = Date.now();
+    abilitiesCacheTimestamp = Date.now();
 
     // Notify callbacks if abilities changed
     if (hasChanged && oldNames !== '') {
@@ -216,7 +217,7 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
  */
 export async function fetchCategories(config: Config, forceRefresh = false): Promise<Category[]> {
   // Return cached data if still valid
-  if (!forceRefresh && cachedCategories && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+  if (!forceRefresh && cachedCategories && Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS) {
     return cachedCategories;
   }
 
@@ -240,7 +241,7 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
     cachedCategories = categoryFilter
       ? categories.filter(c => c.slug.startsWith(categoryFilter))
       : categories;
-    cacheTimestamp = Date.now();
+    categoriesCacheTimestamp = Date.now();
 
     return cachedCategories;
   } catch (error) {
@@ -363,7 +364,8 @@ export async function executeAbility(
 export function clearCache(): void {
   cachedAbilities = null;
   cachedCategories = null;
-  cacheTimestamp = 0;
+  abilitiesCacheTimestamp = 0;
+  categoriesCacheTimestamp = 0;
 }
 
 // =============================================================================

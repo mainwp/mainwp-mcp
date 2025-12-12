@@ -520,7 +520,7 @@ export async function executeTool(
           const previewKey = getPreviewKey(toolName, args);
           pendingPreviews.set(previewKey, Date.now());
 
-          logger.info('Preview generated for confirmation', { toolName, previewKey });
+          logger.info('Preview generated for confirmation', { toolName });
 
           // Return structured preview response
           const ctx = { tool: toolName, ability: abilityName };
@@ -566,7 +566,7 @@ export async function executeTool(
 
           // Check if preview exists
           if (previewTimestamp === undefined) {
-            logger.warning('Confirmation failed - no preview found', { toolName, previewKey });
+            logger.warning('Confirmation failed - no preview found', { toolName });
 
             // Note: This fixed-size local error message is intentionally excluded from
             // sessionDataBytes tracking. The session data limit targets runaway API
@@ -580,7 +580,7 @@ export async function executeTool(
           // Check if preview expired
           if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
             pendingPreviews.delete(previewKey);
-            logger.warning('Confirmation failed - preview expired', { toolName, previewKey });
+            logger.warning('Confirmation failed - preview expired', { toolName });
 
             // Note: This fixed-size local error message is intentionally excluded from
             // sessionDataBytes tracking. The session data limit targets runaway API
@@ -594,7 +594,7 @@ export async function executeTool(
           // Preview is valid - proceed with execution
           pendingPreviews.delete(previewKey);
           const previewAge = Date.now() - previewTimestamp;
-          logger.info('User confirmation validated', { toolName, previewKey, previewAge });
+          logger.info('User confirmation validated', { toolName, previewAge });
 
           // Remove user_confirmed flag, keep confirm: true for the actual execution
           const { user_confirmed, ...confirmedArgs } = effectiveArgs;

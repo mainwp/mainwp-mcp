@@ -130,6 +130,22 @@ All read operations and non-destructive writes:
 - **Read-only access**: When you only need reporting capabilities
 - **Demos**: Show capabilities without live changes
 
+### Classification Behavior
+
+Safe mode classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard.
+
+**Important:** If an ability lacks annotations or the `destructive` field is missing, the server defaults to treating it as **non-destructive** (allowed). This is intentional:
+
+1. **Dashboard Authority**: The MainWP Dashboard controls ability registration. Missing annotations indicate a Dashboard-side issue, not an MCP server problem.
+
+2. **Availability Over Blocking**: New or misconfigured abilities should not be silently blocked, which could confuse users.
+
+3. **Visibility**: A warning is logged when abilities cannot be reliably classified, enabling administrators to audit Dashboard configurations.
+
+4. **Defense in Depth**: The `confirm` parameter is always stripped in safe mode regardless of classification.
+
+**For stricter control:** Use `blockedTools` to explicitly block specific tools, or `allowedTools` to whitelist only known-safe tools.
+
 ---
 
 ## Confirmation Guardrails
@@ -410,6 +426,9 @@ The server logs to stderr:
 - Credential values
 - Tool arguments (may contain sensitive data)
 - Response content (may contain PII)
+- Preview keys for destructive operations (contain argument data)
+
+**Confirmation Flow Logging**: The two-phase confirmation system logs only tool names and timing metadata (e.g., preview age). The preview key—which contains serialized arguments—is intentionally excluded from all log statements to prevent sensitive data exposure.
 
 ### WordPress Audit Trail
 
