@@ -17,3 +17,9 @@ dist/
 
 # Local settings (may contain credentials)
 settings.json
+
+# Test coverage (generated)
+coverage/
+
+# Override global gitignore for CI/CD
+!.github/
