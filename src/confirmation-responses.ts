@@ -26,7 +26,8 @@ export function buildSafeModeBlockedResponse(ctx: ConfirmationContext): object {
       tool: ctx.tool,
       ability: ctx.ability,
       reason: 'Destructive operations are disabled in safe mode.',
-      resolution: 'To execute this operation, disable safe mode by setting MAINWP_SAFE_MODE=false or use a non-production environment.',
+      resolution:
+        'To execute this operation, disable safe mode by setting MAINWP_SAFE_MODE=false or use a non-production environment.',
     },
   };
 }
@@ -58,7 +59,8 @@ export function buildConflictingParametersResponse(ctx: ConfirmationContext): ob
       tool: ctx.tool,
       ability: ctx.ability,
       reason: 'dry_run is for read-only previews, user_confirmed is for confirmed execution',
-      resolution: 'Remove dry_run to execute with confirmation, or remove user_confirmed to preview only',
+      resolution:
+        'Remove dry_run to execute with confirmation, or remove user_confirmed to preview only',
     },
   };
 }
@@ -94,7 +96,8 @@ export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
       tool: ctx.tool,
       ability: ctx.ability,
       reason: 'user_confirmed: true requires a prior preview request',
-      resolution: 'Call the tool with confirm: true (without user_confirmed) to generate a preview first.',
+      resolution:
+        'Call the tool with confirm: true (without user_confirmed) to generate a preview first.',
     },
   };
 }

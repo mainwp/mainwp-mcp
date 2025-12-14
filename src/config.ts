@@ -54,6 +54,14 @@ export interface Config {
   maxSessionData: number;
   /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
   schemaVerbosity: SchemaVerbosity;
+  /** Enable retry logic for transient errors (default: true) */
+  retryEnabled: boolean;
+  /** Maximum retry attempts including initial request (default: 2) */
+  maxRetries: number;
+  /** Base delay between retries in milliseconds (default: 1000) */
+  retryBaseDelay: number;
+  /** Maximum delay between retries in milliseconds (default: 2000) */
+  retryMaxDelay: number;
   /** Configuration source: 'environment', 'settings file', or 'mixed' */
   configSource: 'environment' | 'settings file' | 'mixed';
 }
@@ -94,6 +102,14 @@ export interface SettingsFile {
   blockedTools?: string[];
   /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
   schemaVerbosity?: SchemaVerbosity;
+  /** Enable retry logic for transient errors (default: true) */
+  retryEnabled?: boolean;
+  /** Maximum retry attempts including initial request (default: 2) */
+  maxRetries?: number;
+  /** Base delay between retries in milliseconds (default: 1000) */
+  retryBaseDelay?: number;
+  /** Maximum delay between retries in milliseconds (default: 2000) */
+  retryMaxDelay?: number;
 }
 
 const SETTINGS_FILENAME = 'settings.json';
@@ -111,9 +127,16 @@ function validateSettingsFile(settings: any, filePath: string): void {
   const errors: string[] = [];
 
   // Define expected field types
-  const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'abilityNamespace', 'schemaVerbosity'];
-  const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode', 'requireUserConfirmation'];
-  const numberFields = ['rateLimit', 'requestTimeout', 'maxResponseSize', 'maxSessionData'];
+  const stringFields = [
+    'dashboardUrl',
+    'username',
+    'appPassword',
+    'apiToken',
+    'abilityNamespace',
+    'schemaVerbosity',
+  ];
+  const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode', 'requireUserConfirmation', 'retryEnabled'];
+  const numberFields = ['rateLimit', 'requestTimeout', 'maxResponseSize', 'maxSessionData', 'maxRetries', 'retryBaseDelay', 'retryMaxDelay'];
   const arrayFields = ['allowedTools', 'blockedTools'];
 
   // Validate string fields
@@ -150,13 +173,21 @@ function validateSettingsFile(settings: any, filePath: string): void {
   // Validate schemaVerbosity enum
   if (settings.schemaVerbosity !== undefined) {
     if (!SCHEMA_VERBOSITY_VALUES.includes(settings.schemaVerbosity)) {
-      errors.push(`"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${settings.schemaVerbosity}"`);
+      errors.push(
+        `"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${settings.schemaVerbosity}"`
+      );
     }
   }
 
   // Detect unknown fields
   // Valid fields: all SettingsFile properties plus _comment (for inline documentation per schema)
-  const validFields = new Set([...stringFields, ...booleanFields, ...numberFields, ...arrayFields, '_comment']);
+  const validFields = new Set([
+    ...stringFields,
+    ...booleanFields,
+    ...numberFields,
+    ...arrayFields,
+    '_comment',
+  ]);
   for (const key of Object.keys(settings)) {
     if (!validFields.has(key)) {
       errors.push(`Unknown field "${key}"`);
@@ -165,7 +196,9 @@ function validateSettingsFile(settings: any, filePath: string): void {
 
   // Report all errors at once
   if (errors.length > 0) {
-    throw new Error(`Invalid settings file: ${filePath}\n${errors.map(e => `  - ${e}`).join('\n')}`);
+    throw new Error(
+      `Invalid settings file: ${filePath}\n${errors.map(e => `  - ${e}`).join('\n')}`
+    );
   }
 }
 
@@ -267,7 +300,10 @@ function getStringArray(
   defaultValue: string[]
 ): string[] {
   if (envVar !== undefined && envVar !== '') {
-    return envVar.split(',').map(s => s.trim()).filter(Boolean);
+    return envVar
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
   }
   if (fileValue !== undefined) {
     return fileValue;
@@ -300,56 +336,90 @@ export function loadConfig(): Config {
     process.env.MAINWP_ABILITY_NAMESPACE ||
     process.env.MAINWP_ALLOWED_TOOLS ||
     process.env.MAINWP_BLOCKED_TOOLS ||
-    process.env.MAINWP_SCHEMA_VERBOSITY
+    process.env.MAINWP_SCHEMA_VERBOSITY ||
+    process.env.MAINWP_RETRY_ENABLED ||
+    process.env.MAINWP_MAX_RETRIES ||
+    process.env.MAINWP_RETRY_BASE_DELAY ||
+    process.env.MAINWP_RETRY_MAX_DELAY
   );
 
   const configSource: 'environment' | 'settings file' | 'mixed' =
-    settings === null ? 'environment' :
-    !hasEnvVars ? 'settings file' :
-    'mixed';
+    settings === null ? 'environment' : !hasEnvVars ? 'settings file' : 'mixed';
 
   // Merge configuration with precedence: env > file > default
   const dashboardUrl = getString(process.env.MAINWP_URL, settings?.dashboardUrl, '');
   const username = getString(process.env.MAINWP_USER, settings?.username, '');
   const appPassword = getString(process.env.MAINWP_APP_PASSWORD, settings?.appPassword, '');
   const apiToken = getString(process.env.MAINWP_TOKEN, settings?.apiToken, '');
-  const skipSslVerify = getBoolean(process.env.MAINWP_SKIP_SSL_VERIFY, settings?.skipSslVerify, false);
+  const skipSslVerify = getBoolean(
+    process.env.MAINWP_SKIP_SSL_VERIFY,
+    settings?.skipSslVerify,
+    false
+  );
   const allowHttp = getBoolean(process.env.MAINWP_ALLOW_HTTP, settings?.allowHttp, false);
   const safeMode = getBoolean(process.env.MAINWP_SAFE_MODE, settings?.safeMode, false);
-  const requireUserConfirmation = getBoolean(process.env.MAINWP_REQUIRE_USER_CONFIRMATION, settings?.requireUserConfirmation, true);
+  const requireUserConfirmation = getBoolean(
+    process.env.MAINWP_REQUIRE_USER_CONFIRMATION,
+    settings?.requireUserConfirmation,
+    true
+  );
 
   // Parse rate limit (default: 60 requests/minute)
   const rateLimit = getNumber(process.env.MAINWP_RATE_LIMIT, settings?.rateLimit, 60);
   if (isNaN(rateLimit) || rateLimit < 0) {
-    throw new Error('MAINWP_RATE_LIMIT must be a non-negative integer (set via environment variable or settings.json)');
+    throw new Error(
+      'MAINWP_RATE_LIMIT must be a non-negative integer (set via environment variable or settings.json)'
+    );
   }
 
   // Parse request timeout (default: 30000ms = 30 seconds)
-  const requestTimeout = getNumber(process.env.MAINWP_REQUEST_TIMEOUT, settings?.requestTimeout, 30000);
+  const requestTimeout = getNumber(
+    process.env.MAINWP_REQUEST_TIMEOUT,
+    settings?.requestTimeout,
+    30000
+  );
   if (isNaN(requestTimeout) || requestTimeout <= 0) {
-    throw new Error('MAINWP_REQUEST_TIMEOUT must be a positive integer (set via environment variable or settings.json)');
+    throw new Error(
+      'MAINWP_REQUEST_TIMEOUT must be a positive integer (set via environment variable or settings.json)'
+    );
   }
 
   // Parse max response size (default: 10485760 bytes = 10MB)
-  const maxResponseSize = getNumber(process.env.MAINWP_MAX_RESPONSE_SIZE, settings?.maxResponseSize, 10485760);
+  const maxResponseSize = getNumber(
+    process.env.MAINWP_MAX_RESPONSE_SIZE,
+    settings?.maxResponseSize,
+    10485760
+  );
   if (isNaN(maxResponseSize) || maxResponseSize <= 0) {
-    throw new Error('MAINWP_MAX_RESPONSE_SIZE must be a positive integer (set via environment variable or settings.json)');
+    throw new Error(
+      'MAINWP_MAX_RESPONSE_SIZE must be a positive integer (set via environment variable or settings.json)'
+    );
   }
 
   // Parse max session data (default: 52428800 bytes = 50MB)
-  const maxSessionData = getNumber(process.env.MAINWP_MAX_SESSION_DATA, settings?.maxSessionData, 52428800);
+  const maxSessionData = getNumber(
+    process.env.MAINWP_MAX_SESSION_DATA,
+    settings?.maxSessionData,
+    52428800
+  );
   if (isNaN(maxSessionData) || maxSessionData <= 0) {
-    throw new Error('MAINWP_MAX_SESSION_DATA must be a positive integer (set via environment variable or settings.json)');
+    throw new Error(
+      'MAINWP_MAX_SESSION_DATA must be a positive integer (set via environment variable or settings.json)'
+    );
   }
 
   // Parse ability namespace (default: 'mainwp', strip trailing slashes)
-  const abilityNamespace = getString(process.env.MAINWP_ABILITY_NAMESPACE, settings?.abilityNamespace, 'mainwp').replace(/\/+$/, '');
+  const abilityNamespace = getString(
+    process.env.MAINWP_ABILITY_NAMESPACE,
+    settings?.abilityNamespace,
+    'mainwp'
+  ).replace(/\/+$/, '');
 
   // Security warning: empty namespace exposes ALL abilities from the API
   if (!abilityNamespace) {
     console.error(
       'WARNING: Empty abilityNamespace exposes ALL abilities from the Abilities API. ' +
-      'This may include abilities from other plugins. Set abilityNamespace to restrict exposure.'
+        'This may include abilities from other plugins. Set abilityNamespace to restrict exposure.'
     );
   }
 
@@ -368,7 +438,39 @@ export function loadConfig(): Config {
   if (!SCHEMA_VERBOSITY_VALUES.includes(schemaVerbosity as any)) {
     throw new Error(
       `MAINWP_SCHEMA_VERBOSITY must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${schemaVerbosity}" ` +
-      `(set via environment variable or settings.json)`
+        `(set via environment variable or settings.json)`
+    );
+  }
+
+  // Parse retry configuration
+  const retryEnabled = getBoolean(process.env.MAINWP_RETRY_ENABLED, settings?.retryEnabled, true);
+
+  const maxRetries = getNumber(process.env.MAINWP_MAX_RETRIES, settings?.maxRetries, 2);
+  if (isNaN(maxRetries) || maxRetries < 1) {
+    throw new Error(
+      'MAINWP_MAX_RETRIES must be a positive integer >= 1 (set via environment variable or settings.json)'
+    );
+  }
+
+  const retryBaseDelay = getNumber(
+    process.env.MAINWP_RETRY_BASE_DELAY,
+    settings?.retryBaseDelay,
+    1000
+  );
+  if (isNaN(retryBaseDelay) || retryBaseDelay <= 0) {
+    throw new Error(
+      'MAINWP_RETRY_BASE_DELAY must be a positive integer > 0 (set via environment variable or settings.json)'
+    );
+  }
+
+  const retryMaxDelay = getNumber(
+    process.env.MAINWP_RETRY_MAX_DELAY,
+    settings?.retryMaxDelay,
+    2000
+  );
+  if (isNaN(retryMaxDelay) || retryMaxDelay < retryBaseDelay) {
+    throw new Error(
+      `MAINWP_RETRY_MAX_DELAY must be >= MAINWP_RETRY_BASE_DELAY (${retryBaseDelay}ms) (set via environment variable or settings.json)`
     );
   }
 
@@ -413,10 +515,12 @@ export function loadConfig(): Config {
     if (!allowHttp) {
       throw new Error(
         'dashboardUrl uses HTTP which transmits credentials in plain text. ' +
-        'Use HTTPS, or set allowHttp=true to allow insecure connections (not recommended).'
+          'Use HTTPS, or set allowHttp=true to allow insecure connections (not recommended).'
       );
     }
-    console.error('WARNING: dashboardUrl uses HTTP - credentials will be transmitted in plain text');
+    console.error(
+      'WARNING: dashboardUrl uses HTTP - credentials will be transmitted in plain text'
+    );
   }
 
   // Prefer basic auth (Application Password) as it works with Abilities API
@@ -436,6 +540,10 @@ export function loadConfig(): Config {
       requireUserConfirmation,
       maxSessionData,
       schemaVerbosity,
+      retryEnabled,
+      maxRetries,
+      retryBaseDelay,
+      retryMaxDelay,
       configSource,
       ...(allowedTools.length > 0 ? { allowedTools } : {}),
       ...(blockedTools.length > 0 ? { blockedTools } : {}),
@@ -456,6 +564,10 @@ export function loadConfig(): Config {
     requireUserConfirmation,
     maxSessionData,
     schemaVerbosity,
+    retryEnabled,
+    maxRetries,
+    retryBaseDelay,
+    retryMaxDelay,
     configSource,
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(blockedTools.length > 0 ? { blockedTools } : {}),

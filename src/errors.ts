@@ -31,7 +31,7 @@ export const MCP_ERROR_CODES = {
   CANCELLED: -32099,
 } as const;
 
-export type McpErrorCode = typeof MCP_ERROR_CODES[keyof typeof MCP_ERROR_CODES];
+export type McpErrorCode = (typeof MCP_ERROR_CODES)[keyof typeof MCP_ERROR_CODES];
 
 /**
  * Structured error response matching MCP/JSON-RPC specification
@@ -90,44 +90,34 @@ export const McpErrorFactory = {
    * Tool not found error
    */
   toolNotFound(toolName: string): McpError {
-    return new McpError(
-      MCP_ERROR_CODES.TOOL_NOT_FOUND,
-      `Tool not found: ${toolName}`,
-      { tool: toolName }
-    );
+    return new McpError(MCP_ERROR_CODES.TOOL_NOT_FOUND, `Tool not found: ${toolName}`, {
+      tool: toolName,
+    });
   },
 
   /**
    * Resource not found error
    */
   resourceNotFound(uri: string): McpError {
-    return new McpError(
-      MCP_ERROR_CODES.RESOURCE_NOT_FOUND,
-      `Resource not found: ${uri}`,
-      { uri }
-    );
+    return new McpError(MCP_ERROR_CODES.RESOURCE_NOT_FOUND, `Resource not found: ${uri}`, { uri });
   },
 
   /**
    * Prompt not found error
    */
   promptNotFound(promptName: string): McpError {
-    return new McpError(
-      MCP_ERROR_CODES.PROMPT_NOT_FOUND,
-      `Prompt not found: ${promptName}`,
-      { prompt: promptName }
-    );
+    return new McpError(MCP_ERROR_CODES.PROMPT_NOT_FOUND, `Prompt not found: ${promptName}`, {
+      prompt: promptName,
+    });
   },
 
   /**
    * Ability not found error
    */
   abilityNotFound(abilityName: string): McpError {
-    return new McpError(
-      MCP_ERROR_CODES.ABILITY_NOT_FOUND,
-      `Ability not found: ${abilityName}`,
-      { ability: abilityName }
-    );
+    return new McpError(MCP_ERROR_CODES.ABILITY_NOT_FOUND, `Ability not found: ${abilityName}`, {
+      ability: abilityName,
+    });
   },
 
   /**
@@ -190,7 +180,10 @@ export const McpErrorFactory = {
 /**
  * Convert any error to an MCP error response
  */
-export function toMcpErrorResponse(error: unknown, sanitize?: (msg: string) => string): McpErrorResponse {
+export function toMcpErrorResponse(
+  error: unknown,
+  sanitize?: (msg: string) => string
+): McpErrorResponse {
   if (error instanceof McpError) {
     // If sanitize function provided, apply it to the message
     if (sanitize) {
@@ -217,7 +210,11 @@ export function toMcpErrorResponse(error: unknown, sanitize?: (msg: string) => s
     code = MCP_ERROR_CODES.RESOURCE_NOT_FOUND;
   } else if (message.includes('limit exceeded') || message.includes('exhausted')) {
     code = MCP_ERROR_CODES.RESOURCE_EXHAUSTED;
-  } else if (message.includes('invalid') || message.includes('must be') || message.includes('exceeds')) {
+  } else if (
+    message.includes('invalid') ||
+    message.includes('must be') ||
+    message.includes('exceeds')
+  ) {
     code = MCP_ERROR_CODES.INVALID_PARAMS;
   } else if (message.includes('unauthorized') || message.includes('authentication')) {
     code = MCP_ERROR_CODES.UNAUTHORIZED;

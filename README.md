@@ -2,6 +2,11 @@
   <img src="docs/images/mainwp-mcp-logo.png" alt="MainWP MCP" width="400">
 </p>
 
+<p align="center">
+  <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/mainwp/mainwp-mcp"><img src="https://codecov.io/gh/mainwp/mainwp-mcp/branch/main/graph/badge.svg" alt="codecov"></a>
+</p>
+
 # MainWP MCP Server
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Claude, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
@@ -21,6 +26,7 @@ Built for WordPress agencies and site managers who want AI assistance with their
 ## Quick Start
 
 1. Install and build the server:
+
    ```bash
    git clone https://github.com/mainwp/mainwp-mcp.git
    cd mainwp-mcp
@@ -178,6 +184,7 @@ claude mcp add --transport stdio mainwp -- node /path/to/mainwp-mcp/dist/index.j
 The Claude desktop application for macOS and Windows.
 
 Config file location:
+
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -375,17 +382,21 @@ For Windsurf and other hosts, see the [Installation Guide](docs/installation.md)
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MAINWP_URL` | Yes | | Base URL of your MainWP Dashboard |
-| `MAINWP_USER` | Yes | | WordPress admin username |
-| `MAINWP_APP_PASSWORD` | Yes | | WordPress Application Password |
-| `MAINWP_SKIP_SSL_VERIFY` | No | `false` | Skip SSL verification (dev only) |
-| `MAINWP_SAFE_MODE` | No | `false` | Block destructive operations |
-| `MAINWP_REQUIRE_USER_CONFIRMATION` | No | `true` | Require two-step confirmation for destructive operations |
-| `MAINWP_ALLOWED_TOOLS` | No | | Whitelist of tools to expose |
-| `MAINWP_BLOCKED_TOOLS` | No | | Blacklist of tools to hide |
-| `MAINWP_SCHEMA_VERBOSITY` | No | `standard` | `standard` or `compact` |
+| Variable                           | Required | Default    | Description                                              |
+| ---------------------------------- | -------- | ---------- | -------------------------------------------------------- |
+| `MAINWP_URL`                       | Yes      |            | Base URL of your MainWP Dashboard                        |
+| `MAINWP_USER`                      | Yes      |            | WordPress admin username                                 |
+| `MAINWP_APP_PASSWORD`              | Yes      |            | WordPress Application Password                           |
+| `MAINWP_SKIP_SSL_VERIFY`           | No       | `false`    | Skip SSL verification (dev only)                         |
+| `MAINWP_SAFE_MODE`                 | No       | `false`    | Block destructive operations                             |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No       | `true`     | Require two-step confirmation for destructive operations |
+| `MAINWP_ALLOWED_TOOLS`             | No       |            | Whitelist of tools to expose                             |
+| `MAINWP_BLOCKED_TOOLS`             | No       |            | Blacklist of tools to hide                               |
+| `MAINWP_SCHEMA_VERBOSITY`          | No       | `standard` | `standard` or `compact`                                  |
+| `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
+| `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
+| `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
+| `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
 
 For the complete list of variables and configuration file options, see the [Configuration Guide](docs/configuration.md).
 
@@ -397,7 +408,11 @@ Instead of environment variables, you can use a `settings.json` file:
 {
   "dashboardUrl": "https://your-dashboard.com",
   "username": "admin",
-  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx"
+  "appPassword": "xxxx xxxx xxxx xxxx xxxx xxxx",
+  "retryEnabled": true,
+  "maxRetries": 2,
+  "retryBaseDelay": 1000,
+  "retryMaxDelay": 2000
 }
 ```
 
@@ -449,6 +464,7 @@ AI: Site 3 has been deleted successfully.
 ### Affected Operations
 
 These destructive tools require two-step confirmation:
+
 - `delete_site_v1` - Delete a child site
 - `delete_client_v1` - Delete a client record
 - `delete_tag_v1` - Delete a tag
@@ -466,6 +482,7 @@ If you're running automated scripts that need to delete without interaction:
 ```
 
 Or as an environment variable:
+
 ```bash
 MAINWP_REQUIRE_USER_CONFIRMATION=false
 ```
@@ -812,12 +829,12 @@ Operations with more than 50 sites are automatically queued for background proce
 
 The server exposes these resources for inspection:
 
-| URI | Description |
-|-----|-------------|
-| `mainwp://abilities` | Full list of available abilities with schemas |
-| `mainwp://categories` | List of ability categories |
-| `mainwp://status` | Current connection status |
-| `mainwp://help` | Tool documentation and safety conventions |
+| URI                   | Description                                   |
+| --------------------- | --------------------------------------------- |
+| `mainwp://abilities`  | Full list of available abilities with schemas |
+| `mainwp://categories` | List of ability categories                    |
+| `mainwp://status`     | Current connection status                     |
+| `mainwp://help`       | Tool documentation and safety conventions     |
 
 ---
 
@@ -827,10 +844,13 @@ The server exposes these resources for inspection:
 - **[Configuration Guide](docs/configuration.md)** - All settings, tool filtering, safe mode
 - **[Security Guide](docs/security.md)** - Trust model, credential management, best practices
 - **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues and solutions
+- **[CI/CD Guide](docs/ci-cd.md)** - Continuous integration and testing
 
 ---
 
 ## Development
+
+**Requirements:** Node.js 18, 20, or 22 (tested in CI)
 
 ```bash
 npm install        # Install dependencies
@@ -838,7 +858,12 @@ npm run dev        # Development mode with hot reload
 npm run build      # Build for production
 npm start          # Run production build
 npm run inspect    # Test with MCP Inspector
+npm test           # Run tests
+npm run lint       # Check code style
+npm run format     # Format code
 ```
+
+CI runs automatically on all pull requests and pushes to main. See the [CI/CD Guide](docs/ci-cd.md) for details.
 
 ---
 

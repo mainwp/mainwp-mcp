@@ -1,0 +1,17 @@
+[
+  {
+    "slug": "mainwp-sites",
+    "label": "Sites",
+    "description": "Site management operations"
+  },
+  {
+    "slug": "mainwp-updates",
+    "label": "Updates",
+    "description": "Update management operations"
+  },
+  {
+    "slug": "mainwp-clients",
+    "label": "Clients",
+    "description": "Client management operations"
+  }
+]

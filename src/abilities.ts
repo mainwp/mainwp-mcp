@@ -8,6 +8,8 @@
 import { Config, getAbilitiesApiUrl, getAuthHeaders } from './config.js';
 import { RateLimiter, sanitizeError } from './security.js';
 import { abilityNameToToolName } from './naming.js';
+import { withRetry, type RetryContext } from './retry.js';
+import type { Logger } from './logging.js';
 import https from 'https';
 
 /**
@@ -96,15 +98,17 @@ function notifyCacheRefresh(): void {
 /**
  * Create a fetch function that handles SSL verification, request timeout, and response size limits.
  * Wraps any caller-provided AbortSignal to enforce timeout while preserving external cancellation.
+ *
+ * @param config - Server configuration
+ * @param perCallTimeout - Optional per-call timeout override (for retry budget enforcement)
  */
-function createFetch(config: Config) {
-  const agent = config.skipSslVerify
-    ? new https.Agent({ rejectUnauthorized: false })
-    : undefined;
+function createFetch(config: Config, perCallTimeout?: number) {
+  const agent = config.skipSslVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined;
+  const effectiveTimeout = perCallTimeout ?? config.requestTimeout;
 
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.requestTimeout);
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
     // Forward external signal abort to our controller (preserves caller cancellation)
     const externalSignal = options.signal;
@@ -150,7 +154,10 @@ function createFetch(config: Config) {
     } catch (error) {
       clearTimeout(timeoutId);
       if ((error as Error).name === 'AbortError') {
-        throw new Error(`Request timeout after ${config.requestTimeout}ms: ${url}`);
+        // Create timeout error with ETIMEDOUT code for retry detection
+        const timeoutError = new Error(`Request timeout after ${effectiveTimeout}ms: ${url}`);
+        (timeoutError as Error & { code: string }).code = 'ETIMEDOUT';
+        throw timeoutError;
       }
       throw error;
     }
@@ -175,22 +182,29 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch abilities: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`);
+      throw new Error(
+        `Failed to fetch abilities: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`
+      );
     }
 
-    const abilities = await response.json() as Ability[];
+    const abilities = (await response.json()) as Ability[];
 
     // Filter abilities by namespace (empty namespace = all abilities)
-    const namespaceFilter = config.abilityNamespace
-      ? `${config.abilityNamespace}/`
-      : '';
+    const namespaceFilter = config.abilityNamespace ? `${config.abilityNamespace}/` : '';
     const newAbilities = namespaceFilter
       ? abilities.filter(a => a.name.startsWith(namespaceFilter))
       : abilities;
 
     // Check if abilities have changed (compare names)
-    const oldNames = cachedAbilities?.map(a => a.name).sort().join(',') ?? '';
-    const newNames = newAbilities.map(a => a.name).sort().join(',');
+    const oldNames =
+      cachedAbilities
+        ?.map(a => a.name)
+        .sort()
+        .join(',') ?? '';
+    const newNames = newAbilities
+      .map(a => a.name)
+      .sort()
+      .join(',');
     const hasChanged = oldNames !== newNames;
 
     cachedAbilities = newAbilities;
@@ -229,15 +243,15 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch categories: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`);
+      throw new Error(
+        `Failed to fetch categories: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`
+      );
     }
 
-    const categories = await response.json() as Category[];
+    const categories = (await response.json()) as Category[];
 
     // Filter categories by namespace (empty namespace = all categories)
-    const categoryFilter = config.abilityNamespace
-      ? `${config.abilityNamespace}-`
-      : '';
+    const categoryFilter = config.abilityNamespace ? `${config.abilityNamespace}-` : '';
     cachedCategories = categoryFilter
       ? categories.filter(c => c.slug.startsWith(categoryFilter))
       : categories;
@@ -277,7 +291,9 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
     } else if (typeof value === 'object' && value !== null) {
       // Nested objects: input[key][subkey]=val
       for (const [subKey, subVal] of Object.entries(value)) {
-        params.push(`input[${encodeURIComponent(key)}][${encodeURIComponent(subKey)}]=${encodeURIComponent(String(subVal))}`);
+        params.push(
+          `input[${encodeURIComponent(key)}][${encodeURIComponent(subKey)}]=${encodeURIComponent(String(subVal))}`
+        );
       }
     } else if (value !== undefined && value !== null) {
       // Scalars: input[key]=val
@@ -289,20 +305,40 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
 }
 
 /**
+ * Create an HTTP error with status code for retry detection.
+ * The status is embedded in the error object and message for isRetryableError() to detect.
+ *
+ * @param status - HTTP status code
+ * @param errorCode - Error code (from JSON response or status string)
+ * @param message - Error message
+ */
+function createHttpError(status: number, errorCode: string, message: string): Error {
+  const error = new Error(`Ability execution failed: ${errorCode} - ${message}`);
+  (error as Error & { status: number }).status = status;
+  return error;
+}
+
+/**
  * Execute an ability via the REST API
+ *
+ * @param config - Server configuration
+ * @param abilityName - Name of the ability to execute
+ * @param input - Optional input parameters
+ * @param logger - Optional logger for retry logging
  */
 export async function executeAbility(
   config: Config,
   abilityName: string,
-  input?: Record<string, unknown>
+  input?: Record<string, unknown>,
+  logger?: Logger
 ): Promise<unknown> {
-  // Apply rate limiting
+  // Apply rate limiting BEFORE retry logic
+  // This ensures retries bypass the rate limiter to avoid deadlocks
   if (rateLimiter) {
     await rateLimiter.acquire();
   }
 
   const baseUrl = getAbilitiesApiUrl(config);
-  const customFetch = createFetch(config);
 
   // Get ability to check if it's readonly
   const ability = await getAbility(config, abilityName);
@@ -314,48 +350,76 @@ export async function executeAbility(
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
 
-  let response: Response;
+  /**
+   * Fetch and validate response in a single operation.
+   * This ensures HTTP errors (5xx, 429) are thrown and can be retried.
+   *
+   * @param context - Retry context with remaining timeout budget
+   */
+  const fetchAndValidate = async (context: RetryContext): Promise<unknown> => {
+    // Use remaining budget as timeout
+    const timeout = Math.max(1, context.remainingBudget);
+    const customFetch = createFetch(config, timeout);
 
-  if (isReadonly) {
-    // GET request for read-only abilities, with optional params as query string
-    const queryString = hasInput ? serializeToPhpQueryString(input) : '';
-    response = await customFetch(url + queryString, { method: 'GET' });
-  } else {
-    // POST request for non-readonly abilities
-    response = await customFetch(url, {
-      method: 'POST',
-      body: JSON.stringify({ input: input ?? {} }),
-    });
-  }
-
-  if (!response.ok) {
-    // Read body as text first, then try to parse as JSON
-    // This handles non-JSON error responses gracefully
-    const bodyText = await response.text();
-    let errorCode = String(response.status);
-    let errorMsg = response.statusText;
-
-    // Only try to parse as JSON if the body looks like JSON
-    if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
-      try {
-        const errorData = JSON.parse(bodyText);
-        errorCode = (errorData as { code?: string }).code || errorCode;
-        errorMsg = (errorData as { message?: string }).message || errorMsg;
-      } catch {
-        // JSON parse failed - use raw text as message
-        errorMsg = bodyText || response.statusText;
-      }
-    } else if (bodyText) {
-      // Non-JSON response body - use as error message
-      errorMsg = bodyText;
+    let response: Response;
+    if (isReadonly) {
+      // GET request for read-only abilities, with optional params as query string
+      const queryString = hasInput ? serializeToPhpQueryString(input) : '';
+      response = await customFetch(url + queryString, { method: 'GET' });
+    } else {
+      // POST request for non-readonly abilities
+      response = await customFetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ input: input ?? {} }),
+      });
     }
 
-    throw new Error(
-      `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}`
-    );
-  }
+    // Validate response - throw HTTP error for non-ok status
+    // This allows isRetryableError() to detect 5xx/429 and trigger retries
+    if (!response.ok) {
+      // Read body as text first, then try to parse as JSON
+      // This handles non-JSON error responses gracefully
+      const bodyText = await response.text();
+      let errorCode = String(response.status);
+      let errorMsg = response.statusText;
 
-  return response.json();
+      // Only try to parse as JSON if the body looks like JSON
+      if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
+        try {
+          const errorData = JSON.parse(bodyText);
+          errorCode = (errorData as { code?: string }).code || errorCode;
+          errorMsg = (errorData as { message?: string }).message || errorMsg;
+        } catch {
+          // JSON parse failed - use raw text as message
+          errorMsg = bodyText || response.statusText;
+        }
+      } else if (bodyText) {
+        // Non-JSON response body - use as error message
+        errorMsg = bodyText;
+      }
+
+      throw createHttpError(response.status, errorCode, sanitizeError(errorMsg));
+    }
+
+    return response.json();
+  };
+
+  // Apply retry logic only for read-only operations when enabled
+  if (config.retryEnabled && isReadonly) {
+    return await withRetry(fetchAndValidate, {
+      maxRetries: config.maxRetries,
+      baseDelay: config.retryBaseDelay,
+      maxDelay: config.retryMaxDelay,
+      timeoutBudget: config.requestTimeout,
+      logger,
+    });
+  } else {
+    // No retry: execute directly with synthetic context
+    return await fetchAndValidate({
+      remainingBudget: config.requestTimeout,
+      attempt: 0,
+    });
+  }
 }
 
 /**
@@ -457,9 +521,9 @@ export function generateToolHelp(ability: Ability): ToolHelp {
 export function generateHelpDocument(abilities: Ability[]): HelpDocument {
   const toolHelps = abilities.map(generateToolHelp);
   // Use normalized categories matching toolsByCategory grouping logic
-  const categories = [...new Set(toolHelps.map(h =>
-    (h.category && h.category.trim()) || 'uncategorized'
-  ))].sort();
+  const categories = [
+    ...new Set(toolHelps.map(h => (h.category && h.category.trim()) || 'uncategorized')),
+  ].sort();
 
   const toolsByCategory: Record<string, ToolHelp[]> = {};
   for (const help of toolHelps) {
@@ -484,7 +548,9 @@ export function generateHelpDocument(abilities: Ability[]): HelpDocument {
     },
     destructiveTools: toolHelps.filter(h => h.annotations.destructive).map(h => h.toolName),
     toolsWithDryRun: toolHelps.filter(h => h.safetyFeatures.supportsDryRun).map(h => h.toolName),
-    toolsRequiringConfirm: toolHelps.filter(h => h.safetyFeatures.requiresConfirm).map(h => h.toolName),
+    toolsRequiringConfirm: toolHelps
+      .filter(h => h.safetyFeatures.requiresConfirm)
+      .map(h => h.toolName),
     toolsByCategory,
   };
 }

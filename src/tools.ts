@@ -53,6 +53,14 @@ export function getSessionDataUsage(): number {
 }
 
 /**
+ * Clear pending previews (for testing only).
+ * @internal
+ */
+export function clearPendingPreviews(): void {
+  pendingPreviews.clear();
+}
+
+/**
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
  * from the key to ensure preview and execution calls match.
@@ -62,7 +70,12 @@ export function getSessionDataUsage(): number {
  * identical nested structures.
  */
 function getPreviewKey(toolName: string, args: Record<string, unknown>): string {
-  const { confirm, user_confirmed, dry_run, ...relevantArgs } = args;
+  const {
+    confirm: _confirm,
+    user_confirmed: _user_confirmed,
+    dry_run: _dry_run,
+    ...relevantArgs
+  } = args;
   const sortedKeys = Object.keys(relevantArgs).sort();
   return `${toolName}:${JSON.stringify(relevantArgs, sortedKeys)}`;
 }
@@ -88,8 +101,7 @@ function cleanupExpiredPreviews(): void {
   // Second pass: Enforce max size limit by removing oldest entries
   if (pendingPreviews.size > MAX_PENDING_PREVIEWS) {
     // Sort by timestamp (oldest first)
-    const sortedEntries = Array.from(pendingPreviews.entries())
-      .sort((a, b) => a[1] - b[1]);
+    const sortedEntries = Array.from(pendingPreviews.entries()).sort((a, b) => a[1] - b[1]);
 
     // Remove oldest entries until at limit
     const toRemove = sortedEntries.slice(0, pendingPreviews.size - MAX_PENDING_PREVIEWS);
@@ -194,7 +206,20 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
     const compressedProp: Record<string, unknown> = {};
 
     // Always preserve these critical fields
-    const criticalFields = ['type', 'enum', 'default', 'minimum', 'maximum', 'format', 'required', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern'];
+    const criticalFields = [
+      'type',
+      'enum',
+      'default',
+      'minimum',
+      'maximum',
+      'format',
+      'required',
+      'minItems',
+      'maxItems',
+      'minLength',
+      'maxLength',
+      'pattern',
+    ];
     for (const field of criticalFields) {
       if (field in prop) {
         compressedProp[field] = prop[field];
@@ -266,10 +291,11 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     const mutableProps = inputSchema.properties as Record<string, object>;
     mutableProps['user_confirmed'] = {
       type: 'boolean',
-      description: 'Set to true ONLY after showing the preview to the user and receiving their explicit confirmation. ' +
-                   'WORKFLOW: 1) Call with confirm:true (without user_confirmed) to get preview. ' +
-                   '2) Show preview to user. 3) If user confirms, call again with user_confirmed:true. ' +
-                   'NEVER set user_confirmed:true without first requesting a preview.'
+      description:
+        'Set to true ONLY after showing the preview to the user and receiving their explicit confirmation. ' +
+        'WORKFLOW: 1) Call with confirm:true (without user_confirmed) to get preview. ' +
+        '2) Show preview to user. 3) If user confirms, call again with user_confirmed:true. ' +
+        'NEVER set user_confirmed:true without first requesting a preview.',
     };
   }
 
@@ -303,7 +329,8 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
 
       // Add confirmation workflow instructions for tools with confirm parameter
       if (hasConfirm) {
-        description += '\n\nCONFIRMATION FLOW: ' +
+        description +=
+          '\n\nCONFIRMATION FLOW: ' +
           '1) Call with confirm:true to preview what will be affected. ' +
           '2) Show preview to user and ask for confirmation. ' +
           '3) If confirmed, call again with user_confirmed:true to execute. ' +
@@ -325,11 +352,13 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     description,
     inputSchema,
     // MCP semantic annotations for client UI hints (always included regardless of verbosity)
-    annotations: meta ? {
-      readOnlyHint: meta.readonly,
-      destructiveHint: meta.destructive,
-      idempotentHint: meta.idempotent,
-    } : undefined,
+    annotations: meta
+      ? {
+          readOnlyHint: meta.readonly,
+          destructiveHint: meta.destructive,
+          idempotentHint: meta.idempotent,
+        }
+      : undefined,
   };
 }
 
@@ -339,8 +368,11 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
  * Applies optional filtering based on config:
  * - allowedTools: If set, only include tools in this list
  * - blockedTools: If set, exclude tools in this list
+ *
+ * @param config - Server configuration
+ * @param logger - Optional structured logger for filtering/verbosity messages
  */
-export async function getTools(config: Config): Promise<Tool[]> {
+export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config);
   let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
   const originalCount = tools.length;
@@ -358,21 +390,23 @@ export async function getTools(config: Config): Promise<Tool[]> {
   }
 
   // Log if tools were filtered
-  if (tools.length !== originalCount) {
+  if (tools.length !== originalCount && logger) {
     const allowedCount = config.allowedTools?.length ?? 'all';
     const blockedCount = config.blockedTools?.length ?? 0;
-    console.error(
-      `[mainwp-mcp] Tool filtering: ${originalCount} → ${tools.length} tools ` +
-      `(allowed: ${allowedCount}, blocked: ${blockedCount})`
-    );
+    logger.info('Tool filtering applied', {
+      originalCount,
+      filteredCount: tools.length,
+      allowedCount,
+      blockedCount,
+    });
   }
 
   // Log when non-default schema verbosity is active
-  if (config.schemaVerbosity !== 'standard') {
-    console.error(
-      `[mainwp-mcp] Schema verbosity: ${config.schemaVerbosity} ` +
-      `(reduces token usage by ~30% with minimal descriptions)`
-    );
+  if (config.schemaVerbosity !== 'standard' && logger) {
+    logger.info('Schema verbosity mode active', {
+      verbosity: config.schemaVerbosity,
+      note: 'Reduces token usage by ~30% with minimal descriptions',
+    });
   }
 
   return tools;
@@ -423,7 +457,11 @@ export async function executeTool(
 
     // Log all destructive operation attempts for audit purposes (regardless of safe mode)
     if (isDestructive) {
-      logger.info('Destructive operation invoked', { toolName, abilityName, safeMode: config.safeMode });
+      logger.info('Destructive operation invoked', {
+        toolName,
+        abilityName,
+        safeMode: config.safeMode,
+      });
     }
 
     // Safe mode handling
@@ -466,7 +504,8 @@ export async function executeTool(
     if (config.requireUserConfirmation && isDestructive) {
       // Check if tool supports confirmation parameter
       const schemaProps = ability.input_schema?.properties;
-      const hasConfirmParam = schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
+      const hasConfirmParam =
+        schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
 
       // Validation: user_confirmed on tools without confirm parameter
       if (!hasConfirmParam && args.user_confirmed === true) {
@@ -514,7 +553,7 @@ export async function executeTool(
 
           // Execute preview with dry_run: true
           const previewArgs = { ...effectiveArgs, dry_run: true, confirm: undefined };
-          const previewResult = await executeAbility(config, abilityName, previewArgs);
+          const previewResult = await executeAbility(config, abilityName, previewArgs, logger);
 
           // Store preview for later validation
           const previewKey = getPreviewKey(toolName, args);
@@ -553,14 +592,19 @@ export async function executeTool(
           // Warning: Ambiguous parameters (confirm + user_confirmed both set)
           // Per PRD line 319: allow execution but log for tracking
           if (args.confirm === true) {
-            logger.warning('Ambiguous parameters: both confirm and user_confirmed set, treating as confirmation', {
-              toolName,
-              abilityName,
-            });
+            logger.warning(
+              'Ambiguous parameters: both confirm and user_confirmed set, treating as confirmation',
+              {
+                toolName,
+                abilityName,
+              }
+            );
           }
 
-          cleanupExpiredPreviews();
-
+          // Note: We intentionally check preview expiry BEFORE running cleanup.
+          // This allows us to return the more helpful PREVIEW_EXPIRED error when
+          // a user's preview timed out, rather than the generic PREVIEW_REQUIRED.
+          // Memory management is handled by cleanup during preview generation.
           const previewKey = getPreviewKey(toolName, args);
           const previewTimestamp = pendingPreviews.get(previewKey);
 
@@ -597,19 +641,22 @@ export async function executeTool(
           logger.info('User confirmation validated', { toolName, previewAge });
 
           // Remove user_confirmed flag, keep confirm: true for the actual execution
-          const { user_confirmed, ...confirmedArgs } = effectiveArgs;
+          const { user_confirmed: _user_confirmed, ...confirmedArgs } = effectiveArgs;
           effectiveArgs = { ...confirmedArgs, confirm: true };
         }
         // Default case: no confirm or user_confirmed provided
         else {
           // This shouldn't happen for tools with confirm param if schema is properly enforced
           // Log warning but proceed to maintain backward compatibility
-          logger.warning('Destructive tool called without confirmation parameters', { toolName, abilityName });
+          logger.warning('Destructive tool called without confirmation parameters', {
+            toolName,
+            abilityName,
+          });
         }
       }
     }
 
-    const result = await executeAbility(config, abilityName, effectiveArgs);
+    const result = await executeAbility(config, abilityName, effectiveArgs, logger);
 
     // Check for cancellation after execution
     if (options?.signal?.aborted) {
@@ -636,7 +683,13 @@ export async function executeTool(
     sessionDataBytes += responseBytes;
 
     const durationMs = Math.round(performance.now() - startTime);
-    logger.info('Tool execution succeeded', { toolName, success: true, durationMs, responseBytes, sessionDataBytes });
+    logger.info('Tool execution succeeded', {
+      toolName,
+      success: true,
+      durationMs,
+      responseBytes,
+      sessionDataBytes,
+    });
 
     return [
       {
@@ -647,7 +700,12 @@ export async function executeTool(
   } catch (error) {
     const durationMs = Math.round(performance.now() - startTime);
     const errorMessage = sanitizeError(error instanceof Error ? error.message : String(error));
-    logger.error('Tool execution failed', { toolName, success: false, durationMs, error: errorMessage });
+    logger.error('Tool execution failed', {
+      toolName,
+      success: false,
+      durationMs,
+      error: errorMessage,
+    });
 
     // Use standardized error format with code
     return [

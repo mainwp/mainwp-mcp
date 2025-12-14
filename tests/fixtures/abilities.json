@@ -1,0 +1,82 @@
+[
+  {
+    "name": "mainwp/list-sites-v1",
+    "label": "List Sites",
+    "description": "Get all managed sites",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Page number"
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true
+      }
+    }
+  },
+  {
+    "name": "mainwp/get-site-v1",
+    "label": "Get Site",
+    "description": "Get detailed information about a single site",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      },
+      "required": ["site_id_or_domain"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true
+      }
+    }
+  },
+  {
+    "name": "mainwp/delete-site-v1",
+    "label": "Delete Site",
+    "description": "Delete a site from MainWP Dashboard",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to execute deletion"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Preview mode"
+        }
+      },
+      "required": ["site_id_or_domain"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false
+      }
+    }
+  }
+]

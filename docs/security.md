@@ -60,11 +60,13 @@ Create a dedicated password for the MCP server and label it clearly (e.g., "Main
 ### Credential Storage Options
 
 **Environment variables** are suitable for:
+
 - Local development
 - CI/CD pipelines with secrets management
 - Containerized deployments
 
 **Configuration file** (`settings.json`) is suitable for:
+
 - Personal workstations
 - When you want credentials separate from shell history
 
@@ -90,6 +92,7 @@ Safe mode prevents all destructive operations by stripping the `confirm: true` p
 ### Enabling Safe Mode
 
 In `settings.json`:
+
 ```json
 {
   "safeMode": true
@@ -97,6 +100,7 @@ In `settings.json`:
 ```
 
 As an environment variable:
+
 ```bash
 MAINWP_SAFE_MODE=true
 ```
@@ -157,12 +161,14 @@ The two-step confirmation flow prevents accidental destructive operations by req
 When you ask the AI to delete something, the server intercepts the request and returns a preview instead of executing immediately. The AI shows you what will be deleted and asks for explicit confirmation. Only after you confirm does the server execute the operation.
 
 **Phase 1 - Preview:**
+
 1. AI calls the destructive tool with `confirm: true`
 2. Server runs a dry-run preview and returns details
 3. AI shows you what will be affected
 4. AI waits for your response
 
 **Phase 2 - Execute:**
+
 1. You confirm the action
 2. AI calls the tool again with `user_confirmed: true`
 3. Server validates the preview was shown (within last 5 minutes)
@@ -194,30 +200,33 @@ AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true)]
 
 ### Comparison with Safe Mode
 
-| Feature | Safe Mode | Confirmation Flow |
-|---------|-----------|-------------------|
-| **Purpose** | Block all destructive operations | Allow destructive operations with user approval |
-| **Use Case** | Testing, read-only access, training | Production with trusted AI |
-| **Destructive Ops** | Completely blocked | Allowed after confirmation |
-| **User Experience** | AI says "I can't do that" | AI shows preview and asks for approval |
-| **Automation** | Not suitable | Can be disabled for scripts |
-| **Default** | Disabled (`false`) | Enabled (`true`) |
+| Feature             | Safe Mode                           | Confirmation Flow                               |
+| ------------------- | ----------------------------------- | ----------------------------------------------- |
+| **Purpose**         | Block all destructive operations    | Allow destructive operations with user approval |
+| **Use Case**        | Testing, read-only access, training | Production with trusted AI                      |
+| **Destructive Ops** | Completely blocked                  | Allowed after confirmation                      |
+| **User Experience** | AI says "I can't do that"           | AI shows preview and asks for approval          |
+| **Automation**      | Not suitable                        | Can be disabled for scripts                     |
+| **Default**         | Disabled (`false`)                  | Enabled (`true`)                                |
 
 ### When to Use Each
 
 **Use Safe Mode when:**
+
 - Testing integrations without risk of data loss
 - Providing read-only access to reporting tools
 - Training users who are learning the system
 - You never want AI to delete anything
 
 **Use Confirmation Flow when:**
+
 - Running production operations with AI assistance
 - You want safety but also need destructive capabilities
 - Working with a trusted AI assistant
 - You want to review changes before they happen
 
 **Use Both when:**
+
 - Safe Mode takes precedence and blocks everything
 - Not recommended (redundant)
 
@@ -242,6 +251,7 @@ When both are configured, Safe Mode takes precedence:
 Previews expire after **5 minutes** for security. If you wait too long to confirm, you'll need to request a new preview.
 
 **Example:**
+
 ```
 AI: Do you want to delete site 3?
 [You wait 6 minutes]
@@ -257,6 +267,7 @@ AI: The preview has expired. Let me get a fresh preview...
 Automated scripts that need to delete without interaction can disable the confirmation flow:
 
 In `settings.json`:
+
 ```json
 {
   "requireUserConfirmation": false
@@ -264,6 +275,7 @@ In `settings.json`:
 ```
 
 As an environment variable:
+
 ```bash
 MAINWP_REQUIRE_USER_CONFIRMATION=false
 ```

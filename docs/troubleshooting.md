@@ -11,15 +11,19 @@ Common issues and solutions for the MainWP MCP Server.
 **Check these in order**:
 
 1. **Verify the URL is correct**
+
    ```bash
    curl -I https://your-dashboard.com/wp-json/
    ```
+
    You should see a 200 response. If not, the URL may be wrong or WordPress REST API is disabled.
 
 2. **Test authentication**
+
    ```bash
    curl -u "username:app-password" https://your-dashboard.com/wp-json/wp/v2/users/me
    ```
+
    This should return your user profile. If it fails:
    - Verify the username is correct
    - Regenerate the Application Password
@@ -36,6 +40,7 @@ Common issues and solutions for the MainWP MCP Server.
 **Symptoms**: `UNABLE_TO_VERIFY_LEAF_SIGNATURE` or similar SSL errors.
 
 **For development** (self-signed certs):
+
 ```json
 {
   "skipSslVerify": true
@@ -43,6 +48,7 @@ Common issues and solutions for the MainWP MCP Server.
 ```
 
 **For production**, fix the certificate:
+
 1. Ensure the full certificate chain is installed
 2. Verify the certificate matches your domain
 3. Check certificate expiration
@@ -52,12 +58,14 @@ Common issues and solutions for the MainWP MCP Server.
 **Symptoms**: Server can't reach the dashboard at all.
 
 **Causes**:
+
 - Dashboard server is down
 - Firewall blocking the connection
 - Wrong port in URL
 - VPN or network issues
 
 **Fixes**:
+
 - Verify you can reach the URL from your machine
 - Check if a VPN is required
 - Try with the IP address instead of hostname (temporarily, for testing)
@@ -99,6 +107,7 @@ Common issues and solutions for the MainWP MCP Server.
 **Symptoms**: Works with username/password but not with `MAINWP_TOKEN`.
 
 **Check**:
+
 1. Token was generated correctly in MainWP Dashboard
 2. Token hasn't expired
 3. You're using the correct environment variable (`MAINWP_TOKEN`, not `MAINWP_APP_PASSWORD`)
@@ -114,12 +123,14 @@ When in doubt, use Application Password authentication instead.
 **Symptoms**: `Unknown tool: some_tool_v1`
 
 **Causes**:
+
 1. Tool name is misspelled
 2. Tool is blocked by `blockedTools` configuration
 3. Tool is not in `allowedTools` whitelist
 4. The ability doesn't exist in MainWP Dashboard
 
 **Check your configuration**:
+
 ```json
 {
   "allowedTools": ["list_sites_v1"],
@@ -132,6 +143,7 @@ Tool names use underscores (e.g., `list_sites_v1`), not hyphens.
 ### "Safe mode blocked operation"
 
 **Symptoms**:
+
 ```json
 {
   "error": "SAFE_MODE_BLOCKED",
@@ -142,6 +154,7 @@ Tool names use underscores (e.g., `list_sites_v1`), not hyphens.
 **Cause**: Safe mode is enabled and you tried a destructive operation.
 
 **Fix**: Disable safe mode if you need destructive operations:
+
 ```json
 {
   "safeMode": false
@@ -149,6 +162,7 @@ Tool names use underscores (e.g., `list_sites_v1`), not hyphens.
 ```
 
 Or use environment variable:
+
 ```bash
 MAINWP_SAFE_MODE=false
 ```
@@ -160,17 +174,20 @@ MAINWP_SAFE_MODE=false
 **Cause**: Destructive tools require a two-step confirmation flow.
 
 **Expected Flow**:
+
 1. AI calls with `confirm: true` → Gets preview
 2. AI shows you the preview
 3. You confirm
 4. AI calls with `user_confirmed: true` → Executes
 
 **If the AI isn't following this flow:**
+
 1. Check if safe mode is enabled (it blocks all destructive operations)
 2. Try being explicit: "Show me what will be deleted first"
 3. Verify `requireUserConfirmation` is enabled (default: `true`)
 
 **For automation scripts**, disable the confirmation flow:
+
 ```json
 {
   "requireUserConfirmation": false
@@ -184,6 +201,7 @@ MAINWP_SAFE_MODE=false
 ### "PREVIEW_REQUIRED"
 
 **Symptoms**:
+
 ```json
 {
   "error": "PREVIEW_REQUIRED",
@@ -202,6 +220,7 @@ MAINWP_SAFE_MODE=false
 **What Happened**: The two-step confirmation flow requires the AI to show you a preview before executing. The AI skipped the preview step.
 
 **Fix**: This is usually an AI behavior issue. The AI should:
+
 1. First call with `confirm: true` (no `user_confirmed`)
 2. Show you the preview
 3. Then call with `user_confirmed: true` after you approve
@@ -211,6 +230,7 @@ If you see this repeatedly, the AI may be confused about the workflow. Try rephr
 ### "PREVIEW_EXPIRED"
 
 **Symptoms**:
+
 ```json
 {
   "error": "PREVIEW_EXPIRED",
@@ -229,6 +249,7 @@ If you see this repeatedly, the AI may be confused about the workflow. Try rephr
 **Fix**: Request a new preview. The AI will automatically do this if you just say "yes" or "proceed."
 
 **Example:**
+
 ```
 AI: Do you want to delete site 3?
 [You wait 6 minutes]
@@ -242,6 +263,7 @@ AI: The preview expired. Let me get a fresh one...
 ### "CONFLICTING_PARAMETERS"
 
 **Symptoms**:
+
 ```json
 {
   "error": "CONFLICTING_PARAMETERS",
@@ -253,6 +275,7 @@ AI: The preview expired. Let me get a fresh one...
 **Cause**: The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneously.
 
 **Fix**: This is an AI error. The parameters have contradictory meanings:
+
 - `user_confirmed: true` = "Execute this operation"
 - `dry_run: true` = "Just show me what would happen"
 
@@ -261,6 +284,7 @@ The AI should use one or the other, not both.
 ### "INVALID_PARAMETER: user_confirmed not supported"
 
 **Symptoms**:
+
 ```json
 {
   "error": "INVALID_PARAMETER",
@@ -272,6 +296,7 @@ The AI should use one or the other, not both.
 **Cause**: The AI tried to use `user_confirmed: true` on a non-destructive tool.
 
 **Fix**: This is an AI error. Only these tools support `user_confirmed`:
+
 - `delete_site_v1`
 - `delete_client_v1`
 - `delete_tag_v1`
@@ -291,6 +316,7 @@ If you're running automation scripts and don't want the two-step flow:
 ```
 
 Or:
+
 ```bash
 MAINWP_REQUIRE_USER_CONFIRMATION=false
 ```
@@ -308,6 +334,7 @@ MAINWP_REQUIRE_USER_CONFIRMATION=false
 **Cause**: Cumulative response data exceeded `maxSessionData` limit.
 
 **Fixes**:
+
 1. Restart the MCP server (resets the counter)
 2. Increase the limit:
    ```json
@@ -324,6 +351,7 @@ MAINWP_REQUIRE_USER_CONFIRMATION=false
 **Cause**: Single response exceeded `maxResponseSize` limit.
 
 **Fixes**:
+
 1. Increase the limit:
    ```json
    {
@@ -339,6 +367,7 @@ MAINWP_REQUIRE_USER_CONFIRMATION=false
 **Cause**: Too many API requests in a short period.
 
 **Fixes**:
+
 1. Wait and retry
 2. Increase rate limit:
    ```json
@@ -357,10 +386,12 @@ MAINWP_REQUIRE_USER_CONFIRMATION=false
 **Symptoms**: Server uses defaults instead of your settings.
 
 **Check these locations** (in order of priority):
+
 1. `./settings.json` (current working directory)
 2. `~/.config/mainwp-mcp/settings.json`
 
 **Verify the file is valid JSON**:
+
 ```bash
 cat settings.json | jq .
 ```
@@ -372,11 +403,15 @@ If `jq` shows an error, fix the JSON syntax.
 **Symptoms**: Config file values used instead of environment variables.
 
 **Check**:
+
 1. Variables are exported:
+
    ```bash
    export MAINWP_URL="https://..."
    ```
+
    Not just:
+
    ```bash
    MAINWP_URL="https://..."
    ```
@@ -387,6 +422,7 @@ If `jq` shows an error, fix the JSON syntax.
    - `MAINWP-URL` (wrong)
 
 3. Values don't have extra quotes:
+
    ```bash
    # Correct
    export MAINWP_URL=https://example.com
@@ -403,16 +439,19 @@ If `jq` shows an error, fix the JSON syntax.
 **Symptoms**: Claude Code, VS Code, or other hosts don't show MainWP tools.
 
 **For Claude Code** (`~/.claude.json`):
+
 1. Verify JSON syntax is valid
 2. Check the path to `dist/index.js` is absolute and correct
 3. Restart Claude Code after config changes
 
 **For VS Code** (`.vscode/mcp.json`):
+
 1. Ensure you're in a workspace (not just a single file)
 2. Check VS Code version is 1.101+
 3. Verify Agent Mode is enabled
 
 **For Claude Desktop**:
+
 1. Check config file location:
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -439,6 +478,7 @@ npm run inspect
 ```
 
 This opens a web interface where you can:
+
 - List all available tools
 - Execute tools with custom arguments
 - See raw request/response data

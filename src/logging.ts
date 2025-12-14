@@ -8,7 +8,15 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
 // RFC 5424 Log Levels
-export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency';
+export type LogLevel =
+  | 'debug'
+  | 'info'
+  | 'notice'
+  | 'warning'
+  | 'error'
+  | 'critical'
+  | 'alert'
+  | 'emergency';
 
 export interface Logger {
   debug(message: string, data?: Record<string, unknown>): void;
@@ -31,16 +39,20 @@ export function createLogger(server: Server, loggerName = 'mainwp-mcp'): Logger 
     const logData = data ? { message, ...data } : message;
 
     // Try to send via MCP protocol
-    server.sendLoggingMessage({
-      level,
-      logger: loggerName,
-      data: logData,
-    }).catch(() => {
-      // Fall back to stderr if server not connected or logging not enabled
-      const timestamp = new Date().toISOString();
-      const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-      console.error(`[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`);
-    });
+    server
+      .sendLoggingMessage({
+        level,
+        logger: loggerName,
+        data: logData,
+      })
+      .catch(() => {
+        // Fall back to stderr if server not connected or logging not enabled
+        const timestamp = new Date().toISOString();
+        const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+        console.error(
+          `[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`
+        );
+      });
   };
 
   return {

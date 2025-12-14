@@ -97,6 +97,29 @@
       "enum": ["compact", "standard"],
       "default": "standard",
       "description": "Schema verbosity level. 'compact' reduces token usage by ~30% with shorter descriptions. 'standard' provides full descriptions with examples and safety information. Default is 'standard'."
+    },
+    "retryEnabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable automatic retry for transient errors (network failures, HTTP 5xx, rate limits). Only retries read-only operations to preserve idempotency."
+    },
+    "maxRetries": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 2,
+      "description": "Maximum retry attempts including the initial request. Default is 2 (1 retry). Total time across all retries will not exceed requestTimeout."
+    },
+    "retryBaseDelay": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1000,
+      "description": "Base delay between retries in milliseconds. Actual delay uses exponential backoff with jitter. Default is 1000ms (1 second)."
+    },
+    "retryMaxDelay": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 2000,
+      "description": "Maximum delay between retries in milliseconds. Caps exponential backoff to prevent excessive waits. Default is 2000ms (2 seconds)."
     }
   }
 }

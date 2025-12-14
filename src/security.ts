@@ -32,10 +32,9 @@ export function validateInput(args: Record<string, unknown>): void {
       const numValue = typeof value === 'string' ? parseInt(value, 10) : value;
       if (typeof numValue === 'number') {
         if (!Number.isInteger(numValue) || numValue < 1 || numValue > Number.MAX_SAFE_INTEGER) {
-          throw McpErrorFactory.invalidParams(
-            `Parameter "${key}" must be a positive integer`,
-            { parameter: key }
-          );
+          throw McpErrorFactory.invalidParams(`Parameter "${key}" must be a positive integer`, {
+            parameter: key,
+          });
         }
       }
     }
@@ -91,27 +90,38 @@ function getObjectDepth(obj: Record<string, unknown>, current = 0): number {
  * Removes potentially sensitive information like file paths, credentials, and stack traces.
  */
 export function sanitizeError(message: string): string {
-  return message
-    // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
-    .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
-    // Remove Windows paths
-    .replace(/[A-Z]:\\[\w\-\\./]+/gi, '[path]')
-    // Remove credentials in URLs (user:pass@host)
-    .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
-    // Remove Bearer tokens (Authorization: Bearer xxx)
-    .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
-    // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
-    // Matches: TOKEN=xxx, _TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", etc.
-    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*"[^"]*"/gi, '$1=[redacted]')
-    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*'[^']*'/gi, '$1=[redacted]')
-    .replace(/\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[\w\-._~+/]+=*/gi, '$1=[redacted]')
-    // Remove stack traces (at Function.name (file:line:col))
-    .replace(/\s+at\s+.+\(.+:\d+:\d+\)/g, '')
-    // Remove Node.js internal paths
-    .replace(/\(node:[\w]+:\d+:\d+\)/g, '')
-    // Truncate to reasonable length
-    .slice(0, 500)
-    .trim();
+  return (
+    message
+      // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
+      .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
+      // Remove Windows paths
+      .replace(/[A-Z]:\\[\w\-\\./]+/gi, '[path]')
+      // Remove credentials in URLs (user:pass@host)
+      .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
+      // Remove Bearer tokens (Authorization: Bearer xxx)
+      .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
+      // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
+      // Matches: TOKEN=xxx, _TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", etc.
+      .replace(
+        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*"[^"]*"/gi,
+        '$1=[redacted]'
+      )
+      .replace(
+        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*'[^']*'/gi,
+        '$1=[redacted]'
+      )
+      .replace(
+        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[\w\-._~+/]+=*/gi,
+        '$1=[redacted]'
+      )
+      // Remove stack traces (at Function.name (file:line:col))
+      .replace(/\s+at\s+.+\(.+:\d+:\d+\)/g, '')
+      // Remove Node.js internal paths
+      .replace(/\(node:[\w]+:\d+:\d+\)/g, '')
+      // Truncate to reasonable length
+      .slice(0, 500)
+      .trim()
+  );
 }
 
 /**

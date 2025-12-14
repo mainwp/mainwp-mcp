@@ -1,0 +1,29 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 2%
+        informational: true
+    patch:
+      default:
+        target: 60%
+        informational: true
+
+comment:
+  layout: 'reach,diff,flags,files'
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+ignore:
+  - 'dist/**'
+  - 'coverage/**'
+  - '**/*.test.ts'
+  - 'tests/**'

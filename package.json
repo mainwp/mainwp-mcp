@@ -1,6 +1,6 @@
 {
   "name": "mainwp-mcp",
-  "version": "1.0.0-alpha.10",
+  "version": "1.0.0-alpha.14",
   "description": "MCP Server for MainWP Dashboard - Exposes MainWP Abilities API as MCP tools",
   "type": "module",
   "main": "dist/index.js",
@@ -8,7 +8,15 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "inspect": "npx @modelcontextprotocol/inspector dist/index.js"
+    "inspect": "npx @modelcontextprotocol/inspector dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check-version": "node scripts/check-version.js"
   },
   "keywords": [
     "mainwp",
@@ -23,9 +31,16 @@
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/node": "^20.10.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^9.1.2",
+    "prettier": "^3.7.4",
     "tsx": "^4.6.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.49.0",
+    "vitest": "^2.1.0"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -31,13 +31,18 @@ const promptDefinitions: PromptDefinition[] = [
     description: 'Diagnose issues with a MainWP child site',
     arguments: [
       { name: 'site_id', description: 'ID of the site to troubleshoot', required: true },
-      { name: 'issue_type', description: 'Focus area: connectivity, performance, security, updates (optional)', required: false },
+      {
+        name: 'issue_type',
+        description: 'Focus area: connectivity, performance, security, updates (optional)',
+        required: false,
+      },
     ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Please diagnose issues with site ID ${args?.site_id || '[site_id]'}.${args?.issue_type ? ` Focus on: ${args.issue_type}.` : ''}
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Please diagnose issues with site ID ${args?.site_id || '[site_id]'}.${args?.issue_type ? ` Focus on: ${args.issue_type}.` : ''}
 
 Steps to follow:
 1. Use get_site_v1 to get site details and check connectivity status
@@ -49,8 +54,9 @@ Provide a summary of:
 - Current site status
 - Any issues found
 - Recommended actions to resolve problems`,
+        },
       },
-    }],
+    ],
   },
 
   // === Maintenance Check ===
@@ -58,11 +64,12 @@ Provide a summary of:
     name: 'maintenance-check',
     description: 'Run a comprehensive maintenance check across all managed sites',
     arguments: [],
-    getMessages: () => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Run a comprehensive maintenance check across all managed sites.
+    getMessages: () => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Run a comprehensive maintenance check across all managed sites.
 
 Steps to follow:
 1. Use list_sites_v1 to get all sites
@@ -76,8 +83,9 @@ Generate a maintenance summary including:
 - Sites with pending WordPress core updates (list them)
 - Sites with connectivity issues or stale sync times
 - Recommended priority order for maintenance tasks`,
+        },
       },
-    }],
+    ],
   },
 
   // === Update Workflow ===
@@ -85,14 +93,23 @@ Generate a maintenance summary including:
     name: 'update-workflow',
     description: 'Guide through safely updating WordPress sites',
     arguments: [
-      { name: 'update_type', description: 'Type of updates: plugins, themes, core, or all', required: false },
-      { name: 'site_ids', description: 'Comma-separated site IDs, or "all" for all sites', required: false },
+      {
+        name: 'update_type',
+        description: 'Type of updates: plugins, themes, core, or all',
+        required: false,
+      },
+      {
+        name: 'site_ids',
+        description: 'Comma-separated site IDs, or "all" for all sites',
+        required: false,
+      },
     ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Help me safely update ${args?.update_type || 'all'} on ${args?.site_ids || 'all sites'}.
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Help me safely update ${args?.update_type || 'all'} on ${args?.site_ids || 'all sites'}.
 
 Guide me through this update workflow:
 
@@ -112,22 +129,22 @@ Guide me through this update workflow:
    - Note any updates that require manual intervention
 
 Please start by checking the current update status.`,
+        },
       },
-    }],
+    ],
   },
 
   // === Site Report ===
   {
     name: 'site-report',
     description: 'Generate a detailed report for a specific site',
-    arguments: [
-      { name: 'site_id', description: 'ID of the site to report on', required: true },
-    ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Generate a detailed report for site ID ${args?.site_id || '[site_id]'}.
+    arguments: [{ name: 'site_id', description: 'ID of the site to report on', required: true }],
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Generate a detailed report for site ID ${args?.site_id || '[site_id]'}.
 
 Gather information using available tools and create a report covering:
 
@@ -151,8 +168,9 @@ Gather information using available tools and create a report covering:
    - Any immediate concerns
 
 Format the report in a clear, scannable format.`,
+        },
       },
-    }],
+    ],
   },
 
   // === Network Summary ===
@@ -160,11 +178,12 @@ Format the report in a clear, scannable format.`,
     name: 'network-summary',
     description: 'Generate a summary report of all managed sites',
     arguments: [],
-    getMessages: () => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Generate a network-wide summary of all managed WordPress sites.
+    getMessages: () => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Generate a network-wide summary of all managed WordPress sites.
 
 Steps to follow:
 1. Use list_sites_v1 to get all sites
@@ -192,8 +211,9 @@ Create a summary report including:
 - Sites requiring immediate attention
 
 Present the data in a clear, executive-summary format.`,
+        },
       },
-    }],
+    ],
   },
 
   // === Security Audit ===
@@ -201,13 +221,18 @@ Present the data in a clear, executive-summary format.`,
     name: 'security-audit',
     description: 'Perform a security-focused audit of managed sites',
     arguments: [
-      { name: 'site_ids', description: 'Comma-separated site IDs to audit, or "all"', required: false },
+      {
+        name: 'site_ids',
+        description: 'Comma-separated site IDs to audit, or "all"',
+        required: false,
+      },
     ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Perform a security-focused audit of ${args?.site_ids || 'all managed sites'}.
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Perform a security-focused audit of ${args?.site_ids || 'all managed sites'}.
 
 Security audit checklist:
 
@@ -230,8 +255,9 @@ Security audit checklist:
    - Priority order for security updates
 
 Start by gathering the site and update information, then provide the security assessment.`,
+        },
       },
-    }],
+    ],
   },
 
   // === Backup Status ===
@@ -239,13 +265,18 @@ Start by gathering the site and update information, then provide the security as
     name: 'backup-status',
     description: 'Check backup status across managed sites',
     arguments: [
-      { name: 'site_ids', description: 'Comma-separated site IDs, or "all" (default)', required: false },
+      {
+        name: 'site_ids',
+        description: 'Comma-separated site IDs, or "all" (default)',
+        required: false,
+      },
     ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Check the backup status for ${args?.site_ids || 'all managed sites'}.
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Check the backup status for ${args?.site_ids || 'all managed sites'}.
 
 Please help me understand the backup situation:
 
@@ -265,8 +296,9 @@ Please help me understand the backup situation:
    - Best practices for backup frequency
 
 Note: This analysis depends on the backup data available through MainWP. If backup information is limited, please indicate what additional data would be helpful.`,
+        },
       },
-    }],
+    ],
   },
 
   // === Performance Check ===
@@ -274,13 +306,18 @@ Note: This analysis depends on the backup data available through MainWP. If back
     name: 'performance-check',
     description: 'Analyze site performance indicators',
     arguments: [
-      { name: 'site_id', description: 'Site ID to analyze, or "all" for overview', required: false },
+      {
+        name: 'site_id',
+        description: 'Site ID to analyze, or "all" for overview',
+        required: false,
+      },
     ],
-    getMessages: (args) => [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Analyze performance indicators for ${args?.site_id ? `site ID ${args.site_id}` : 'all managed sites'}.
+    getMessages: args => [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Analyze performance indicators for ${args?.site_id ? `site ID ${args.site_id}` : 'all managed sites'}.
 
 Performance analysis:
 
@@ -305,8 +342,9 @@ Performance analysis:
    - Further investigation suggestions
 
 Gather available data and provide performance insights based on what can be determined from MainWP.`,
+        },
       },
-    }],
+    ],
   },
 ];
 
