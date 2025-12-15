@@ -446,9 +446,9 @@ export function loadConfig(): Config {
   const retryEnabled = getBoolean(process.env.MAINWP_RETRY_ENABLED, settings?.retryEnabled, true);
 
   const maxRetries = getNumber(process.env.MAINWP_MAX_RETRIES, settings?.maxRetries, 2);
-  if (isNaN(maxRetries) || maxRetries < 1) {
+  if (isNaN(maxRetries) || maxRetries < 1 || maxRetries > 5) {
     throw new Error(
-      'MAINWP_MAX_RETRIES must be a positive integer >= 1 (set via environment variable or settings.json)'
+      'MAINWP_MAX_RETRIES must be between 1 and 5 (set via environment variable or settings.json)'
     );
   }
 
@@ -457,9 +457,9 @@ export function loadConfig(): Config {
     settings?.retryBaseDelay,
     1000
   );
-  if (isNaN(retryBaseDelay) || retryBaseDelay <= 0) {
+  if (isNaN(retryBaseDelay) || retryBaseDelay < 500 || retryBaseDelay > 10000) {
     throw new Error(
-      'MAINWP_RETRY_BASE_DELAY must be a positive integer > 0 (set via environment variable or settings.json)'
+      'MAINWP_RETRY_BASE_DELAY must be between 500ms and 10000ms (set via environment variable or settings.json)'
     );
   }
 
@@ -468,9 +468,9 @@ export function loadConfig(): Config {
     settings?.retryMaxDelay,
     2000
   );
-  if (isNaN(retryMaxDelay) || retryMaxDelay < retryBaseDelay) {
+  if (isNaN(retryMaxDelay) || retryMaxDelay < retryBaseDelay || retryMaxDelay > 30000) {
     throw new Error(
-      `MAINWP_RETRY_MAX_DELAY must be >= MAINWP_RETRY_BASE_DELAY (${retryBaseDelay}ms) (set via environment variable or settings.json)`
+      `MAINWP_RETRY_MAX_DELAY must be between ${retryBaseDelay}ms and 30000ms (set via environment variable or settings.json)`
     );
   }
 

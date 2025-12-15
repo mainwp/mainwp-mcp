@@ -249,6 +249,57 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/MAINWP_RATE_LIMIT/);
   });
 
+  it('should reject maxRetries exceeding upper bound', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_MAX_RETRIES = '10';
+
+    expect(() => loadConfig()).toThrow(/MAINWP_MAX_RETRIES must be between 1 and 5/);
+  });
+
+  it('should reject retryBaseDelay below minimum bound', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_RETRY_BASE_DELAY = '100';
+
+    expect(() => loadConfig()).toThrow(/MAINWP_RETRY_BASE_DELAY must be between 500ms and 10000ms/);
+  });
+
+  it('should reject retryBaseDelay exceeding upper bound', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_RETRY_BASE_DELAY = '20000';
+
+    expect(() => loadConfig()).toThrow(/MAINWP_RETRY_BASE_DELAY must be between 500ms and 10000ms/);
+  });
+
+  it('should reject retryMaxDelay exceeding upper bound', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_RETRY_MAX_DELAY = '60000';
+
+    expect(() => loadConfig()).toThrow(/MAINWP_RETRY_MAX_DELAY must be between.*and 30000ms/);
+  });
+
+  it('should accept valid retry configuration at boundaries', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_MAX_RETRIES = '5';
+    process.env.MAINWP_RETRY_BASE_DELAY = '500';
+    process.env.MAINWP_RETRY_MAX_DELAY = '30000';
+
+    const config = loadConfig();
+
+    expect(config.maxRetries).toBe(5);
+    expect(config.retryBaseDelay).toBe(500);
+    expect(config.retryMaxDelay).toBe(30000);
+  });
+
   it('should parse allowed/blocked tools from env', () => {
     process.env.MAINWP_URL = 'https://test.com';
     process.env.MAINWP_USER = 'admin';

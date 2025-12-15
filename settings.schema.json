@@ -106,20 +106,23 @@
     "maxRetries": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 5,
       "default": 2,
-      "description": "Maximum retry attempts including the initial request. Default is 2 (1 retry). Total time across all retries will not exceed requestTimeout."
+      "description": "Maximum retry attempts including the initial request. Must be between 1 and 5. Default is 2 (1 retry). Total time across all retries will not exceed requestTimeout."
     },
     "retryBaseDelay": {
       "type": "integer",
-      "minimum": 1,
+      "minimum": 500,
+      "maximum": 10000,
       "default": 1000,
-      "description": "Base delay between retries in milliseconds. Actual delay uses exponential backoff with jitter. Default is 1000ms (1 second)."
+      "description": "Base delay between retries in milliseconds. Must be between 500ms and 10000ms. Actual delay uses exponential backoff with jitter. Default is 1000ms (1 second)."
     },
     "retryMaxDelay": {
       "type": "integer",
-      "minimum": 1,
+      "minimum": 500,
+      "maximum": 30000,
       "default": 2000,
-      "description": "Maximum delay between retries in milliseconds. Caps exponential backoff to prevent excessive waits. Default is 2000ms (2 seconds)."
+      "description": "Maximum delay between retries in milliseconds. Must be between 500ms and 30000ms and >= retryBaseDelay. Caps exponential backoff to prevent excessive waits. Default is 2000ms (2 seconds)."
     }
   }
 }
