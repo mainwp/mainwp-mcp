@@ -27,6 +27,14 @@
   ],
   "author": "MainWP",
   "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mainwp/mainwp-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mainwp/mainwp-mcp/issues"
+  },
+  "homepage": "https://github.com/mainwp/mainwp-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
