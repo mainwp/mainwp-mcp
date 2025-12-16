@@ -265,7 +265,9 @@ describe('withRetry', () => {
   });
 
   it('throws immediately on non-retryable error', async () => {
-    const operation = vi.fn((_ctx: RetryContext) => Promise.reject(new Error('HTTP 404 Not Found')));
+    const operation = vi.fn((_ctx: RetryContext) =>
+      Promise.reject(new Error('HTTP 404 Not Found'))
+    );
 
     await expect(
       withRetry(operation, {

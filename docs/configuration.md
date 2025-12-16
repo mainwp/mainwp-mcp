@@ -312,12 +312,12 @@ The server automatically retries transient errors to improve reliability against
 
 ### Configuration
 
-| Variable                  | Default | Description                              |
-| ------------------------- | ------- | ---------------------------------------- |
-| `MAINWP_RETRY_ENABLED`    | `true`  | Enable/disable retry logic               |
-| `MAINWP_MAX_RETRIES`      | `2`     | Total attempts including initial request |
-| `MAINWP_RETRY_BASE_DELAY` | `1000`  | Base delay in milliseconds (1 second)    |
-| `MAINWP_RETRY_MAX_DELAY`  | `2000`  | Maximum delay in milliseconds (2 seconds)|
+| Variable                  | Default | Description                               |
+| ------------------------- | ------- | ----------------------------------------- |
+| `MAINWP_RETRY_ENABLED`    | `true`  | Enable/disable retry logic                |
+| `MAINWP_MAX_RETRIES`      | `2`     | Total attempts including initial request  |
+| `MAINWP_RETRY_BASE_DELAY` | `1000`  | Base delay in milliseconds (1 second)     |
+| `MAINWP_RETRY_MAX_DELAY`  | `2000`  | Maximum delay in milliseconds (2 seconds) |
 
 In `settings.json`:
 
@@ -333,18 +333,21 @@ In `settings.json`:
 ### Example Scenarios
 
 **Scenario 1: Temporary server overload (HTTP 503)**
+
 - Initial request fails with 503 after 5s
 - Wait ~1s (base delay + jitter)
 - Retry succeeds
 - Total time: ~6s
 
 **Scenario 2: Rate limit (HTTP 429)**
+
 - Initial request fails with 429
 - Wait ~1s
 - Retry succeeds
 - Total time: ~1s (rate limiter already applied delay)
 
 **Scenario 3: Timeout budget exceeded**
+
 - `requestTimeout` = 30s
 - Initial request fails after 28s
 - Calculated backoff = 1s
@@ -353,6 +356,7 @@ In `settings.json`:
 - If retry fails after 2s: total time = 30s (budget enforced)
 
 **Scenario 4: Non-retryable error (HTTP 404)**
+
 - Initial request fails with 404
 - No retry attempted (permanent error)
 - Fails immediately

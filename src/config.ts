@@ -135,8 +135,22 @@ function validateSettingsFile(settings: any, filePath: string): void {
     'abilityNamespace',
     'schemaVerbosity',
   ];
-  const booleanFields = ['skipSslVerify', 'allowHttp', 'safeMode', 'requireUserConfirmation', 'retryEnabled'];
-  const numberFields = ['rateLimit', 'requestTimeout', 'maxResponseSize', 'maxSessionData', 'maxRetries', 'retryBaseDelay', 'retryMaxDelay'];
+  const booleanFields = [
+    'skipSslVerify',
+    'allowHttp',
+    'safeMode',
+    'requireUserConfirmation',
+    'retryEnabled',
+  ];
+  const numberFields = [
+    'rateLimit',
+    'requestTimeout',
+    'maxResponseSize',
+    'maxSessionData',
+    'maxRetries',
+    'retryBaseDelay',
+    'retryMaxDelay',
+  ];
   const arrayFields = ['allowedTools', 'blockedTools'];
 
   // Validate string fields
