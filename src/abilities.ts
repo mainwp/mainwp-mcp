@@ -347,6 +347,7 @@ export async function executeAbility(
   }
 
   const isReadonly = ability.meta?.annotations?.readonly ?? false;
+  const isDestructive = ability.meta?.annotations?.destructive ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
 
@@ -366,8 +367,14 @@ export async function executeAbility(
       // GET request for read-only abilities, with optional params as query string
       const queryString = hasInput ? serializeToPhpQueryString(input) : '';
       response = await customFetch(url + queryString, { method: 'GET' });
+    } else if (isDestructive) {
+      // DELETE request for destructive abilities (Dashboard requires DELETE method)
+      response = await customFetch(url, {
+        method: 'DELETE',
+        body: JSON.stringify({ input: input ?? {} }),
+      });
     } else {
-      // POST request for non-readonly abilities
+      // POST request for non-destructive write operations
       response = await customFetch(url, {
         method: 'POST',
         body: JSON.stringify({ input: input ?? {} }),
