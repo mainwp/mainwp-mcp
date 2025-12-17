@@ -25,12 +25,12 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 ## Quick Start
 
-> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in development. Until the pull request is merged, you'll need to use the `initial-abilities-api-intergration` branch of MainWP Dashboard:
+> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in development. Until the pull request is merged, you'll need to use the `initial-issues-abilities-api` branch of MainWP Dashboard (PR2):
 >
 > ```bash
 > cd /path/to/your/mainwp-dashboard
 > git fetch origin
-> git checkout initial-abilities-api-intergration
+> git checkout initial-issues-abilities-api
 > ```
 >
 > Once the PR is merged, you can switch back to the main branch.
