@@ -1,6 +1,6 @@
 {
   "name": "mainwp-mcp",
-  "version": "1.0.0-alpha.14",
+  "version": "1.0.0-alpha.15",
   "description": "MCP Server for MainWP Dashboard - Exposes MainWP Abilities API as MCP tools",
   "type": "module",
   "main": "dist/index.js",
@@ -41,14 +41,14 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^20.10.0",
-    "@vitest/coverage-v8": "^2.1.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
     "tsx": "^4.6.0",
     "typescript": "^5.3.0",
     "typescript-eslint": "^8.50.0",
-    "vitest": "^2.1.0"
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=18.0.0"

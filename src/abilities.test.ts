@@ -318,7 +318,7 @@ describe('executeAbility', () => {
     expect(calls[1][1].method).toBe('GET');
   });
 
-  it('should use POST for non-readonly abilities', async () => {
+  it('should use DELETE for destructive abilities', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -334,7 +334,7 @@ describe('executeAbility', () => {
     await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, confirm: true });
 
     const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('POST');
+    expect(calls[1][1].method).toBe('DELETE');
   });
 
   it('should throw when ability not found', async () => {
