@@ -408,6 +408,14 @@ For Windsurf and other hosts, see the [Installation Guide](docs/installation.md)
 | `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
 | `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
 
+> **⚠️ Security Warning: SSL Verification**
+>
+> Setting `MAINWP_SKIP_SSL_VERIFY=true` disables SSL certificate verification, making your connection vulnerable to man-in-the-middle (MITM) attacks.
+>
+> **Only use for:** Local development with self-signed certificates or isolated test environments.
+>
+> **Never use in production** or on untrusted networks.
+
 For the complete list of variables and configuration file options, see the [Configuration Guide](docs/configuration.md).
 
 ### Configuration File
