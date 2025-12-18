@@ -403,6 +403,7 @@ For Windsurf and other hosts, see the [Installation Guide](docs/installation.md)
 | `MAINWP_ALLOWED_TOOLS`             | No       |            | Whitelist of tools to expose                             |
 | `MAINWP_BLOCKED_TOOLS`             | No       |            | Blacklist of tools to hide                               |
 | `MAINWP_SCHEMA_VERBOSITY`          | No       | `standard` | `standard` or `compact`                                  |
+| `MAINWP_ABILITY_NAMESPACE`         | No       | `mainwp`   | Filter abilities by namespace                            |
 | `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
 | `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
 | `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |

@@ -79,6 +79,68 @@ A JSON schema is available at `settings.schema.json` for IDE autocompletion.
 
 ---
 
+## Namespace Filtering
+
+The `abilityNamespace` setting controls which abilities are exposed based on their namespace prefix. The Abilities API organizes abilities by namespace (e.g., `mainwp/list-sites-v1`), and this setting filters which ones become available as MCP tools.
+
+### Default Behavior
+
+By default, the namespace is `mainwp`, which exposes only MainWP Dashboard abilities:
+
+```json
+{
+  "abilityNamespace": "mainwp"
+}
+```
+
+This converts `mainwp/list-sites-v1` → `list_sites_v1` (stripping the namespace prefix).
+
+### Use Cases
+
+**Custom Extension Development**
+
+If you're building a plugin that registers its own abilities with the Abilities API:
+
+```json
+{
+  "abilityNamespace": "my-extension"
+}
+```
+
+This exposes only `my-extension/*` abilities, keeping your tools separate from MainWP's.
+
+**Multi-Vendor Dashboard**
+
+To expose abilities from all plugins that register with the Abilities API:
+
+```json
+{
+  "abilityNamespace": ""
+}
+```
+
+**Warning:** An empty namespace exposes ALL abilities from the API. This may include abilities from other plugins you didn't intend to expose. Use with caution.
+
+**Multiple MCP Server Instances**
+
+Run separate server instances for different namespaces:
+
+```bash
+# Terminal 1: MainWP tools
+MAINWP_ABILITY_NAMESPACE=mainwp node dist/index.js
+
+# Terminal 2: Custom extension tools
+MAINWP_ABILITY_NAMESPACE=my-extension node dist/index.js
+```
+
+### Environment Variable
+
+```bash
+MAINWP_ABILITY_NAMESPACE=mainwp
+```
+
+---
+
 ## Tool Filtering
 
 Control which tools are exposed to AI assistants. This is useful for:
