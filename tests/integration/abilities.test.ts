@@ -207,7 +207,7 @@ describe('Abilities Integration', () => {
       expect(execCall[1].method).toBe('GET');
     });
 
-    it('should execute destructive ability with DELETE', async () => {
+    it('should execute destructive + idempotent ability with DELETE', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => abilitiesFixture,
@@ -227,7 +227,7 @@ describe('Abilities Integration', () => {
 
       expect(result).toEqual({ success: true, deleted: true });
 
-      // Verify DELETE was used for destructive abilities
+      // Verify DELETE was used for destructive + idempotent abilities
       const execCall = mockFetch.mock.calls[1];
       expect(execCall[1].method).toBe('DELETE');
     });

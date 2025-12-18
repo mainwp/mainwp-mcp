@@ -47,7 +47,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.15';
+const SERVER_VERSION = '1.0.0-alpha.19';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;

@@ -60,7 +60,118 @@ const sampleAbilities: Ability[] = [
       annotations: {
         readonly: false,
         destructive: true,
-        idempotent: false,
+        idempotent: true, // DELETE: destructive + idempotent
+      },
+    },
+  },
+  {
+    name: 'mainwp/delete-client-v1',
+    label: 'Delete Client',
+    description: 'Delete a client',
+    category: 'mainwp-clients',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id_or_email: { type: ['integer', 'string'], description: 'Client ID or email' },
+        confirm: { type: 'boolean', description: 'Confirm deletion' },
+        dry_run: { type: 'boolean', description: 'Preview mode' },
+      },
+      required: ['client_id_or_email'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: true,
+        idempotent: true, // DELETE: destructive + idempotent
+      },
+    },
+  },
+  {
+    name: 'mainwp/delete-tag-v1',
+    label: 'Delete Tag',
+    description: 'Delete a tag',
+    category: 'mainwp-tags',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tag_id: { type: 'integer', description: 'Tag ID' },
+        confirm: { type: 'boolean', description: 'Confirm deletion' },
+        dry_run: { type: 'boolean', description: 'Preview mode' },
+      },
+      required: ['tag_id'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: true,
+        idempotent: true, // DELETE: destructive + idempotent
+      },
+    },
+  },
+  {
+    name: 'mainwp/delete-site-plugins-v1',
+    label: 'Delete Site Plugins',
+    description: 'Delete plugins from a site',
+    category: 'mainwp-sites',
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id_or_domain: { type: ['integer', 'string'], description: 'Site ID or domain' },
+        plugins: { type: 'array', items: { type: 'string' }, description: 'Plugin slugs' },
+        confirm: { type: 'boolean', description: 'Confirm deletion' },
+        dry_run: { type: 'boolean', description: 'Preview mode' },
+      },
+      required: ['site_id_or_domain', 'plugins'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: true,
+        idempotent: true, // DELETE: destructive + idempotent
+      },
+    },
+  },
+  {
+    name: 'mainwp/delete-site-themes-v1',
+    label: 'Delete Site Themes',
+    description: 'Delete themes from a site',
+    category: 'mainwp-sites',
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id_or_domain: { type: ['integer', 'string'], description: 'Site ID or domain' },
+        themes: { type: 'array', items: { type: 'string' }, description: 'Theme slugs' },
+        confirm: { type: 'boolean', description: 'Confirm deletion' },
+        dry_run: { type: 'boolean', description: 'Preview mode' },
+      },
+      required: ['site_id_or_domain', 'themes'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: true,
+        idempotent: true, // DELETE: destructive + idempotent
+      },
+    },
+  },
+  {
+    name: 'mainwp/update-site-v1',
+    label: 'Update Site',
+    description: 'Update site settings',
+    category: 'mainwp-sites',
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id: { type: 'integer', description: 'Site ID' },
+        name: { type: 'string', description: 'New site name' },
+      },
+      required: ['site_id'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: false, // POST: not destructive
+        idempotent: true,
       },
     },
   },
@@ -111,7 +222,7 @@ describe('fetchAbilities', () => {
 
     const abilities = await fetchAbilities(baseConfig);
 
-    expect(abilities).toHaveLength(2);
+    expect(abilities).toHaveLength(7);
     expect(abilities[0].name).toBe('mainwp/list-sites-v1');
   });
 
@@ -158,7 +269,7 @@ describe('fetchAbilities', () => {
 
     const abilities = await fetchAbilities(baseConfig);
 
-    expect(abilities).toHaveLength(2);
+    expect(abilities).toHaveLength(7);
     expect(abilities.every(a => a.name.startsWith('mainwp/'))).toBe(true);
   });
 
@@ -187,7 +298,7 @@ describe('fetchAbilities', () => {
     // Should return cached data
     const abilities = await fetchAbilities(baseConfig, true);
 
-    expect(abilities).toHaveLength(2);
+    expect(abilities).toHaveLength(7);
   });
 
   it('should throw when no cache and fetch fails', async () => {
@@ -296,6 +407,9 @@ describe('executeAbility', () => {
     vi.restoreAllMocks();
   });
 
+  // HTTP Method Selection Tests
+  // Rules: GET (readonly), DELETE (destructive + idempotent), POST (everything else)
+
   it('should use GET for readonly abilities', async () => {
     // First mock for fetchAbilities
     mockFetch.mockResolvedValueOnce({
@@ -318,7 +432,7 @@ describe('executeAbility', () => {
     expect(calls[1][1].method).toBe('GET');
   });
 
-  it('should use DELETE for destructive abilities', async () => {
+  it('should use DELETE for destructive + idempotent abilities (delete_site_v1)', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -335,6 +449,136 @@ describe('executeAbility', () => {
 
     const calls = mockFetch.mock.calls;
     expect(calls[1][1].method).toBe('DELETE');
+  });
+
+  it('should use DELETE for destructive + idempotent abilities (delete_client_v1)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-client-v1', {
+      client_id_or_email: 1,
+      confirm: true,
+    });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[1][1].method).toBe('DELETE');
+  });
+
+  it('should use DELETE for destructive + idempotent abilities (delete_tag_v1)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-tag-v1', { tag_id: 1, confirm: true });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[1][1].method).toBe('DELETE');
+  });
+
+  it('should use DELETE for destructive + idempotent abilities (delete_site_plugins_v1)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-site-plugins-v1', {
+      site_id_or_domain: 1,
+      plugins: ['test-plugin/test-plugin.php'],
+      confirm: true,
+    });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[1][1].method).toBe('DELETE');
+  });
+
+  it('should use DELETE for destructive + idempotent abilities (delete_site_themes_v1)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-site-themes-v1', {
+      site_id_or_domain: 1,
+      themes: ['twentytwentyfour'],
+      confirm: true,
+    });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[1][1].method).toBe('DELETE');
+  });
+
+  it('should use POST for non-destructive write abilities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ updated: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/update-site-v1', { site_id: 1, name: 'New Name' });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[1][1].method).toBe('POST');
+  });
+
+  it('should serialize input to query string for DELETE requests', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, dry_run: true });
+
+    const calls = mockFetch.mock.calls;
+    const url = calls[1][0] as string;
+    // DELETE uses query string, not JSON body
+    expect(url).toContain('input[site_id]=1');
+    expect(url).toContain('input[dry_run]=true');
+    // Should not have a body
+    expect(calls[1][1].body).toBeUndefined();
   });
 
   it('should throw when ability not found', async () => {
@@ -496,7 +740,7 @@ describe('generateHelpDocument', () => {
     const helpDoc = generateHelpDocument(sampleAbilities);
 
     expect(helpDoc.version).toBe('1.0');
-    expect(helpDoc.overview.totalTools).toBe(2);
+    expect(helpDoc.overview.totalTools).toBe(7);
     expect(helpDoc.overview.categories).toContain('mainwp-sites');
   });
 
@@ -522,7 +766,8 @@ describe('generateHelpDocument', () => {
   it('should group tools by category', () => {
     const helpDoc = generateHelpDocument(sampleAbilities);
 
-    expect(helpDoc.toolsByCategory['mainwp-sites']).toHaveLength(2);
+    // mainwp-sites has: list-sites, delete-site, delete-site-plugins, delete-site-themes, update-site
+    expect(helpDoc.toolsByCategory['mainwp-sites']).toHaveLength(5);
   });
 
   it('should include safety conventions', () => {
