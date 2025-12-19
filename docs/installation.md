@@ -2,6 +2,35 @@
 
 This guide covers detailed installation instructions for different MCP hosts. For a quick overview, see the [README](../README.md#installation).
 
+---
+
+## ⚠️ Important: AI Safety Notice
+
+**Backup your MainWP data before using AI assistants.**
+
+Large Language Models (LLMs) and AI agents are non-deterministic systems that can make mistakes, misinterpret instructions, or perform unintended actions. When connected to your MainWP Dashboard, an AI assistant has the ability to modify or delete sites, plugins, themes, clients, and tags.
+
+### Recommendations
+
+1. **Create a full backup** of your MainWP Dashboard database before your first AI session
+2. **Start with Safe Mode enabled** (`safeMode: true`) to explore read-only operations first
+3. **Use dry_run previews** before executing destructive operations (see [Security Guide](security.md#using-dry-run-previews))
+4. **Review all AI actions** before confirming deletions or bulk operations
+
+### Known AI Client Limitations
+
+Some AI clients may not properly follow the confirmation flow for destructive operations. The mainwp-mcp server provides safety mechanisms (preview requirements, confirmation steps), but ultimately **the AI client decides whether to follow these instructions**. Observed issues include:
+
+- AI skipping the preview step and executing deletions directly
+- AI misinterpreting user responses as confirmation
+- AI assuming operations are "safe" based on its own reasoning
+
+These are AI client limitations, not mainwp-mcp server issues. If you experience this behavior, report it to your AI client vendor and consider enabling `safeMode: true` for that client.
+
+See the [Security Guide](security.md) for detailed information on Safe Mode, confirmation flows, and protecting your data.
+
+---
+
 ## Prerequisites
 
 - Node.js 18 or later

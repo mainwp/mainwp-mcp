@@ -133,6 +133,24 @@ All read operations and non-destructive writes:
 - **Development**: Test integrations without affecting real data
 - **Read-only access**: When you only need reporting capabilities
 - **Demos**: Show capabilities without live changes
+- **First-time setup**: Familiarize yourself with the system safely
+
+### Recommended: Start with Safe Mode
+
+**We recommend enabling Safe Mode when first installing mainwp-mcp.** This allows you to:
+
+1. Verify your credentials and connection work correctly
+2. Explore available tools without risk of data loss
+3. Understand how the AI interacts with your MainWP Dashboard
+4. Build confidence before enabling destructive operations
+
+Once comfortable, disable Safe Mode to enable full functionality:
+
+```json
+{
+  "safeMode": false
+}
+```
 
 ### Classification Behavior
 
@@ -149,6 +167,48 @@ Safe mode classifies abilities as destructive or non-destructive based on the `d
 4. **Defense in Depth**: The `confirm` parameter is always stripped in safe mode regardless of classification.
 
 **For stricter control:** Use `blockedTools` to explicitly block specific tools, or `allowedTools` to whitelist only known-safe tools.
+
+---
+
+## Using Dry-Run Previews
+
+Before executing any destructive operation, you can preview exactly what will be affected using the `dry_run` parameter.
+
+### How It Works
+
+Many destructive tools support `dry_run: true`, which simulates the operation without making any changes:
+
+```
+You: Delete the staging plugins, but show me what will happen first
+
+AI: [Calls delete_site_plugins_v1(site_id: 3, plugin_slugs: ["debug-bar"], dry_run: true)]
+    Server returns preview:
+    {
+      "dry_run": true,
+      "would_delete": ["debug-bar/debug-bar.php"],
+      "sites_affected": 1
+    }
+
+AI: If I proceed, this will delete the "debug-bar" plugin from site 3.
+    Should I continue?
+```
+
+### Tools Supporting Dry-Run
+
+The following destructive tools support `dry_run: true`:
+
+- `delete_site_v1` - Preview site deletion
+- `delete_client_v1` - Preview client deletion
+- `delete_tag_v1` - Preview tag deletion
+- `delete_site_plugins_v1` - Preview plugin removal
+- `delete_site_themes_v1` - Preview theme removal
+
+### When to Use Dry-Run
+
+- **Always** before bulk operations affecting multiple items
+- When you're unsure about the scope of a deletion
+- When training or learning the system
+- Before any operation you can't easily reverse
 
 ---
 
@@ -289,6 +349,77 @@ MAINWP_REQUIRE_USER_CONFIRMATION=false
 - Changing any parameter requires a new preview
 - Maximum 100 pending previews to prevent memory exhaustion
 - Preview keys use deterministic hashing of operation parameters
+
+---
+
+## AI Client Limitations
+
+The mainwp-mcp server provides multiple safety mechanisms for destructive operations, but ultimately **the AI client decides whether to follow these instructions**. This section documents known limitations and how to protect yourself.
+
+### Understanding the Limitation
+
+The MCP protocol allows servers to provide:
+
+- **Semantic annotations** (`destructiveHint: true`) marking dangerous tools
+- **Description warnings** (`[DESTRUCTIVE]` tags with confirmation instructions)
+- **Confirmation flow requirements** (two-phase preview→execute pattern)
+
+However, these are **advisory**. The AI client receives this information and decides what to do with it. Some AI clients may:
+
+- Skip the preview step entirely
+- Misinterpret user responses as confirmation
+- Assume operations are "safe" based on their own reasoning (e.g., "no sites are assigned to this tag")
+- Hallucinate that the user confirmed when they did not
+
+### Observed Issues
+
+The following behaviors have been observed with some AI clients:
+
+| Issue | Description | Impact |
+|-------|-------------|--------|
+| Skipped preview | AI calls destructive tool without first requesting a preview | Deletion without user review |
+| False confirmation | AI claims user confirmed when they did not | Unauthorized deletion |
+| Assumed safety | AI decides operation is safe without asking | Deletion based on AI judgment |
+| Ignored instructions | AI doesn't follow the confirmation flow in tool descriptions | Bypassed safety checks |
+
+### This Is Not a mainwp-mcp Bug
+
+These behaviors are **AI client limitations**, not mainwp-mcp server issues. The server correctly:
+
+1. Marks tools as destructive
+2. Embeds confirmation instructions in tool descriptions
+3. Enforces the two-phase flow when `requireUserConfirmation: true`
+4. Returns preview data for the AI to show
+
+The problem occurs when the AI client ignores these mechanisms.
+
+### Protecting Yourself
+
+If you experience these issues:
+
+1. **Enable Safe Mode** (`safeMode: true`) to block all destructive operations
+2. **Report the behavior** to your AI client vendor with specific examples
+3. **Use a different AI client** if the issue persists
+4. **Keep backups** of your MainWP Dashboard database
+
+### Recommended Configuration for Untrusted AI Clients
+
+If you're unsure whether your AI client properly follows instructions:
+
+```json
+{
+  "safeMode": true,
+  "blockedTools": [
+    "delete_site_v1",
+    "delete_client_v1",
+    "delete_tag_v1",
+    "delete_site_plugins_v1",
+    "delete_site_themes_v1"
+  ]
+}
+```
+
+This provides defense-in-depth: Safe Mode blocks destructive operations at runtime, and `blockedTools` prevents the tools from even appearing in the AI's tool list.
 
 ---
 
