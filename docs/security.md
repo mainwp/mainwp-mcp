@@ -1,12 +1,8 @@
 # Security Guide
 
-This guide covers credential management, the trust model, and security best practices for the MainWP MCP Server.
-
 ## Trust Model
 
 Understanding the trust boundaries helps you configure the server appropriately for your environment.
-
-### Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -18,70 +14,31 @@ Understanding the trust boundaries helps you configure the server appropriately 
    the prompts            (no storage)            (full access)
 ```
 
-### Trust Assumptions
+The AI assistant has the same access as your WordPress user. When you configure this server with credentials, any tool call the AI makes executes with those permissions. The server itself is a passthrough—it stores nothing, caches responses only briefly, and logs no sensitive data. Credentials exist only in memory during execution.
 
-**The AI assistant has the same access as your WordPress user.** When you configure this server with credentials, any tool call the AI makes executes with those permissions. The server does not add access controls beyond what WordPress enforces.
+WordPress Application Passwords scope access. The password you create determines which WordPress capabilities the AI can use, so you can create a dedicated user with limited roles if you want restricted access.
 
-**The server is a passthrough.** It does not store credentials, cache responses long-term, or log sensitive data. Credentials exist only in memory during execution.
-
-**WordPress Application Passwords scope access.** The password you create determines which WordPress capabilities the AI can use. Create a dedicated user with limited roles if you want restricted access.
-
-### What the AI Can Do
-
-With default configuration, the AI can:
-
-- Read all site data (plugins, themes, updates, clients, tags)
-- Execute updates across your network
-- Activate/deactivate plugins and themes
-- Delete plugins, themes, sites, clients, and tags (with confirmation)
-- Sync and reconnect sites
-
-### What the AI Cannot Do
-
-- Access WordPress admin directly (no browser session)
-- Bypass WordPress permissions (limited to the configured user's capabilities)
-- Execute arbitrary PHP code
-- Access the filesystem beyond what MainWP exposes
+With default configuration, the AI can read all site data (plugins, themes, updates, clients, tags), execute updates across your network, activate and deactivate plugins and themes, delete plugins, themes, sites, clients, and tags (with confirmation), and sync and reconnect sites. The AI cannot access WordPress admin directly (no browser session), bypass WordPress permissions, execute arbitrary PHP code, or access the filesystem beyond what MainWP exposes.
 
 ---
 
 ## Credential Management
 
-### Application Passwords (Recommended)
+### Application Passwords
 
-WordPress Application Passwords are the recommended authentication method:
+WordPress Application Passwords are the recommended authentication method. They can be revoked without changing your main password, each application gets a unique password for auditing, and WordPress logs which application made each request.
 
-1. They can be revoked without changing your main password
-2. Each application gets a unique password for auditing
-3. WordPress logs which application made each request
+Create a dedicated password for the MCP server and label it clearly (e.g., "MainWP MCP Server - Claude"). Use a dedicated WordPress user for API access rather than your main admin account. Create unique Application Passwords for each tool rather than sharing one across applications. Keep production and development credentials separate.
 
-Create a dedicated password for the MCP server and label it clearly (e.g., "MainWP MCP Server - Claude").
+### Credential Storage
 
-### Credential Storage Options
-
-**Environment variables** are suitable for:
-
-- Local development
-- CI/CD pipelines with secrets management
-- Containerized deployments
-
-**Configuration file** (`settings.json`) is suitable for:
-
-- Personal workstations
-- When you want credentials separate from shell history
-
-If using a config file, restrict permissions:
+Environment variables work well for local development, CI/CD pipelines with secrets management, and containerized deployments. A configuration file (`settings.json`) works well for personal workstations where you want credentials separate from shell history. If using a config file, restrict permissions:
 
 ```bash
 chmod 600 ~/.config/mainwp-mcp/settings.json
 ```
 
-### What NOT to Do
-
-- Don't commit credentials to version control
-- Don't use your main WordPress admin password
-- Don't share Application Passwords between applications
-- Don't use the same credentials across production and development
+Avoid committing credentials to version control.
 
 ---
 
@@ -89,94 +46,31 @@ chmod 600 ~/.config/mainwp-mcp/settings.json
 
 Safe mode prevents all destructive operations by stripping the `confirm: true` parameter that destructive tools require.
 
-### Enabling Safe Mode
-
-In `settings.json`:
-
 ```json
 {
   "safeMode": true
 }
 ```
 
-As an environment variable:
-
 ```bash
 MAINWP_SAFE_MODE=true
 ```
 
-### What Safe Mode Blocks
+Safe mode blocks `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1`. These tools require `confirm: true` to execute, and safe mode strips this parameter, causing the API to reject the request.
 
-Any tool marked as destructive in the MainWP Abilities API:
+All read operations and non-destructive writes remain available: listing and viewing sites, clients, tags; running updates (reversible via backups); activating and deactivating plugins and themes; syncing sites; creating new clients and tags.
 
-- `delete_site_v1`
-- `delete_client_v1`
-- `delete_tag_v1`
-- `delete_site_plugins_v1`
-- `delete_site_themes_v1`
+Safe mode is useful for training (let users explore without risk), development (test integrations without affecting real data), read-only access (when you only need reporting capabilities), demos (show capabilities without live changes), and first-time setup (familiarize yourself with the system safely).
 
-These tools require `confirm: true` to execute. Safe mode strips this parameter, causing the API to reject the request.
+We recommend enabling Safe Mode when first installing mainwp-mcp. This lets you verify your credentials and connection work correctly, explore available tools without risk of data loss, and understand how the AI interacts with your MainWP Dashboard. Once comfortable, disable Safe Mode to enable full functionality.
 
-### What Safe Mode Allows
-
-All read operations and non-destructive writes:
-
-- Listing and viewing sites, clients, tags
-- Running updates (updates are reversible via backups)
-- Activating/deactivating plugins and themes
-- Syncing sites
-- Creating new clients and tags
-
-### When to Use Safe Mode
-
-- **Training**: Let users explore without risk
-- **Development**: Test integrations without affecting real data
-- **Read-only access**: When you only need reporting capabilities
-- **Demos**: Show capabilities without live changes
-- **First-time setup**: Familiarize yourself with the system safely
-
-### Recommended: Start with Safe Mode
-
-**We recommend enabling Safe Mode when first installing mainwp-mcp.** This allows you to:
-
-1. Verify your credentials and connection work correctly
-2. Explore available tools without risk of data loss
-3. Understand how the AI interacts with your MainWP Dashboard
-4. Build confidence before enabling destructive operations
-
-Once comfortable, disable Safe Mode to enable full functionality:
-
-```json
-{
-  "safeMode": false
-}
-```
-
-### Classification Behavior
-
-Safe mode classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard.
-
-**Important:** If an ability lacks annotations or the `destructive` field is missing, the server defaults to treating it as **non-destructive** (allowed). This is intentional:
-
-1. **Dashboard Authority**: The MainWP Dashboard controls ability registration. Missing annotations indicate a Dashboard-side issue, not an MCP server problem.
-
-2. **Availability Over Blocking**: New or misconfigured abilities should not be silently blocked, which could confuse users.
-
-3. **Visibility**: A warning is logged when abilities cannot be reliably classified, enabling administrators to audit Dashboard configurations.
-
-4. **Defense in Depth**: The `confirm` parameter is always stripped in safe mode regardless of classification.
-
-**For stricter control:** Use `blockedTools` to explicitly block specific tools, or `allowedTools` to whitelist only known-safe tools.
+The server classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard. If an ability lacks annotations, the server defaults to treating it as non-destructive. This is intentional: the MainWP Dashboard controls ability registration, missing annotations indicate a Dashboard-side issue, and new or misconfigured abilities shouldn't be silently blocked. A warning is logged when abilities cannot be reliably classified. For stricter control, use `blockedTools` to explicitly block specific tools or `allowedTools` to whitelist only known-safe tools.
 
 ---
 
-## Using Dry-Run Previews
+## Dry-Run Previews
 
-Before executing any destructive operation, you can preview exactly what will be affected using the `dry_run` parameter.
-
-### How It Works
-
-Many destructive tools support `dry_run: true`, which simulates the operation without making any changes:
+Before executing any destructive operation, you can preview exactly what will be affected using the `dry_run` parameter:
 
 ```
 You: Delete the staging plugins, but show me what will happen first
@@ -193,22 +87,17 @@ AI: If I proceed, this will delete the "debug-bar" plugin from site 3.
     Should I continue?
 ```
 
-### Tools Supporting Dry-Run
+The following destructive tools support `dry_run: true`: `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1`.
 
-The following destructive tools support `dry_run: true`:
+Use dry-run before bulk operations affecting multiple items, when you're unsure about the scope of a deletion, when training or learning the system, and before any operation you can't easily reverse.
 
-- `delete_site_v1` - Preview site deletion
-- `delete_client_v1` - Preview client deletion
-- `delete_tag_v1` - Preview tag deletion
-- `delete_site_plugins_v1` - Preview plugin removal
-- `delete_site_themes_v1` - Preview theme removal
+---
 
-### When to Use Dry-Run
+## Server Log Considerations
 
-- **Always** before bulk operations affecting multiple items
-- When you're unsure about the scope of a deletion
-- When training or learning the system
-- Before any operation you can't easily reverse
+When the MCP server executes destructive operations (DELETE requests), the input parameters are sent as URL query string parameters rather than in the request body. This is required for compatibility with the WordPress Abilities API.
+
+Parameters like `site_id=123`, `confirm=true`, `dry_run=true` appear in the URL, which means your MainWP Dashboard web server logs these URLs in access logs. No credentials are exposed (authentication uses HTTP headers), but operational parameters are logged. Restrict access to web server logs, configure log rotation and retention policies appropriate for your compliance requirements, and consider log redaction if you have strict data handling policies.
 
 ---
 
@@ -216,25 +105,13 @@ The following destructive tools support `dry_run: true`:
 
 The two-step confirmation flow prevents accidental destructive operations by requiring the AI to show you a preview before executing deletions.
 
-### How It Works
-
 When you ask the AI to delete something, the server intercepts the request and returns a preview instead of executing immediately. The AI shows you what will be deleted and asks for explicit confirmation. Only after you confirm does the server execute the operation.
 
-**Phase 1 - Preview:**
+**Phase 1 - Preview:** AI calls the destructive tool with `confirm: true`. Server runs a dry-run preview and returns details. AI shows you what will be affected and waits for your response.
 
-1. AI calls the destructive tool with `confirm: true`
-2. Server runs a dry-run preview and returns details
-3. AI shows you what will be affected
-4. AI waits for your response
+**Phase 2 - Execute:** You confirm the action. AI calls the tool again with `user_confirmed: true`. Server validates the preview was shown (within last 5 minutes) and executes the deletion.
 
-**Phase 2 - Execute:**
-
-1. You confirm the action
-2. AI calls the tool again with `user_confirmed: true`
-3. Server validates the preview was shown (within last 5 minutes)
-4. Server executes the deletion
-
-### Example Flow
+Example flow:
 
 ```
 You: Delete the "staging" tag
@@ -262,71 +139,16 @@ AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true)]
 
 | Feature             | Safe Mode                           | Confirmation Flow                               |
 | ------------------- | ----------------------------------- | ----------------------------------------------- |
-| **Purpose**         | Block all destructive operations    | Allow destructive operations with user approval |
-| **Use Case**        | Testing, read-only access, training | Production with trusted AI                      |
-| **Destructive Ops** | Completely blocked                  | Allowed after confirmation                      |
-| **User Experience** | AI says "I can't do that"           | AI shows preview and asks for approval          |
-| **Automation**      | Not suitable                        | Can be disabled for scripts                     |
-| **Default**         | Disabled (`false`)                  | Enabled (`true`)                                |
+| Purpose             | Block all destructive operations    | Allow destructive operations with user approval |
+| Use Case            | Testing, read-only access, training | Production with trusted AI                      |
+| Destructive Ops     | Completely blocked                  | Allowed after confirmation                      |
+| User Experience     | AI says "I can't do that"           | AI shows preview and asks for approval          |
+| Automation          | Unsuitable                          | Can be disabled for scripts                     |
+| Default             | Disabled                            | Enabled                                         |
 
-### When to Use Each
+When both are configured, Safe Mode takes precedence. Previews expire after 5 minutes—if you wait too long to confirm, you'll need to request a new preview.
 
-**Use Safe Mode when:**
-
-- Testing integrations without risk of data loss
-- Providing read-only access to reporting tools
-- Training users who are learning the system
-- You never want AI to delete anything
-
-**Use Confirmation Flow when:**
-
-- Running production operations with AI assistance
-- You want safety but also need destructive capabilities
-- Working with a trusted AI assistant
-- You want to review changes before they happen
-
-**Use Both when:**
-
-- Safe Mode takes precedence and blocks everything
-- Not recommended (redundant)
-
-### Precedence Order
-
-When both are configured, Safe Mode takes precedence:
-
-```
-1. Safe Mode Check
-   ↓ If enabled → BLOCK all destructive operations
-   ↓ If disabled → Continue
-
-2. Confirmation Flow Check
-   ↓ If enabled → Require preview + user_confirmed
-   ↓ If disabled → Allow with just confirm: true
-
-3. Execute Operation
-```
-
-### Preview Expiry
-
-Previews expire after **5 minutes** for security. If you wait too long to confirm, you'll need to request a new preview.
-
-**Example:**
-
-```
-AI: Do you want to delete site 3?
-[You wait 6 minutes]
-You: Yes
-
-AI: The preview has expired. Let me get a fresh preview...
-    [Shows new preview]
-    Do you want to proceed?
-```
-
-### Disabling for Automation
-
-Automated scripts that need to delete without interaction can disable the confirmation flow:
-
-In `settings.json`:
+For automated scripts that need to delete without interaction:
 
 ```json
 {
@@ -334,77 +156,23 @@ In `settings.json`:
 }
 ```
 
-As an environment variable:
+Only disable this for trusted automation scripts. With confirmation disabled, the AI can delete resources with just `confirm: true` and no user interaction.
 
-```bash
-MAINWP_REQUIRE_USER_CONFIRMATION=false
-```
-
-**Warning:** Only disable this for trusted automation scripts. With confirmation disabled, the AI can delete resources with just `confirm: true` and no user interaction.
-
-### Security Notes
-
-- Previews are stored in memory (cleared on server restart)
-- Each preview is tied to specific operation parameters
-- Changing any parameter requires a new preview
-- Maximum 100 pending previews to prevent memory exhaustion
-- Preview keys use deterministic hashing of operation parameters
+Previews are stored in memory (cleared on server restart), tied to specific operation parameters, and limited to 100 pending previews to prevent memory exhaustion.
 
 ---
 
 ## AI Client Limitations
 
-The mainwp-mcp server provides multiple safety mechanisms for destructive operations, but ultimately **the AI client decides whether to follow these instructions**. This section documents known limitations and how to protect yourself.
+The mainwp-mcp server provides multiple safety mechanisms for destructive operations, but ultimately the AI client decides whether to follow these instructions.
 
-### Understanding the Limitation
+The MCP protocol allows servers to provide semantic annotations (`destructiveHint: true`) marking dangerous tools, description warnings with confirmation instructions, and confirmation flow requirements. These are advisory. The AI client receives this information and decides what to do with it.
 
-The MCP protocol allows servers to provide:
+Some AI clients may skip the preview step entirely, misinterpret user responses as confirmation, assume operations are "safe" based on their own reasoning, or hallucinate that the user confirmed when they did not. These behaviors are AI client limitations, not mainwp-mcp server issues.
 
-- **Semantic annotations** (`destructiveHint: true`) marking dangerous tools
-- **Description warnings** (`[DESTRUCTIVE]` tags with confirmation instructions)
-- **Confirmation flow requirements** (two-phase preview→execute pattern)
+If you experience these issues, enable Safe Mode (`safeMode: true`) to block all destructive operations, report the behavior to your AI client vendor with specific examples, consider using a different AI client, and keep backups of your MainWP Dashboard database.
 
-However, these are **advisory**. The AI client receives this information and decides what to do with it. Some AI clients may:
-
-- Skip the preview step entirely
-- Misinterpret user responses as confirmation
-- Assume operations are "safe" based on their own reasoning (e.g., "no sites are assigned to this tag")
-- Hallucinate that the user confirmed when they did not
-
-### Observed Issues
-
-The following behaviors have been observed with some AI clients:
-
-| Issue | Description | Impact |
-|-------|-------------|--------|
-| Skipped preview | AI calls destructive tool without first requesting a preview | Deletion without user review |
-| False confirmation | AI claims user confirmed when they did not | Unauthorized deletion |
-| Assumed safety | AI decides operation is safe without asking | Deletion based on AI judgment |
-| Ignored instructions | AI doesn't follow the confirmation flow in tool descriptions | Bypassed safety checks |
-
-### This Is Not a mainwp-mcp Bug
-
-These behaviors are **AI client limitations**, not mainwp-mcp server issues. The server correctly:
-
-1. Marks tools as destructive
-2. Embeds confirmation instructions in tool descriptions
-3. Enforces the two-phase flow when `requireUserConfirmation: true`
-4. Returns preview data for the AI to show
-
-The problem occurs when the AI client ignores these mechanisms.
-
-### Protecting Yourself
-
-If you experience these issues:
-
-1. **Enable Safe Mode** (`safeMode: true`) to block all destructive operations
-2. **Report the behavior** to your AI client vendor with specific examples
-3. **Use a different AI client** if the issue persists
-4. **Keep backups** of your MainWP Dashboard database
-
-### Recommended Configuration for Untrusted AI Clients
-
-If you're unsure whether your AI client properly follows instructions:
+For untrusted AI clients:
 
 ```json
 {
@@ -425,11 +193,9 @@ This provides defense-in-depth: Safe Mode blocks destructive operations at runti
 
 ## Tool Filtering
 
-Limit which tools the AI can access. This reduces attack surface and prevents accidental misuse.
+Limit which tools the AI can access to reduce attack surface and prevent accidental misuse.
 
-### Read-Only Configuration
-
-Allow only listing and viewing operations:
+**Read-Only Configuration:**
 
 ```json
 {
@@ -445,9 +211,7 @@ Allow only listing and viewing operations:
 }
 ```
 
-### Block Destructive Operations
-
-Keep most functionality but block deletions:
+**Block Destructive Operations:**
 
 ```json
 {
@@ -461,9 +225,7 @@ Keep most functionality but block deletions:
 }
 ```
 
-### Updates Only
-
-For automated update workflows:
+**Updates Only:**
 
 ```json
 {
@@ -487,51 +249,13 @@ See the [Configuration Guide](configuration.md#tool-filtering) for complete filt
 
 Protect against runaway operations and unexpected API behavior.
 
-### Rate Limiting
-
-Limit API requests per minute:
-
-```json
-{
-  "rateLimit": 30
-}
-```
-
-This prevents rapid-fire tool calls from overwhelming your server.
-
-### Session Data Limit
-
-Cap the total data returned across all tool calls:
-
-```json
-{
-  "maxSessionData": 20971520
-}
-```
-
-When exceeded, subsequent calls fail with `RESOURCE_EXHAUSTED`. Restart the server to reset.
-
-### Response Size Limit
-
-Reject individual responses larger than a threshold:
-
-```json
-{
-  "maxResponseSize": 5242880
-}
-```
-
-This prevents a single malformed response from consuming all available memory.
+Rate limiting (`rateLimit: 30`) caps API requests per minute to prevent rapid-fire tool calls from overwhelming your server. Session data limits (`maxSessionData: 20971520`) cap total data returned across all tool calls—when exceeded, subsequent calls fail with `RESOURCE_EXHAUSTED` and require a server restart. Response size limits (`maxResponseSize: 5242880`) reject individual responses larger than a threshold to prevent a single malformed response from consuming all available memory.
 
 ---
 
 ## SSL/TLS
 
-### Production
-
 Always use valid SSL certificates in production. The server verifies certificates by default.
-
-### Development
 
 For local development with self-signed certificates:
 
@@ -541,45 +265,19 @@ For local development with self-signed certificates:
 }
 ```
 
-**Warning**: This disables certificate verification entirely. Connections can be intercepted without detection. Only use in isolated development environments.
+This disables certificate verification entirely. Connections can be intercepted without detection. Only use in isolated development environments.
 
-### Certificate Issues
-
-If you see SSL errors with a valid certificate:
-
-1. Verify the certificate chain is complete
-2. Check that the system CA store is up to date
-3. Ensure the certificate matches the domain in `MAINWP_URL`
+If you see SSL errors with a valid certificate, verify the certificate chain is complete, check that the system CA store is up to date, and ensure the certificate matches the domain in `MAINWP_URL`.
 
 ---
 
 ## Logging and Auditing
 
-### What Gets Logged
+The server logs to stderr: destructive operation audit messages, tool execution start/end (tool name, duration, success/failure), safe mode blocks, resource limit violations, and configuration warnings.
 
-The server logs to stderr:
+The server does not log credential values, tool arguments (which may contain sensitive data), response content (which may contain PII), or preview keys for destructive operations (which contain argument data).
 
-- Tool execution start/end (tool name, duration, success/failure)
-- Safe mode blocks (which tool was blocked)
-- Resource limit violations
-- Configuration warnings
-
-### What Does NOT Get Logged
-
-- Credential values
-- Tool arguments (may contain sensitive data)
-- Response content (may contain PII)
-- Preview keys for destructive operations (contain argument data)
-
-**Confirmation Flow Logging**: The two-phase confirmation system logs only tool names and timing metadata (e.g., preview age). The preview key—which contains serialized arguments—is intentionally excluded from all log statements to prevent sensitive data exposure.
-
-### WordPress Audit Trail
-
-WordPress logs Application Password usage. Check your WordPress admin for:
-
-- Which application made requests
-- When requests were made
-- Which endpoints were accessed
+WordPress logs Application Password usage. Check your WordPress admin for which application made requests, when requests were made, and which endpoints were accessed.
 
 ---
 
@@ -594,20 +292,3 @@ Before deploying to production:
 - [ ] Set appropriate resource limits
 - [ ] Verified SSL certificates are valid (no `skipSslVerify`)
 - [ ] Tested in safe mode first
-
----
-
-## Reporting Security Issues
-
-If you discover a security vulnerability, please report it responsibly:
-
-1. Do not open a public GitHub issue
-2. Email security concerns to the MainWP team
-3. Include steps to reproduce and potential impact
-
----
-
-## Next Steps
-
-- [Configuration Guide](configuration.md) for all settings
-- [Troubleshooting Guide](troubleshooting.md) for common issues
