@@ -137,14 +137,14 @@ AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true)]
 
 ### Comparison with Safe Mode
 
-| Feature             | Safe Mode                           | Confirmation Flow                               |
-| ------------------- | ----------------------------------- | ----------------------------------------------- |
-| Purpose             | Block all destructive operations    | Allow destructive operations with user approval |
-| Use Case            | Testing, read-only access, training | Production with trusted AI                      |
-| Destructive Ops     | Completely blocked                  | Allowed after confirmation                      |
-| User Experience     | AI says "I can't do that"           | AI shows preview and asks for approval          |
-| Automation          | Unsuitable                          | Can be disabled for scripts                     |
-| Default             | Disabled                            | Enabled                                         |
+| Feature         | Safe Mode                           | Confirmation Flow                               |
+| --------------- | ----------------------------------- | ----------------------------------------------- |
+| Purpose         | Block all destructive operations    | Allow destructive operations with user approval |
+| Use Case        | Testing, read-only access, training | Production with trusted AI                      |
+| Destructive Ops | Completely blocked                  | Allowed after confirmation                      |
+| User Experience | AI says "I can't do that"           | AI shows preview and asks for approval          |
+| Automation      | Unsuitable                          | Can be disabled for scripts                     |
+| Default         | Disabled                            | Enabled                                         |
 
 When both are configured, Safe Mode takes precedence. Previews expire after 5 minutes—if you wait too long to confirm, you'll need to request a new preview.
 
