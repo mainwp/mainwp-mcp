@@ -47,7 +47,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.20';
+const SERVER_VERSION = '1.0.0-alpha.21';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -323,8 +323,8 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       // Handle tool help resource template: mainwp://help/tool/{tool_name}
       if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
         const toolName = parsed.params.tool_name as string;
-        // Use shared utility to convert tool name to ability name
-        const abilityName = toolNameToAbilityName(toolName, config.abilityNamespace);
+        // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
+        const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
         const ability = await getAbility(config, abilityName);
         if (!ability) {
@@ -564,9 +564,6 @@ async function main(): Promise<void> {
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
     startupLogger.info(`Config source: ${config.configSource}`);
-    startupLogger.info(
-      `Namespace: ${config.abilityNamespace ? config.abilityNamespace + '/*' : '(all abilities)'}`
-    );
     startupLogger.info(`Session data limit: ${(config.maxSessionData / 1048576).toFixed(1)}MB`);
     if (config.skipSslVerify) {
       startupLogger.error('╔══════════════════════════════════════════════════════════════╗');

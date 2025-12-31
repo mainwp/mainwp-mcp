@@ -221,7 +221,6 @@ describe('loadConfig', () => {
     expect(config.rateLimit).toBe(60);
     expect(config.requestTimeout).toBe(30000);
     expect(config.maxResponseSize).toBe(10485760);
-    expect(config.abilityNamespace).toBe('mainwp');
     expect(config.schemaVerbosity).toBe('standard');
     expect(config.retryEnabled).toBe(true);
     expect(config.maxRetries).toBe(2);
@@ -344,7 +343,6 @@ describe('getAbilitiesApiUrl', () => {
       skipSslVerify: false,
       allowHttp: false,
       rateLimit: 60,
-      abilityNamespace: 'mainwp',
       requestTimeout: 30000,
       maxResponseSize: 10485760,
       safeMode: false,
@@ -374,7 +372,6 @@ describe('getAuthHeaders', () => {
       skipSslVerify: false,
       allowHttp: false,
       rateLimit: 60,
-      abilityNamespace: 'mainwp',
       requestTimeout: 30000,
       maxResponseSize: 10485760,
       safeMode: false,
@@ -402,7 +399,6 @@ describe('getAuthHeaders', () => {
       skipSslVerify: false,
       allowHttp: false,
       rateLimit: 60,
-      abilityNamespace: 'mainwp',
       requestTimeout: 30000,
       maxResponseSize: 10485760,
       safeMode: false,
@@ -428,7 +424,6 @@ describe('getAuthHeaders', () => {
       skipSslVerify: false,
       allowHttp: false,
       rateLimit: 60,
-      abilityNamespace: 'mainwp',
       requestTimeout: 30000,
       maxResponseSize: 10485760,
       safeMode: false,
@@ -456,7 +451,6 @@ describe('getAuthHeaders', () => {
       skipSslVerify: false,
       allowHttp: false,
       rateLimit: 60,
-      abilityNamespace: 'mainwp',
       requestTimeout: 30000,
       maxResponseSize: 10485760,
       safeMode: false,

@@ -442,7 +442,8 @@ export async function executeTool(
     validateInput(args);
 
     // Convert tool name to ability name
-    const abilityName = toolNameToAbilityName(toolName, config.abilityNamespace);
+    // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
+    const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
     // Fetch ability metadata to check if destructive
     const ability = await getAbility(config, abilityName);

@@ -22,7 +22,6 @@ The server accepts configuration through environment variables and a configurati
 | `MAINWP_REQUEST_TIMEOUT`           | No       | `30000`    | Request timeout in milliseconds                          |
 | `MAINWP_MAX_RESPONSE_SIZE`         | No       | `10485760` | Maximum response size in bytes (10MB)                    |
 | `MAINWP_MAX_SESSION_DATA`          | No       | `52428800` | Maximum cumulative session data (50MB)                   |
-| `MAINWP_ABILITY_NAMESPACE`         | No       | `mainwp`   | Filter abilities by namespace                            |
 | `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
 | `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
 | `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
@@ -66,33 +65,12 @@ Create a `settings.json` file in one of these locations (checked in order):
 | `requestTimeout`          | `MAINWP_REQUEST_TIMEOUT`           | number   |
 | `maxResponseSize`         | `MAINWP_MAX_RESPONSE_SIZE`         | number   |
 | `maxSessionData`          | `MAINWP_MAX_SESSION_DATA`          | number   |
-| `abilityNamespace`        | `MAINWP_ABILITY_NAMESPACE`         | string   |
 | `retryEnabled`            | `MAINWP_RETRY_ENABLED`             | boolean  |
 | `maxRetries`              | `MAINWP_MAX_RETRIES`               | number   |
 | `retryBaseDelay`          | `MAINWP_RETRY_BASE_DELAY`          | number   |
 | `retryMaxDelay`           | `MAINWP_RETRY_MAX_DELAY`           | number   |
 
 A JSON schema is available at `settings.schema.json` for IDE autocompletion.
-
----
-
-## Namespace Filtering
-
-The `abilityNamespace` setting controls which abilities are exposed based on their namespace prefix. The Abilities API organizes abilities by namespace (e.g., `mainwp/list-sites-v1`), and this setting filters which ones become available as MCP tools.
-
-The default namespace is `mainwp`, which exposes only MainWP Dashboard abilities and converts `mainwp/list-sites-v1` to `list_sites_v1` (stripping the namespace prefix).
-
-If you're building a plugin that registers its own abilities with the Abilities API, set `abilityNamespace` to your plugin's namespace to keep your tools separate from MainWP's. You can also run separate server instances for different namespaces:
-
-```bash
-# Terminal 1: MainWP tools
-MAINWP_ABILITY_NAMESPACE=mainwp node dist/index.js
-
-# Terminal 2: Custom extension tools
-MAINWP_ABILITY_NAMESPACE=my-extension node dist/index.js
-```
-
-Setting an empty namespace exposes all abilities from the API, which may include abilities from other plugins you didn't intend to expose.
 
 ---
 
