@@ -352,6 +352,11 @@ export async function executeAbility(
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
 
+  // Audit log for destructive operations - logs operation name only, no sensitive parameters
+  if (isDestructive) {
+    console.error(`[mainwp-mcp] AUDIT: Destructive operation requested: ${abilityName}`);
+  }
+
   /**
    * Fetch and validate response in a single operation.
    * This ensures HTTP errors (5xx, 429) are thrown and can be retried.

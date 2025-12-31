@@ -3,13 +3,15 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha">
   <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://codecov.io/gh/mainwp/mainwp-mcp"><img src="https://codecov.io/gh/mainwp/mainwp-mcp/branch/main/graph/badge.svg" alt="codecov"></a>
 </p>
 
 # MainWP MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Claude, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
+**Alpha Release** — This project is under active development. APIs may change between versions.
+
+An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
 ### What You Can Do
 
@@ -25,15 +27,9 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 ## Quick Start
 
-> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in development. Until the pull request is merged, you'll need to use the `initial-issues-abilities-api` branch of MainWP Dashboard (PR2):
->
-> ```bash
-> cd /path/to/your/mainwp-dashboard
-> git fetch origin
-> git checkout initial-issues-abilities-api
-> ```
->
-> Once the PR is merged, you can switch back to the main branch.
+> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in pre-release testing. Until the full release of MainWP 6.0 this needs to be used with the [MainWP Early Access Extension](https://mainwp.com/add-on/early-access/_)
+
+**Requirements:** Node.js 18, 20, or 22
 
 1. Install and build the server:
 
@@ -124,10 +120,10 @@ Use Option B if you use many AI tools and want to avoid duplicating credentials 
 
 ## Creating an Application Password
 
-You'll need a WordPress Application Password to authenticate with your MainWP Dashboard.
+You'll need a [WordPress Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/) to connect to your MainWP Dashboard. Follow these steps to generate a WordPress Application Password to authenticate with your MainWP Dashboard.
 
 1. Log into your MainWP Dashboard as an administrator
-2. Go to **Users > Profile** (or click your username in the top right)
+2. Go to **Users > Profile** in the WordPress portion (click your username in the top right of the MainWP Dashboard)
 3. Scroll down to the **Application Passwords** section
 4. Enter a name like "MainWP MCP Server"
 5. Click **Add New Application Password**
@@ -384,7 +380,7 @@ Create `~/.config/mainwp-mcp/settings.json` with your credentials, then omit the
 
 </details>
 
-For Windsurf and other hosts, see the [Installation Guide](docs/installation.md).
+For Windsurf and other hosts, use the same JSON configuration pattern shown above.
 
 ---
 
@@ -398,6 +394,7 @@ For Windsurf and other hosts, see the [Installation Guide](docs/installation.md)
 | `MAINWP_USER`                      | Yes      |            | WordPress admin username                                 |
 | `MAINWP_APP_PASSWORD`              | Yes      |            | WordPress Application Password                           |
 | `MAINWP_SKIP_SSL_VERIFY`           | No       | `false`    | Skip SSL verification (dev only)                         |
+| `MAINWP_ALLOW_HTTP`                | No       | `false`    | Allow HTTP URLs (credentials sent in plain text)         |
 | `MAINWP_SAFE_MODE`                 | No       | `false`    | Block destructive operations                             |
 | `MAINWP_REQUIRE_USER_CONFIRMATION` | No       | `true`     | Require two-step confirmation for destructive operations |
 | `MAINWP_ALLOWED_TOOLS`             | No       |            | Whitelist of tools to expose                             |
@@ -859,30 +856,24 @@ The server exposes these resources for inspection:
 
 ## Documentation
 
-- **[Installation Guide](docs/installation.md)** - Detailed setup for all MCP hosts
-- **[Configuration Guide](docs/configuration.md)** - All settings, tool filtering, safe mode
+- **[Configuration Reference](docs/configuration.md)** - All settings, tool filtering, safe mode
 - **[Security Guide](docs/security.md)** - Trust model, credential management, best practices
-- **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues and solutions
-- **[CI/CD Guide](docs/ci-cd.md)** - Continuous integration and testing
+- **[Example Prompts](docs/example-prompts.md)** - Sample queries to get started
+- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 
 ---
 
-## Development
-
-**Requirements:** Node.js 18, 20, or 22 (tested in CI)
+## Contributing
 
 ```bash
-npm install        # Install dependencies
 npm run dev        # Development mode with hot reload
-npm run build      # Build for production
-npm start          # Run production build
 npm run inspect    # Test with MCP Inspector
 npm test           # Run tests
 npm run lint       # Check code style
 npm run format     # Format code
 ```
 
-CI runs automatically on all pull requests and pushes to main. See the [CI/CD Guide](docs/ci-cd.md) for details.
+CI runs on all pull requests and pushes to main.
 
 ---
 

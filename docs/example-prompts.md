@@ -139,11 +139,3 @@ Getting overviews and summaries of your network:
 **Ask follow-up questions.** After getting a list of sites, you might ask "now sync all of those" or "which of those belong to Acme Corp?"
 
 **Combine requests.** You can often ask for multiple things: "Check for updates on example.com and show me what plugins are installed."
-
----
-
-## Next Steps
-
-- [Security Guide](security.md) for safe configuration
-- [Troubleshooting Guide](troubleshooting.md) when things go wrong
-- [Configuration Guide](configuration.md) for all settings
