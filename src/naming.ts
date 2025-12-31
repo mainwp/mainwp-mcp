@@ -22,9 +22,13 @@ export function abilityNameToToolName(abilityName: string): string {
 }
 
 /**
- * Map MCP tool name back to ability name
- * Uses configured namespace since tool names don't include it.
- * e.g., "list_sites_v1" + "mainwp" -> "mainwp/list-sites-v1"
+ * Map MCP tool name back to ability name.
+ * Prepends the namespace since tool names don't include it.
+ *
+ * Note: This server only uses the 'mainwp' namespace. The namespace parameter
+ * is kept for test flexibility but is always called with 'mainwp' in production.
+ *
+ * @example toolNameToAbilityName("list_sites_v1", "mainwp") -> "mainwp/list-sites-v1"
  */
 export function toolNameToAbilityName(toolName: string, namespace: string): string {
   // Convert underscores back to hyphens: "list_sites_v1" → "list-sites-v1"

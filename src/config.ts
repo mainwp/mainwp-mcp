@@ -36,8 +36,6 @@ export interface Config {
   allowHttp: boolean;
   /** Rate limit: max API requests per minute (0 = disabled) */
   rateLimit: number;
-  /** Ability namespace filter (default: 'mainwp') */
-  abilityNamespace: string;
   /** Optional list of allowed tool names (whitelist). If set, only these tools are exposed. */
   allowedTools?: string[];
   /** Optional list of blocked tool names (blacklist). These tools are never exposed. */
@@ -94,8 +92,6 @@ export interface SettingsFile {
   maxResponseSize?: number;
   /** Maximum cumulative response data per server session in bytes (default: 52428800 = 50MB) */
   maxSessionData?: number;
-  /** Ability namespace filter (default: 'mainwp') */
-  abilityNamespace?: string;
   /** Optional list of allowed tool names (whitelist). If set, only these tools are exposed. */
   allowedTools?: string[];
   /** Optional list of blocked tool names (blacklist). These tools are never exposed. */
@@ -127,14 +123,7 @@ function validateSettingsFile(settings: any, filePath: string): void {
   const errors: string[] = [];
 
   // Define expected field types
-  const stringFields = [
-    'dashboardUrl',
-    'username',
-    'appPassword',
-    'apiToken',
-    'abilityNamespace',
-    'schemaVerbosity',
-  ];
+  const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'schemaVerbosity'];
   const booleanFields = [
     'skipSslVerify',
     'allowHttp',
@@ -347,7 +336,6 @@ export function loadConfig(): Config {
     process.env.MAINWP_REQUEST_TIMEOUT ||
     process.env.MAINWP_MAX_RESPONSE_SIZE ||
     process.env.MAINWP_MAX_SESSION_DATA ||
-    process.env.MAINWP_ABILITY_NAMESPACE ||
     process.env.MAINWP_ALLOWED_TOOLS ||
     process.env.MAINWP_BLOCKED_TOOLS ||
     process.env.MAINWP_SCHEMA_VERBOSITY ||
@@ -419,21 +407,6 @@ export function loadConfig(): Config {
   if (isNaN(maxSessionData) || maxSessionData <= 0) {
     throw new Error(
       'MAINWP_MAX_SESSION_DATA must be a positive integer (set via environment variable or settings.json)'
-    );
-  }
-
-  // Parse ability namespace (default: 'mainwp', strip trailing slashes)
-  const abilityNamespace = getString(
-    process.env.MAINWP_ABILITY_NAMESPACE,
-    settings?.abilityNamespace,
-    'mainwp'
-  ).replace(/\/+$/, '');
-
-  // Security warning: empty namespace exposes ALL abilities from the API
-  if (!abilityNamespace) {
-    console.error(
-      'WARNING: Empty abilityNamespace exposes ALL abilities from the Abilities API. ' +
-        'This may include abilities from other plugins. Set abilityNamespace to restrict exposure.'
     );
   }
 
@@ -547,7 +520,6 @@ export function loadConfig(): Config {
       skipSslVerify,
       allowHttp,
       rateLimit,
-      abilityNamespace,
       requestTimeout,
       maxResponseSize,
       safeMode,
@@ -571,7 +543,6 @@ export function loadConfig(): Config {
     skipSslVerify,
     allowHttp,
     rateLimit,
-    abilityNamespace,
     requestTimeout,
     maxResponseSize,
     safeMode,

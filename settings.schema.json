@@ -71,11 +71,6 @@
       "default": 52428800,
       "description": "Maximum cumulative response data per server session in bytes. Default is 52428800 (50MB)."
     },
-    "abilityNamespace": {
-      "type": "string",
-      "default": "mainwp",
-      "description": "Ability namespace filter. Only abilities matching this namespace prefix are exposed as tools."
-    },
     "allowedTools": {
       "type": "array",
       "items": {

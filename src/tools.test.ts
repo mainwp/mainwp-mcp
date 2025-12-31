@@ -94,7 +94,6 @@ const baseConfig: Config = {
   skipSslVerify: true,
   allowHttp: false,
   rateLimit: 0,
-  abilityNamespace: 'mainwp',
   requestTimeout: 5000,
   maxResponseSize: 10485760,
   safeMode: false,
