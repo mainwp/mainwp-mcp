@@ -36,7 +36,7 @@
   },
   "homepage": "https://github.com/mainwp/mainwp-mcp#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.1"
+    "@modelcontextprotocol/sdk": "^1.25.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
