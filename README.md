@@ -74,7 +74,7 @@ Include credentials directly in each AI tool's MCP configuration using the `env`
 }
 ```
 
-This is what most users expect. Each tool has its own self-contained config, and you can create a separate Application Password for each AI tool for better security.
+This is the standard approach. Each tool has its own self-contained config, and you can create a separate Application Password for each AI tool for better security.
 
 ### Option B: Centralized Settings File
 
@@ -129,7 +129,7 @@ You'll need a [WordPress Application Password](https://make.wordpress.org/core/2
 5. Click **Add New Application Password**
 6. Copy the generated password immediately (it's only shown once)
 
-The password displays with spaces for readability. You can use it with or without the spaces.
+WordPress displays the password with spaces for readability. You can use it with or without the spaces.
 
 > **Tip:** Create a dedicated WordPress user for API access rather than using your main admin account. This makes it easier to revoke access later if needed.
 
@@ -431,13 +431,108 @@ Instead of environment variables, you can use a `settings.json` file:
 }
 ```
 
-The server checks `./settings.json` and `~/.config/mainwp-mcp/settings.json` in order. Environment variables override file settings.
+Configuration loads from `./settings.json` or `~/.config/mainwp-mcp/settings.json` (checked in that order). Environment variables override file settings.
+
+---
+
+## Optimizing Token Usage
+
+You have access to 64 tools, which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
+
+### Compact Schema Mode
+
+A single setting reduces token usage by roughly 30%:
+
+```json
+{
+  "schemaVerbosity": "compact"
+}
+```
+
+Or via environment variable:
+
+```bash
+MAINWP_SCHEMA_VERBOSITY=compact
+```
+
+Compact mode truncates descriptions to 60 characters and removes examples while leaving tool functionality unchanged.
+
+### Limiting Exposed Tools
+
+You can expose only the tools you need. These configurations cover common scenarios:
+
+**Read-only monitoring** (17 tools, ~73% reduction):
+```json
+{
+  "allowedTools": [
+    "list_sites_v1", "get_site_v1", "get_site_plugins_v1", "get_site_themes_v1",
+    "get_site_updates_v1", "list_updates_v1", "list_ignored_updates_v1",
+    "list_clients_v1", "get_client_v1", "count_clients_v1", "count_client_sites_v1",
+    "get_client_sites_v1", "get_client_costs_v1",
+    "list_tags_v1", "get_tag_v1", "get_tag_sites_v1", "get_tag_clients_v1"
+  ]
+}
+```
+
+**Site management only** (30 tools, ~53% reduction):
+```json
+{
+  "allowedTools": [
+    "list_sites_v1", "get_site_v1", "count_sites_v1", "get_sites_basic_v1",
+    "add_site_v1", "update_site_v1", "delete_site_v1",
+    "sync_sites_v1", "check_site_v1", "check_sites_v1",
+    "reconnect_site_v1", "reconnect_sites_v1",
+    "disconnect_site_v1", "disconnect_sites_v1",
+    "suspend_site_v1", "suspend_sites_v1", "unsuspend_site_v1",
+    "get_site_plugins_v1", "get_site_themes_v1",
+    "activate_site_plugins_v1", "deactivate_site_plugins_v1", "delete_site_plugins_v1",
+    "activate_site_theme_v1", "delete_site_themes_v1",
+    "get_abandoned_plugins_v1", "get_abandoned_themes_v1",
+    "get_site_security_v1", "get_site_client_v1", "get_site_costs_v1", "get_site_changes_v1"
+  ]
+}
+```
+
+**Updates only** (13 tools, ~80% reduction):
+```json
+{
+  "allowedTools": [
+    "list_updates_v1", "run_updates_v1", "update_all_v1", "get_site_updates_v1",
+    "update_site_core_v1", "update_site_plugins_v1", "update_site_themes_v1",
+    "update_site_translations_v1", "list_ignored_updates_v1", "set_ignored_updates_v1",
+    "ignore_site_core_v1", "ignore_site_plugins_v1", "ignore_site_themes_v1"
+  ]
+}
+```
+
+**Hide destructive tools** (block deletions while keeping everything else):
+```json
+{
+  "blockedTools": [
+    "delete_site_v1", "delete_client_v1", "delete_tag_v1",
+    "delete_site_plugins_v1", "delete_site_themes_v1"
+  ]
+}
+```
+
+### Combining Settings
+
+Compact mode and tool filtering work together. This configuration exposes just four tools with minimal descriptions, well-suited for focused automation:
+
+```json
+{
+  "schemaVerbosity": "compact",
+  "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
+}
+```
+
+For all configuration options, see the [Configuration Guide](docs/configuration.md).
 
 ---
 
 ## Two-Step Confirmation Flow
 
-Destructive operations (deletions) require explicit user confirmation to prevent accidental data loss. When you ask the AI to delete something, it shows you a preview first and waits for your approval.
+Destructive operations (deletions) require your explicit confirmation to prevent accidental data loss. When you ask the AI to delete something, it shows you a preview first and waits for your approval.
 
 ### How It Works
 
@@ -842,7 +937,7 @@ Operations with more than 50 sites are automatically queued for background proce
 
 ## Resources
 
-The server exposes these resources for inspection:
+These resources are available for inspection:
 
 | URI                   | Description                                   |
 | --------------------- | --------------------------------------------- |
