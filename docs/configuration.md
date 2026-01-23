@@ -78,6 +78,8 @@ A JSON schema is available at `settings.schema.json` for IDE autocompletion.
 
 Control which tools are exposed to AI assistants. Useful for limiting access to read-only operations, hiding destructive tools in production, or reducing context size for the AI.
 
+The server exposes 64 tools by default, consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
+
 ### Whitelist Mode
 
 Only expose specific tools (all others are hidden):
@@ -108,6 +110,86 @@ MAINWP_BLOCKED_TOOLS="delete_site_v1,delete_client_v1,delete_tag_v1"
 
 When both are set, the allowlist is applied first, then the blocklist filters the result. Tool names use underscore format (e.g., `list_sites_v1`).
 
+### Common Configurations
+
+These copy-paste configurations cover typical use cases:
+
+**Read-only monitoring** (17 tools, ~73% token reduction):
+
+Suitable for dashboards, reporting, and scenarios where the AI should observe but never modify.
+
+```json
+{
+  "allowedTools": [
+    "list_sites_v1", "get_site_v1", "get_site_plugins_v1", "get_site_themes_v1",
+    "get_site_updates_v1", "list_updates_v1", "list_ignored_updates_v1",
+    "list_clients_v1", "get_client_v1", "count_clients_v1", "count_client_sites_v1",
+    "get_client_sites_v1", "get_client_costs_v1",
+    "list_tags_v1", "get_tag_v1", "get_tag_sites_v1", "get_tag_clients_v1"
+  ]
+}
+```
+
+**Site management only** (30 tools, ~53% token reduction):
+
+Full site management without client, tag, or update management. Good for site-focused automation.
+
+```json
+{
+  "allowedTools": [
+    "list_sites_v1", "get_site_v1", "count_sites_v1", "get_sites_basic_v1",
+    "add_site_v1", "update_site_v1", "delete_site_v1",
+    "sync_sites_v1", "check_site_v1", "check_sites_v1",
+    "reconnect_site_v1", "reconnect_sites_v1",
+    "disconnect_site_v1", "disconnect_sites_v1",
+    "suspend_site_v1", "suspend_sites_v1", "unsuspend_site_v1",
+    "get_site_plugins_v1", "get_site_themes_v1",
+    "activate_site_plugins_v1", "deactivate_site_plugins_v1", "delete_site_plugins_v1",
+    "activate_site_theme_v1", "delete_site_themes_v1",
+    "get_abandoned_plugins_v1", "get_abandoned_themes_v1",
+    "get_site_security_v1", "get_site_client_v1", "get_site_costs_v1", "get_site_changes_v1"
+  ]
+}
+```
+
+**Updates only** (13 tools, ~80% token reduction):
+
+Focused update management. Ideal for maintenance automation and CI/CD pipelines.
+
+```json
+{
+  "allowedTools": [
+    "list_updates_v1", "run_updates_v1", "update_all_v1", "get_site_updates_v1",
+    "update_site_core_v1", "update_site_plugins_v1", "update_site_themes_v1",
+    "update_site_translations_v1", "list_ignored_updates_v1", "set_ignored_updates_v1",
+    "ignore_site_core_v1", "ignore_site_plugins_v1", "ignore_site_themes_v1"
+  ]
+}
+```
+
+**Hide destructive tools**:
+
+Keep all functionality while blocking deletions. A conservative choice for production environments.
+
+```json
+{
+  "blockedTools": [
+    "delete_site_v1", "delete_client_v1", "delete_tag_v1",
+    "delete_site_plugins_v1", "delete_site_themes_v1"
+  ]
+}
+```
+
+**Minimal update automation** (4 tools, ~94% token reduction):
+
+Just enough to check and apply updates. Pair with compact mode for minimal context usage.
+
+```json
+{
+  "schemaVerbosity": "compact",
+  "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
+}
+
 ---
 
 ## Schema Verbosity
@@ -125,7 +207,26 @@ Control the detail level of tool descriptions sent to the AI. This affects token
 }
 ```
 
+Or via environment variable:
+
+```bash
+MAINWP_SCHEMA_VERBOSITY=compact
+```
+
 Compact mode works well when you're hitting context limits, the AI already knows the tools, or you're running automated pipelines. It removes inline safety warnings and detailed parameter descriptions, relying instead on MCP semantic annotations (readOnlyHint, destructiveHint). Verify your MCP client displays these annotations before using compact mode for destructive operations.
+
+### Combining with Tool Filtering
+
+Compact mode and tool filtering stack. A configuration that exposes only four tools with minimal descriptions can reduce token usage by over 90%:
+
+```json
+{
+  "schemaVerbosity": "compact",
+  "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
+}
+```
+
+This combination suits focused automation where the AI performs a narrow set of tasks and doesn't need extensive tool documentation.
 
 ---
 
