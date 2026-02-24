@@ -225,13 +225,17 @@ export function loadSettingsFile(): SettingsFile | null {
       try {
         content = fs.readFileSync(filePath, 'utf-8');
       } catch (error: any) {
-        throw new Error(`Failed to read settings file: ${filePath}\n${error.message}`);
+        throw new Error(`Failed to read settings file: ${filePath}\n${error.message}`, {
+          cause: error,
+        });
       }
 
       try {
         parsed = JSON.parse(content);
       } catch (error: any) {
-        throw new Error(`Invalid JSON in settings file: ${filePath}\n${error.message}`);
+        throw new Error(`Invalid JSON in settings file: ${filePath}\n${error.message}`, {
+          cause: error,
+        });
       }
 
       validateSettingsFile(parsed, filePath);

@@ -378,7 +378,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       }
       // Sanitize unexpected errors
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(sanitizeError(errorMessage));
+      throw new Error(sanitizeError(errorMessage), { cause: error });
     }
   });
 
@@ -498,20 +498,24 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
           : 'Verify MAINWP_TOKEN (or apiToken in settings.json) is correct and has not expired.';
-      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`);
+      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`, {
+        cause: error,
+      });
     }
 
     // Endpoint not found (404) - likely missing Abilities API plugin
     if (lowerMessage.includes('404') || lowerMessage.includes('not found')) {
       throw new Error(
-        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.'
+        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.',
+        { cause: error }
       );
     }
 
     // Connection timeout
     if (lowerMessage.includes('timeout')) {
       throw new Error(
-        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.'
+        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.',
+        { cause: error }
       );
     }
 
@@ -524,7 +528,8 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
       lowerMessage.includes('unable to verify')
     ) {
       throw new Error(
-        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).'
+        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).',
+        { cause: error }
       );
     }
 
@@ -537,12 +542,13 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
       lowerMessage.includes('econnreset')
     ) {
       throw new Error(
-        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.'
+        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.',
+        { cause: error }
       );
     }
 
     // Other errors - re-throw with prefix
-    throw new Error(`Credential validation failed: ${message}`);
+    throw new Error(`Credential validation failed: ${message}`, { cause: error });
   }
 }
 
