@@ -38,6 +38,10 @@ const baseConfig: Config = {
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
   configSource: 'environment',
+  retryEnabled: false,
+  maxRetries: 2,
+  retryBaseDelay: 1000,
+  retryMaxDelay: 2000,
 };
 
 describe('Abilities Integration', () => {

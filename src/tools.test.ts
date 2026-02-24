@@ -374,16 +374,24 @@ describe('executeTool', () => {
       headers: new Headers(),
     });
 
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+      headers: new Headers(),
+    });
+
     // update-site-v1 is not destructive, has no confirm param
-    await executeTool(
+    const result = await executeTool(
       baseConfig,
       'update_site_v1',
       { site_id: 1, user_confirmed: true },
       mockLogger
     );
 
-    // Non-destructive tool should execute normally
-    // Only destructive tools with confirm param need user_confirmed validation
+    // Non-destructive tool should execute normally — no error, no rejection
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('text');
+    expect(result[0].text).not.toContain('error');
     expect(mockFetch).toHaveBeenCalledTimes(2); // Abilities fetch + execution
   });
 

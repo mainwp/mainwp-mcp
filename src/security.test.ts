@@ -155,9 +155,7 @@ describe('RateLimiter', () => {
     const limiter = new RateLimiter(60);
 
     // Should allow first request immediately
-    await limiter.acquire();
-    // Should work
-    expect(true).toBe(true);
+    await expect(limiter.acquire()).resolves.toBeUndefined();
   });
 
   it('should be disabled when maxTokens is 0', async () => {
