@@ -1,6 +1,6 @@
 {
   "name": "mainwp-mcp",
-  "version": "1.0.0-alpha.21",
+  "version": "1.0.0-alpha.22",
   "description": "MCP Server for MainWP Dashboard - Exposes MainWP Abilities API as MCP tools",
   "type": "module",
   "main": "dist/index.js",
