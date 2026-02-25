@@ -195,6 +195,7 @@ const baseConfig: Config = {
   requireUserConfirmation: true,
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
+  responseFormat: 'compact',
   retryEnabled: false, // Disable retries for tests
   maxRetries: 2,
   retryBaseDelay: 1000,

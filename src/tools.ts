@@ -5,9 +5,10 @@
  * tool execution by forwarding to the Abilities API.
  */
 
+import crypto from 'crypto';
 import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { Ability, fetchAbilities, executeAbility, getAbility } from './abilities.js';
-import { Config, SchemaVerbosity } from './config.js';
+import { Config, SchemaVerbosity, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
 import { Logger } from './logging.js';
@@ -39,6 +40,12 @@ let sessionDataBytes = 0;
  */
 const pendingPreviews = new Map<string, number>();
 
+/**
+ * Token index for confirmation flow.
+ * Maps confirmation tokens (UUIDs) to preview keys for secure token-based confirmation.
+ */
+const tokenIndex = new Map<string, string>();
+
 /** Preview expiry time: 5 minutes in milliseconds */
 const PREVIEW_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -58,6 +65,7 @@ export function getSessionDataUsage(): number {
  */
 export function clearPendingPreviews(): void {
   pendingPreviews.clear();
+  tokenIndex.clear();
 }
 
 /**
@@ -74,6 +82,7 @@ function getPreviewKey(toolName: string, args: Record<string, unknown>): string 
     confirm: _confirm,
     user_confirmed: _user_confirmed,
     dry_run: _dry_run,
+    confirmation_token: _confirmation_token,
     ...relevantArgs
   } = args;
   const sortedKeys = Object.keys(relevantArgs).sort();
@@ -107,6 +116,13 @@ function cleanupExpiredPreviews(): void {
     const toRemove = sortedEntries.slice(0, pendingPreviews.size - MAX_PENDING_PREVIEWS);
     for (const [key] of toRemove) {
       pendingPreviews.delete(key);
+    }
+  }
+
+  // Third pass: Clean up orphaned tokens whose preview keys no longer exist
+  for (const [token, previewKey] of tokenIndex.entries()) {
+    if (!pendingPreviews.has(previewKey)) {
+      tokenIndex.delete(token);
     }
   }
 }
@@ -494,7 +510,7 @@ export async function executeTool(
         return [
           {
             type: 'text',
-            text: JSON.stringify(buildSafeModeBlockedResponse(ctx), null, 2),
+            text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
           },
         ];
       }
@@ -519,7 +535,7 @@ export async function executeTool(
         // sessionDataBytes tracking. The session data limit targets runaway API
         // responses, not small validation errors.
         const ctx = { tool: toolName, ability: abilityName };
-        const errorResponse = JSON.stringify(buildInvalidParameterResponse(ctx), null, 2);
+        const errorResponse = formatJson(config, buildInvalidParameterResponse(ctx));
 
         return [{ type: 'text', text: errorResponse }];
       }
@@ -538,7 +554,7 @@ export async function executeTool(
           // sessionDataBytes tracking. The session data limit targets runaway API
           // responses, not small validation errors.
           const ctx = { tool: toolName, ability: abilityName };
-          const errorResponse = JSON.stringify(buildConflictingParametersResponse(ctx), null, 2);
+          const errorResponse = formatJson(config, buildConflictingParametersResponse(ctx));
 
           return [{ type: 'text', text: errorResponse }];
         }
@@ -560,15 +576,24 @@ export async function executeTool(
           const previewKey = getPreviewKey(toolName, args);
           pendingPreviews.set(previewKey, Date.now());
 
+          // Clean up any existing token for this preview key before generating a new one
+          for (const [existingToken, existingKey] of tokenIndex.entries()) {
+            if (existingKey === previewKey) {
+              tokenIndex.delete(existingToken);
+              break;
+            }
+          }
+
+          // Generate confirmation token for secure token-based confirmation
+          const token = crypto.randomUUID();
+          tokenIndex.set(token, previewKey);
+
           logger.info('Preview generated for confirmation', { toolName });
 
           // Return structured preview response
           const ctx = { tool: toolName, ability: abilityName };
-          const previewResponse = JSON.stringify(
-            buildConfirmationRequiredResponse(ctx, previewResult),
-            null,
-            2
-          );
+          const confirmationResponse = buildConfirmationRequiredResponse(ctx, previewResult, token);
+          const previewResponse = formatJson(config, confirmationResponse);
 
           // Track preview response size (contains API data that could be large)
           const previewBytes = Buffer.byteLength(previewResponse, 'utf8');
@@ -602,11 +627,39 @@ export async function executeTool(
             );
           }
 
+          // Resolve preview key: prefer token-based lookup, fall back to key-based
+          let previewKey: string;
+          const confirmationToken =
+            typeof args.confirmation_token === 'string' ? args.confirmation_token : undefined;
+
+          if (confirmationToken) {
+            const tokenPreviewKey = tokenIndex.get(confirmationToken);
+            if (!tokenPreviewKey) {
+              // Token is invalid or already consumed
+              logger.warning('Confirmation failed - invalid confirmation token', { toolName });
+              const ctx = { tool: toolName, ability: abilityName };
+              return [
+                { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
+              ];
+            }
+            // Verify token belongs to this tool (prevent cross-tool reuse)
+            if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
+              tokenIndex.delete(confirmationToken);
+              logger.warning('Confirmation failed - token belongs to different tool', { toolName });
+              const ctx = { tool: toolName, ability: abilityName };
+              return [
+                { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
+              ];
+            }
+            previewKey = tokenPreviewKey;
+          } else {
+            previewKey = getPreviewKey(toolName, args);
+          }
+
           // Note: We intentionally check preview expiry BEFORE running cleanup.
           // This allows us to return the more helpful PREVIEW_EXPIRED error when
           // a user's preview timed out, rather than the generic PREVIEW_REQUIRED.
           // Memory management is handled by cleanup during preview generation.
-          const previewKey = getPreviewKey(toolName, args);
           const previewTimestamp = pendingPreviews.get(previewKey);
 
           // Check if preview exists
@@ -617,7 +670,7 @@ export async function executeTool(
             // sessionDataBytes tracking. The session data limit targets runaway API
             // responses, not small validation errors.
             const ctx = { tool: toolName, ability: abilityName };
-            const errorResponse = JSON.stringify(buildPreviewRequiredResponse(ctx), null, 2);
+            const errorResponse = formatJson(config, buildPreviewRequiredResponse(ctx));
 
             return [{ type: 'text', text: errorResponse }];
           }
@@ -625,24 +678,30 @@ export async function executeTool(
           // Check if preview expired
           if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
             pendingPreviews.delete(previewKey);
+            if (confirmationToken) tokenIndex.delete(confirmationToken);
             logger.warning('Confirmation failed - preview expired', { toolName });
 
             // Note: This fixed-size local error message is intentionally excluded from
             // sessionDataBytes tracking. The session data limit targets runaway API
             // responses, not small validation errors.
             const ctx = { tool: toolName, ability: abilityName };
-            const errorResponse = JSON.stringify(buildPreviewExpiredResponse(ctx), null, 2);
+            const errorResponse = formatJson(config, buildPreviewExpiredResponse(ctx));
 
             return [{ type: 'text', text: errorResponse }];
           }
 
           // Preview is valid - proceed with execution
           pendingPreviews.delete(previewKey);
+          if (confirmationToken) tokenIndex.delete(confirmationToken);
           const previewAge = Date.now() - previewTimestamp;
           logger.info('User confirmation validated', { toolName, previewAge });
 
-          // Remove user_confirmed flag, keep confirm: true for the actual execution
-          const { user_confirmed: _user_confirmed, ...confirmedArgs } = effectiveArgs;
+          // Remove user_confirmed and confirmation_token flags, keep confirm: true for the actual execution
+          const {
+            user_confirmed: _user_confirmed,
+            confirmation_token: _confirmation_token,
+            ...confirmedArgs
+          } = effectiveArgs;
           effectiveArgs = { ...confirmedArgs, confirm: true };
         }
         // Default case: no confirm or user_confirmed provided
@@ -665,7 +724,7 @@ export async function executeTool(
     }
 
     // Format the result as JSON for the AI to parse
-    const formattedResult = JSON.stringify(result, null, 2);
+    const formattedResult = formatJson(config, result);
 
     // Track response size and enforce session data limit
     const responseBytes = Buffer.byteLength(formattedResult, 'utf8');
