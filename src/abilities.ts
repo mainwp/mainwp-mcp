@@ -474,7 +474,6 @@ export function clearCache(): void {
   cachedCategories = null;
   abilitiesCacheTimestamp = 0;
   categoriesCacheTimestamp = 0;
-  sharedAgent = undefined;
 }
 
 // =============================================================================
