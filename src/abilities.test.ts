@@ -15,7 +15,9 @@ import {
   generateHelpDocument,
   type Ability,
 } from './abilities.js';
+import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
+import https from 'https';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -317,6 +319,38 @@ describe('fetchAbilities', () => {
 
     await expect(fetchAbilities(baseConfig)).rejects.toThrow(/401/);
   });
+
+  it('should warn when X-WP-Total exceeds 100', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers({ 'X-WP-Total': '150' }),
+    });
+
+    await fetchAbilities(baseConfig);
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(/X-WP-Total/)
+    );
+  });
+
+  it('should reuse the same https.Agent across multiple createFetch calls', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-extraneous-class
+    const agentSpy = vi.spyOn(https, 'Agent').mockImplementation(class {} as never);
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await fetchAbilities(baseConfig, true);
+    await fetchAbilities(baseConfig, true);
+
+    expect(agentSpy).toHaveBeenCalledTimes(1);
+
+    agentSpy.mockRestore();
+  });
 });
 
 describe('fetchCategories', () => {
@@ -360,6 +394,20 @@ describe('fetchCategories', () => {
     expect(categories).toHaveLength(1);
     expect(categories[0].slug).toBe('mainwp-sites');
   });
+
+  it('should warn when X-WP-Total exceeds 100', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleCategories,
+      headers: new Headers({ 'X-WP-Total': '150' }),
+    });
+
+    await fetchCategories(baseConfig);
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(/X-WP-Total/)
+    );
+  });
 });
 
 describe('getAbility', () => {
@@ -391,6 +439,24 @@ describe('getAbility', () => {
     const ability = await getAbility(baseConfig, 'mainwp/unknown');
 
     expect(ability).toBeUndefined();
+  });
+
+  it('should use index Map for O(1) lookup after cache is warm', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    // First call warms cache and index
+    const ability1 = await getAbility(baseConfig, 'mainwp/list-sites-v1');
+    expect(ability1).toBeDefined();
+
+    // Second call should use cached index, no new fetch
+    const ability2 = await getAbility(baseConfig, 'mainwp/list-sites-v1');
+    expect(ability2).toBeDefined();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -592,6 +658,22 @@ describe('executeAbility', () => {
     );
   });
 
+  it('should throw McpError with ABILITY_NOT_FOUND code for unknown ability', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    try {
+      await executeAbility(baseConfig, 'mainwp/unknown', {});
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpError);
+      expect((error as McpError).code).toBe(MCP_ERROR_CODES.ABILITY_NOT_FOUND);
+    }
+  });
+
   it('should handle error responses', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -666,6 +748,31 @@ describe('clearCache', () => {
     });
 
     await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should clear the abilities index', async () => {
+    // Warm cache and index
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await getAbility(baseConfig, 'mainwp/list-sites-v1');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Clear cache (and index)
+    clearCache();
+
+    // Next getAbility should trigger a new fetch since index was cleared
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await getAbility(baseConfig, 'mainwp/list-sites-v1');
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

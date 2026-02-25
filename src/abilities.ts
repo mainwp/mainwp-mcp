@@ -6,6 +6,7 @@
  */
 
 import { Config, getAbilitiesApiUrl, getAuthHeaders } from './config.js';
+import { McpErrorFactory } from './errors.js';
 import { RateLimiter, sanitizeError } from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { withRetry, type RetryContext } from './retry.js';
@@ -64,10 +65,12 @@ export interface Category {
  * Cached abilities data
  */
 let cachedAbilities: Ability[] | null = null;
+let abilitiesIndex: Map<string, Ability> | null = null;
 let cachedCategories: Category[] | null = null;
 let abilitiesCacheTimestamp: number = 0;
 let categoriesCacheTimestamp: number = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+let sharedAgent: https.Agent | undefined;
 
 /**
  * Hardcoded namespace filter for MainWP abilities.
@@ -110,7 +113,10 @@ function notifyCacheRefresh(): void {
  * @param perCallTimeout - Optional per-call timeout override (for retry budget enforcement)
  */
 function createFetch(config: Config, perCallTimeout?: number) {
-  const agent = config.skipSslVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined;
+  if (config.skipSslVerify && !sharedAgent) {
+    sharedAgent = new https.Agent({ rejectUnauthorized: false });
+  }
+  const agent = config.skipSslVerify ? sharedAgent : undefined;
   const effectiveTimeout = perCallTimeout ?? config.requestTimeout;
 
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
@@ -194,6 +200,16 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
       );
     }
 
+    const wpTotal = response.headers.get('X-WP-Total');
+    if (wpTotal) {
+      const total = parseInt(wpTotal, 10);
+      if (!isNaN(total) && total > 100) {
+        console.error(
+          `[mainwp-mcp] WARNING: Abilities API returned X-WP-Total=${total} (> 100); only the first 100 abilities were fetched. Some abilities may be missing.`
+        );
+      }
+    }
+
     const abilities = (await response.json()) as Ability[];
 
     // Filter abilities to only MainWP namespace
@@ -212,6 +228,10 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
     const hasChanged = oldNames !== newNames;
 
     cachedAbilities = newAbilities;
+    abilitiesIndex = new Map<string, Ability>();
+    for (const ability of newAbilities) {
+      abilitiesIndex.set(ability.name, ability);
+    }
     abilitiesCacheTimestamp = Date.now();
 
     // Notify callbacks if abilities changed
@@ -252,6 +272,16 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
       );
     }
 
+    const wpTotal = response.headers.get('X-WP-Total');
+    if (wpTotal) {
+      const total = parseInt(wpTotal, 10);
+      if (!isNaN(total) && total > 100) {
+        console.error(
+          `[mainwp-mcp] WARNING: Categories API returned X-WP-Total=${total} (> 100); only the first 100 categories were fetched. Some categories may be missing.`
+        );
+      }
+    }
+
     const categories = (await response.json()) as Category[];
 
     // Filter categories to only MainWP namespace
@@ -272,8 +302,8 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
  * Get a specific ability by name
  */
 export async function getAbility(config: Config, name: string): Promise<Ability | undefined> {
-  const abilities = await fetchAbilities(config);
-  return abilities.find(a => a.name === name);
+  await fetchAbilities(config);
+  return abilitiesIndex?.get(name);
 }
 
 /**
@@ -344,7 +374,7 @@ export async function executeAbility(
   // Get ability to check if it's readonly
   const ability = await getAbility(config, abilityName);
   if (!ability) {
-    throw new Error(`Ability not found: ${abilityName}`);
+    throw McpErrorFactory.abilityNotFound(abilityName);
   }
 
   const isReadonly = ability.meta?.annotations?.readonly ?? false;
@@ -440,9 +470,11 @@ export async function executeAbility(
  */
 export function clearCache(): void {
   cachedAbilities = null;
+  abilitiesIndex = null;
   cachedCategories = null;
   abilitiesCacheTimestamp = 0;
   categoriesCacheTimestamp = 0;
+  sharedAgent = undefined;
 }
 
 // =============================================================================
