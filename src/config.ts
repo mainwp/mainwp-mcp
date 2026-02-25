@@ -19,6 +19,12 @@ export const SCHEMA_VERBOSITY_VALUES = ['compact', 'standard'] as const;
 /** Schema verbosity type derived from allowed values */
 export type SchemaVerbosity = (typeof SCHEMA_VERBOSITY_VALUES)[number];
 
+/** Allowed response format values */
+export const RESPONSE_FORMAT_VALUES = ['compact', 'pretty'] as const;
+
+/** Response format type derived from allowed values */
+export type ResponseFormat = (typeof RESPONSE_FORMAT_VALUES)[number];
+
 export interface Config {
   /** Base URL of the MainWP Dashboard */
   dashboardUrl: string;
@@ -52,6 +58,8 @@ export interface Config {
   maxSessionData: number;
   /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
   schemaVerbosity: SchemaVerbosity;
+  /** Response format: 'compact' omits whitespace to reduce token usage, 'pretty' uses 2-space indentation */
+  responseFormat: ResponseFormat;
   /** Enable retry logic for transient errors (default: true) */
   retryEnabled: boolean;
   /** Maximum retry attempts including initial request (default: 2) */
@@ -98,6 +106,8 @@ export interface SettingsFile {
   blockedTools?: string[];
   /** Schema verbosity level: 'compact' reduces token usage, 'standard' provides full descriptions */
   schemaVerbosity?: SchemaVerbosity;
+  /** Response format: 'compact' omits whitespace to reduce token usage, 'pretty' uses 2-space indentation */
+  responseFormat?: ResponseFormat;
   /** Enable retry logic for transient errors (default: true) */
   retryEnabled?: boolean;
   /** Maximum retry attempts including initial request (default: 2) */
@@ -123,7 +133,14 @@ function validateSettingsFile(settings: any, filePath: string): void {
   const errors: string[] = [];
 
   // Define expected field types
-  const stringFields = ['dashboardUrl', 'username', 'appPassword', 'apiToken', 'schemaVerbosity'];
+  const stringFields = [
+    'dashboardUrl',
+    'username',
+    'appPassword',
+    'apiToken',
+    'schemaVerbosity',
+    'responseFormat',
+  ];
   const booleanFields = [
     'skipSslVerify',
     'allowHttp',
@@ -178,6 +195,15 @@ function validateSettingsFile(settings: any, filePath: string): void {
     if (!SCHEMA_VERBOSITY_VALUES.includes(settings.schemaVerbosity)) {
       errors.push(
         `"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${settings.schemaVerbosity}"`
+      );
+    }
+  }
+
+  // Validate responseFormat enum
+  if (settings.responseFormat !== undefined) {
+    if (!RESPONSE_FORMAT_VALUES.includes(settings.responseFormat)) {
+      errors.push(
+        `"responseFormat" must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${settings.responseFormat}"`
       );
     }
   }
@@ -343,6 +369,7 @@ export function loadConfig(): Config {
     process.env.MAINWP_ALLOWED_TOOLS ||
     process.env.MAINWP_BLOCKED_TOOLS ||
     process.env.MAINWP_SCHEMA_VERBOSITY ||
+    process.env.MAINWP_RESPONSE_FORMAT ||
     process.env.MAINWP_RETRY_ENABLED ||
     process.env.MAINWP_MAX_RETRIES ||
     process.env.MAINWP_RETRY_BASE_DELAY ||
@@ -429,6 +456,21 @@ export function loadConfig(): Config {
   if (!SCHEMA_VERBOSITY_VALUES.includes(schemaVerbosity as any)) {
     throw new Error(
       `MAINWP_SCHEMA_VERBOSITY must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${schemaVerbosity}" ` +
+        `(set via environment variable or settings.json)`
+    );
+  }
+
+  // Parse response format (default: 'compact' to reduce token usage)
+  const responseFormat = getString(
+    process.env.MAINWP_RESPONSE_FORMAT,
+    settings?.responseFormat,
+    'compact'
+  ) as ResponseFormat;
+
+  // Validate enum value
+  if (!RESPONSE_FORMAT_VALUES.includes(responseFormat as any)) {
+    throw new Error(
+      `MAINWP_RESPONSE_FORMAT must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${responseFormat}" ` +
         `(set via environment variable or settings.json)`
     );
   }
@@ -530,6 +572,7 @@ export function loadConfig(): Config {
       requireUserConfirmation,
       maxSessionData,
       schemaVerbosity,
+      responseFormat,
       retryEnabled,
       maxRetries,
       retryBaseDelay,
@@ -553,6 +596,7 @@ export function loadConfig(): Config {
     requireUserConfirmation,
     maxSessionData,
     schemaVerbosity,
+    responseFormat,
     retryEnabled,
     maxRetries,
     retryBaseDelay,
@@ -561,6 +605,16 @@ export function loadConfig(): Config {
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(blockedTools.length > 0 ? { blockedTools } : {}),
   };
+}
+
+/**
+ * Serialize data as JSON using the configured response format.
+ * 'compact' omits whitespace; 'pretty' uses 2-space indentation.
+ */
+export function formatJson(config: Pick<Config, 'responseFormat'>, data: unknown): string {
+  return config.responseFormat === 'pretty'
+    ? JSON.stringify(data, null, 2)
+    : JSON.stringify(data);
 }
 
 /**

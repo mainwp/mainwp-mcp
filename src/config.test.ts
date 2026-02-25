@@ -98,6 +98,13 @@ describe('loadSettingsFile', () => {
     expect(() => loadSettingsFile()).toThrow(/schemaVerbosity/);
   });
 
+  it('should validate responseFormat enum', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ responseFormat: 'invalid' }));
+
+    expect(() => loadSettingsFile()).toThrow(/responseFormat/);
+  });
+
   it('should load fixture config file successfully', () => {
     // Use the shared fixture to verify it matches the expected schema
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -222,10 +229,31 @@ describe('loadConfig', () => {
     expect(config.requestTimeout).toBe(30000);
     expect(config.maxResponseSize).toBe(10485760);
     expect(config.schemaVerbosity).toBe('standard');
+    expect(config.responseFormat).toBe('compact');
     expect(config.retryEnabled).toBe(true);
     expect(config.maxRetries).toBe(2);
     expect(config.retryBaseDelay).toBe(1000);
     expect(config.retryMaxDelay).toBe(2000);
+  });
+
+  it('should parse responseFormat from env', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_RESPONSE_FORMAT = 'pretty';
+
+    const config = loadConfig();
+
+    expect(config.responseFormat).toBe('pretty');
+  });
+
+  it('should reject invalid responseFormat', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    process.env.MAINWP_RESPONSE_FORMAT = 'invalid';
+
+    expect(() => loadConfig()).toThrow(/MAINWP_RESPONSE_FORMAT/);
   });
 
   it('should parse rate limit from env', () => {
@@ -349,6 +377,7 @@ describe('getAbilitiesApiUrl', () => {
       requireUserConfirmation: true,
       maxSessionData: 52428800,
       schemaVerbosity: 'standard',
+      responseFormat: 'compact',
       retryEnabled: true,
       maxRetries: 2,
       retryBaseDelay: 1000,
@@ -378,6 +407,7 @@ describe('getAuthHeaders', () => {
       requireUserConfirmation: true,
       maxSessionData: 52428800,
       schemaVerbosity: 'standard',
+      responseFormat: 'compact',
       retryEnabled: true,
       maxRetries: 2,
       retryBaseDelay: 1000,
@@ -405,6 +435,7 @@ describe('getAuthHeaders', () => {
       requireUserConfirmation: true,
       maxSessionData: 52428800,
       schemaVerbosity: 'standard',
+      responseFormat: 'compact',
       retryEnabled: true,
       maxRetries: 2,
       retryBaseDelay: 1000,
@@ -430,6 +461,7 @@ describe('getAuthHeaders', () => {
       requireUserConfirmation: true,
       maxSessionData: 52428800,
       schemaVerbosity: 'standard',
+      responseFormat: 'compact',
       retryEnabled: true,
       maxRetries: 2,
       retryBaseDelay: 1000,
@@ -457,6 +489,7 @@ describe('getAuthHeaders', () => {
       requireUserConfirmation: true,
       maxSessionData: 52428800,
       schemaVerbosity: 'standard',
+      responseFormat: 'compact',
       retryEnabled: true,
       maxRetries: 2,
       retryBaseDelay: 1000,

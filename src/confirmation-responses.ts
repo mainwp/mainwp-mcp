@@ -70,10 +70,12 @@ export function buildConflictingParametersResponse(ctx: ConfirmationContext): ob
  */
 export function buildConfirmationRequiredResponse(
   ctx: ConfirmationContext,
-  preview: unknown
+  preview: unknown,
+  token: string
 ): object {
   return {
     status: 'CONFIRMATION_REQUIRED',
+    next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
     instructions: 'To execute this operation, call the tool again with user_confirmed: true',
@@ -81,6 +83,7 @@ export function buildConfirmationRequiredResponse(
       tool: ctx.tool,
       ability: ctx.ability,
       expiresIn: '5 minutes',
+      confirmation_token: token,
     },
   };
 }
@@ -91,6 +94,7 @@ export function buildConfirmationRequiredResponse(
 export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
   return {
     error: 'PREVIEW_REQUIRED',
+    next_action: 'request_preview_first',
     message: 'No preview found. You must first call with confirm: true to generate a preview.',
     details: {
       tool: ctx.tool,
@@ -108,6 +112,7 @@ export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
 export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
   return {
     error: 'PREVIEW_EXPIRED',
+    next_action: 'request_new_preview',
     message: 'Preview has expired. Please request a new preview.',
     details: {
       tool: ctx.tool,

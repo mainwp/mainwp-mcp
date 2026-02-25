@@ -21,6 +21,7 @@
   "allowedTools": ["list_sites_v1", "get_site_v1"],
   "blockedTools": ["delete_site_v1"],
   "schemaVerbosity": "standard",
+  "responseFormat": "compact",
 
   "retryEnabled": true,
   "maxRetries": 2,

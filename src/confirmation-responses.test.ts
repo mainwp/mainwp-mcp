@@ -40,6 +40,12 @@ describe('buildSafeModeBlockedResponse', () => {
     expect(response.details.reason).toContain('safe mode');
     expect(response.details.resolution).toContain('MAINWP_SAFE_MODE');
   });
+
+  it('should not include next_action (terminal error)', () => {
+    const response = buildSafeModeBlockedResponse(ctx) as Record<string, unknown>;
+
+    expect(response.next_action).toBeUndefined();
+  });
 });
 
 describe('buildInvalidParameterResponse', () => {
@@ -63,6 +69,12 @@ describe('buildInvalidParameterResponse', () => {
     expect(response.details.resolution).toContain('Remove');
     expect(response.details.resolution).toContain('user_confirmed');
   });
+
+  it('should not include next_action (terminal error)', () => {
+    const response = buildInvalidParameterResponse(ctx) as Record<string, unknown>;
+
+    expect(response.next_action).toBeUndefined();
+  });
 });
 
 describe('buildConflictingParametersResponse', () => {
@@ -82,33 +94,41 @@ describe('buildConflictingParametersResponse', () => {
     expect(response.details.reason).toContain('dry_run');
     expect(response.details.reason).toContain('user_confirmed');
   });
+
+  it('should not include next_action (terminal error)', () => {
+    const response = buildConflictingParametersResponse(ctx) as Record<string, unknown>;
+
+    expect(response.next_action).toBeUndefined();
+  });
 });
 
 describe('buildConfirmationRequiredResponse', () => {
   const preview = { affected_sites: [1, 2, 3], total: 3 };
 
   it('should include status and preview data', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview) as Record<string, unknown>;
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
 
     expect(response.status).toBe('CONFIRMATION_REQUIRED');
+    expect(response.next_action).toBe('show_preview_and_confirm');
     expect(response.preview).toEqual(preview);
   });
 
   it('should include instructions for confirmation', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview) as Record<string, unknown>;
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
 
     expect(response.instructions).toContain('user_confirmed');
     expect(response.instructions).toContain('true');
   });
 
   it('should include metadata with expiry', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview) as {
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as {
       metadata: Record<string, unknown>;
     };
 
     expect(response.metadata.tool).toBe('delete_site_v1');
     expect(response.metadata.ability).toBe('mainwp/delete-site-v1');
     expect(response.metadata.expiresIn).toContain('5 minutes');
+    expect(response.metadata.confirmation_token).toBe('test-token-uuid');
   });
 });
 
@@ -117,6 +137,7 @@ describe('buildPreviewRequiredResponse', () => {
     const response = buildPreviewRequiredResponse(ctx) as Record<string, unknown>;
 
     expect(response.error).toBe('PREVIEW_REQUIRED');
+    expect(response.next_action).toBe('request_preview_first');
     expect(response.message).toContain('No preview found');
   });
 
@@ -132,6 +153,7 @@ describe('buildPreviewExpiredResponse', () => {
     const response = buildPreviewExpiredResponse(ctx) as Record<string, unknown>;
 
     expect(response.error).toBe('PREVIEW_EXPIRED');
+    expect(response.next_action).toBe('request_new_preview');
     expect(response.message).toContain('expired');
   });
 

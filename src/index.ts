@@ -26,7 +26,7 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, Config } from './config.js';
+import { loadConfig, Config, formatJson } from './config.js';
 import { getTools, executeTool, toolNameToAbilityName } from './tools.js';
 import {
   fetchAbilities,
@@ -220,7 +220,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(abilities, null, 2),
+              text: formatJson(config, abilities),
             },
           ],
         };
@@ -233,7 +233,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(categories, null, 2),
+              text: formatJson(config, categories),
             },
           ],
         };
@@ -248,16 +248,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
               {
                 uri,
                 mimeType: 'application/json',
-                text: JSON.stringify(
-                  {
-                    connected: true,
-                    dashboardUrl: config.dashboardUrl,
-                    abilitiesCount: abilities.length,
-                    abilities: abilities.map(a => a.name),
-                  },
-                  null,
-                  2
-                ),
+                text: formatJson(config, {
+                  connected: true,
+                  dashboardUrl: config.dashboardUrl,
+                  abilitiesCount: abilities.length,
+                  abilities: abilities.map(a => a.name),
+                }),
               },
             ],
           };
@@ -268,15 +264,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
               {
                 uri,
                 mimeType: 'application/json',
-                text: JSON.stringify(
-                  {
-                    connected: false,
-                    dashboardUrl: config.dashboardUrl,
-                    error: sanitizeError(errorMsg),
-                  },
-                  null,
-                  2
-                ),
+                text: formatJson(config, {
+                  connected: false,
+                  dashboardUrl: config.dashboardUrl,
+                  error: sanitizeError(errorMsg),
+                }),
               },
             ],
           };
@@ -292,7 +284,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(helpDoc, null, 2),
+              text: formatJson(config, helpDoc),
             },
           ],
         };
@@ -314,7 +306,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(result, null, 2),
+              text: formatJson(config, result),
             },
           ],
         };
@@ -336,7 +328,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(generateToolHelp(ability), null, 2),
+              text: formatJson(config, generateToolHelp(ability)),
             },
           ],
         };
