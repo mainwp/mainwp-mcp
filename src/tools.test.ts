@@ -7,6 +7,7 @@ import {
   getTools,
   executeTool,
   getSessionDataUsage,
+  resetSessionData,
   toolNameToAbilityName,
   abilityNameToToolName,
   clearPendingPreviews,
@@ -825,10 +826,19 @@ describe('session data tracking', () => {
   // Note: session data tracking is cumulative across all tests
   // These tests verify the tracking mechanism exists
 
-  it('should track response sizes', () => {
-    const usage = getSessionDataUsage();
-    expect(typeof usage).toBe('number');
-    expect(usage).toBeGreaterThanOrEqual(0);
+  it('should return usage object with used and limit', () => {
+    const usage = getSessionDataUsage(baseConfig);
+    expect(usage).toEqual({
+      used: expect.any(Number),
+      limit: baseConfig.maxSessionData,
+    });
+    expect(usage.used).toBeGreaterThanOrEqual(0);
+  });
+
+  it('should reset session data to zero', () => {
+    resetSessionData();
+    const usage = getSessionDataUsage(baseConfig);
+    expect(usage.used).toBe(0);
   });
 });
 

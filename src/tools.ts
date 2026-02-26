@@ -53,10 +53,17 @@ const PREVIEW_EXPIRY_MS = 5 * 60 * 1000;
 const MAX_PENDING_PREVIEWS = 100;
 
 /**
- * Get the current cumulative session data usage in bytes.
+ * Get the current cumulative session data usage in bytes and the configured limit.
  */
-export function getSessionDataUsage(): number {
-  return sessionDataBytes;
+export function getSessionDataUsage(config: Config): { used: number; limit: number } {
+  return { used: sessionDataBytes, limit: config.maxSessionData };
+}
+
+/**
+ * Reset the cumulative session data counter to zero.
+ */
+export function resetSessionData(): void {
+  sessionDataBytes = 0;
 }
 
 /**
@@ -389,7 +396,7 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
  * @param logger - Optional structured logger for filtering/verbosity messages
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
-  const abilities = await fetchAbilities(config);
+  const abilities = await fetchAbilities(config, false, logger);
   let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
   const originalCount = tools.length;
 
@@ -462,7 +469,7 @@ export async function executeTool(
     const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
     // Fetch ability metadata to check if destructive
-    const ability = await getAbility(config, abilityName);
+    const ability = await getAbility(config, abilityName, logger);
     if (!ability) {
       throw new Error(`Ability not found: ${abilityName}`);
     }

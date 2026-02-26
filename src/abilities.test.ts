@@ -17,11 +17,21 @@ import {
 } from './abilities.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
+import { type Logger } from './logging.js';
 import https from 'https';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+
+const mockLogger: Logger = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  notice: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  critical: vi.fn(),
+};
 
 // Sample abilities for testing
 const sampleAbilities: Ability[] = [
@@ -303,6 +313,28 @@ describe('fetchAbilities', () => {
     expect(abilities).toHaveLength(7);
   });
 
+  it('should log warning via logger when using cached fallback', async () => {
+    vi.resetAllMocks();
+
+    // Warm cache
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    // Force refresh that fails — should use cache and call logger.warning
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    const abilities = await fetchAbilities(baseConfig, true, mockLogger);
+
+    expect(abilities).toHaveLength(7);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Failed to refresh abilities, using cached data',
+      expect.objectContaining({ error: expect.stringContaining('Network error') })
+    );
+  });
+
   it('should throw when no cache and fetch fails', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
@@ -322,16 +354,19 @@ describe('fetchAbilities', () => {
   });
 
   it('should warn when X-WP-Total exceeds 100', async () => {
+    vi.resetAllMocks();
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
       headers: new Headers({ 'X-WP-Total': '150' }),
     });
 
-    await fetchAbilities(baseConfig);
+    await fetchAbilities(baseConfig, false, mockLogger);
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringMatching(/X-WP-Total/)
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      expect.stringContaining('X-WP-Total=150'),
+      expect.objectContaining({ total: 150 })
     );
   });
 
@@ -399,16 +434,41 @@ describe('fetchCategories', () => {
   });
 
   it('should warn when X-WP-Total exceeds 100', async () => {
+    vi.resetAllMocks();
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleCategories,
       headers: new Headers({ 'X-WP-Total': '150' }),
     });
 
+    await fetchCategories(baseConfig, false, mockLogger);
+
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      expect.stringContaining('X-WP-Total=150'),
+      expect.objectContaining({ total: 150 })
+    );
+  });
+
+  it('should log warning via logger when using cached fallback', async () => {
+    vi.resetAllMocks();
+
+    // Warm cache
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleCategories,
+      headers: new Headers(),
+    });
     await fetchCategories(baseConfig);
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringMatching(/X-WP-Total/)
+    // Force refresh that fails — should use cache and call logger.warning
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    const categories = await fetchCategories(baseConfig, true, mockLogger);
+
+    expect(categories).toHaveLength(1);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Failed to refresh categories, using cached data',
+      expect.objectContaining({ error: expect.stringContaining('Network error') })
     );
   });
 });

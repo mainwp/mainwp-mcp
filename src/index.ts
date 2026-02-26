@@ -27,7 +27,7 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
-import { getTools, executeTool, toolNameToAbilityName } from './tools.js';
+import { getTools, executeTool, toolNameToAbilityName, getSessionDataUsage } from './tools.js';
 import {
   fetchAbilities,
   fetchCategories,
@@ -47,7 +47,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.23';
+const SERVER_VERSION = '1.0.0-beta.1';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -214,7 +214,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
     try {
       // Static URI handlers (no validation needed - exact match)
       if (uri === 'mainwp://abilities') {
-        const abilities = await fetchAbilities(config);
+        const abilities = await fetchAbilities(config, false, logger);
         return {
           contents: [
             {
@@ -227,7 +227,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       }
 
       if (uri === 'mainwp://categories') {
-        const categories = await fetchCategories(config);
+        const categories = await fetchCategories(config, false, logger);
         return {
           contents: [
             {
@@ -242,7 +242,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       if (uri === 'mainwp://status') {
         // Test connection by fetching abilities
         try {
-          const abilities = await fetchAbilities(config, true); // Force refresh
+          const abilities = await fetchAbilities(config, true, logger); // Force refresh
           return {
             contents: [
               {
@@ -253,6 +253,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
                   dashboardUrl: config.dashboardUrl,
                   abilitiesCount: abilities.length,
                   abilities: abilities.map(a => a.name),
+                  sessionData: getSessionDataUsage(config),
                 }),
               },
             ],
@@ -277,7 +278,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       // Handle help resource: comprehensive documentation
       if (uri === 'mainwp://help') {
-        const abilities = await fetchAbilities(config);
+        const abilities = await fetchAbilities(config, false, logger);
         const helpDoc = generateHelpDocument(abilities);
         return {
           contents: [
@@ -318,7 +319,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
         // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
         const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
-        const ability = await getAbility(config, abilityName);
+        const ability = await getAbility(config, abilityName, logger);
         if (!ability) {
           throw McpErrorFactory.resourceNotFound(uri);
         }
@@ -389,7 +390,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       // For site_id arguments, try to fetch site list dynamically
       if ((argName === 'site_id' || argName === 'site_ids') && values.length === 0) {
         try {
-          const abilities = await fetchAbilities(config);
+          const abilities = await fetchAbilities(config, false, logger);
           const listSitesAbility = abilities.find(a => a.name === 'mainwp/list-sites-v1');
           if (listSitesAbility) {
             const result = await executeAbility(config, 'mainwp/list-sites-v1', {}, logger);
@@ -472,7 +473,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
  */
 async function validateCredentials(config: Config, logger: Logger): Promise<Ability[]> {
   try {
-    const abilities = await fetchAbilities(config);
+    const abilities = await fetchAbilities(config, false, logger);
     logger.info('Credential validation successful: Connected to MainWP Dashboard');
     return abilities;
   } catch (error) {

@@ -180,7 +180,7 @@ function createFetch(config: Config, perCallTimeout?: number) {
 /**
  * Fetch all abilities from the MainWP Dashboard
  */
-export async function fetchAbilities(config: Config, forceRefresh = false): Promise<Ability[]> {
+export async function fetchAbilities(config: Config, forceRefresh = false, logger?: Logger): Promise<Ability[]> {
   // Return cached data if still valid
   if (!forceRefresh && cachedAbilities && Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS) {
     return cachedAbilities;
@@ -204,8 +204,9 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
     if (wpTotal) {
       const total = parseInt(wpTotal, 10);
       if (!isNaN(total) && total > 100) {
-        console.error(
-          `[mainwp-mcp] WARNING: Abilities API returned X-WP-Total=${total} (> 100); only the first 100 abilities were fetched. Some abilities may be missing.`
+        logger?.warning(
+          `Abilities API returned X-WP-Total=${total} (> 100); only the first 100 abilities were fetched`,
+          { total }
         );
       }
     }
@@ -243,7 +244,7 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
   } catch (error) {
     // If we have cached data, return it even if expired
     if (cachedAbilities) {
-      console.error('Failed to refresh abilities, using cached data:', error);
+      logger?.warning('Failed to refresh abilities, using cached data', { error: String(error) });
       return cachedAbilities;
     }
     throw error;
@@ -253,7 +254,7 @@ export async function fetchAbilities(config: Config, forceRefresh = false): Prom
 /**
  * Fetch all categories from the MainWP Dashboard
  */
-export async function fetchCategories(config: Config, forceRefresh = false): Promise<Category[]> {
+export async function fetchCategories(config: Config, forceRefresh = false, logger?: Logger): Promise<Category[]> {
   // Return cached data if still valid
   if (!forceRefresh && cachedCategories && Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS) {
     return cachedCategories;
@@ -276,8 +277,9 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
     if (wpTotal) {
       const total = parseInt(wpTotal, 10);
       if (!isNaN(total) && total > 100) {
-        console.error(
-          `[mainwp-mcp] WARNING: Categories API returned X-WP-Total=${total} (> 100); only the first 100 categories were fetched. Some categories may be missing.`
+        logger?.warning(
+          `Categories API returned X-WP-Total=${total} (> 100); only the first 100 categories were fetched`,
+          { total }
         );
       }
     }
@@ -291,7 +293,7 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
     return cachedCategories;
   } catch (error) {
     if (cachedCategories) {
-      console.error('Failed to refresh categories, using cached data:', error);
+      logger?.warning('Failed to refresh categories, using cached data', { error: String(error) });
       return cachedCategories;
     }
     throw error;
@@ -301,8 +303,8 @@ export async function fetchCategories(config: Config, forceRefresh = false): Pro
 /**
  * Get a specific ability by name
  */
-export async function getAbility(config: Config, name: string): Promise<Ability | undefined> {
-  await fetchAbilities(config);
+export async function getAbility(config: Config, name: string, logger?: Logger): Promise<Ability | undefined> {
+  await fetchAbilities(config, false, logger);
   return abilitiesIndex?.get(name);
 }
 
@@ -372,7 +374,7 @@ export async function executeAbility(
   const baseUrl = getAbilitiesApiUrl(config);
 
   // Get ability to check if it's readonly
-  const ability = await getAbility(config, abilityName);
+  const ability = await getAbility(config, abilityName, logger);
   if (!ability) {
     throw McpErrorFactory.abilityNotFound(abilityName);
   }
