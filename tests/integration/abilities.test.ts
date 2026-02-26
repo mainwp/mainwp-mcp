@@ -37,6 +37,7 @@ const baseConfig: Config = {
   requireUserConfirmation: true,
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
+  responseFormat: 'compact',
   configSource: 'environment',
   retryEnabled: false,
   maxRetries: 2,
@@ -210,7 +211,7 @@ describe('Abilities Integration', () => {
       expect(execCall[1].method).toBe('GET');
     });
 
-    it('should execute destructive + idempotent ability with DELETE', async () => {
+    it('should execute destructive non-idempotent ability with POST', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => abilitiesFixture,
@@ -230,9 +231,9 @@ describe('Abilities Integration', () => {
 
       expect(result).toEqual({ success: true, deleted: true });
 
-      // Verify DELETE was used for destructive + idempotent abilities
+      // delete-site-v1 is destructive but NOT idempotent → uses POST
       const execCall = mockFetch.mock.calls[1];
-      expect(execCall[1].method).toBe('DELETE');
+      expect(execCall[1].method).toBe('POST');
     });
 
     it('should handle execution errors', async () => {

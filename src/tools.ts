@@ -7,7 +7,7 @@
 
 import crypto from 'crypto';
 import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
-import { Ability, fetchAbilities, executeAbility, getAbility } from './abilities.js';
+import { Ability, AbilityAnnotations, fetchAbilities, executeAbility, getAbility } from './abilities.js';
 import { Config, SchemaVerbosity, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
@@ -286,10 +286,83 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
 }
 
 /**
+ * Generate contextual LLM instruction text from ability metadata.
+ *
+ * Produces safety guidance that tells the AI how to use a tool correctly:
+ * preview-first workflows, dry-run suggestions, or read-only assurance.
+ * API-provided instructions are prepended (they take priority).
+ */
+function generateInstructions(
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean
+): string {
+  const parts: string[] = [];
+
+  // API-provided instructions take priority (ensure trailing punctuation for clean concatenation)
+  if (meta?.instructions) {
+    const instr = meta.instructions;
+    parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
+  }
+
+  if (meta?.destructive) {
+    if (hasConfirm && hasDryRun) {
+      parts.push('Always preview with dry_run or confirm before executing. Show preview to user.');
+    } else {
+      parts.push('This is destructive. Confirm intent with user first.');
+    }
+    if (!meta.idempotent) {
+      parts.push('Not idempotent — repeating may cause different results.');
+    }
+  } else if (meta?.readonly) {
+    parts.push('Read-only. Safe to call without confirmation.');
+  } else {
+    parts.push('Write operation.');
+  }
+
+  return parts.join(' ');
+}
+
+/**
+ * Build safety tag string for tool descriptions.
+ *
+ * Standard mode: verbose tags like `[DESTRUCTIVE, Requires two-step confirmation]`
+ * Compact mode:  short tags like `[destructive, confirm]`
+ */
+function buildSafetyTags(
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean,
+  verbosity: SchemaVerbosity
+): string {
+  if (verbosity === 'standard') {
+    if (meta?.destructive) {
+      const hints: string[] = [];
+      if (hasConfirm) hints.push('Requires two-step confirmation');
+      if (hasDryRun) hints.push('Supports dry_run');
+      if (!meta.idempotent) hints.push('Not idempotent');
+      return hints.length > 0 ? `[DESTRUCTIVE, ${hints.join(', ')}]` : '[DESTRUCTIVE]';
+    }
+    const notes: string[] = [];
+    if (hasDryRun) notes.push('Supports dry_run');
+    if (meta?.readonly) notes.push('Read-only');
+    return notes.length > 0 ? `[${notes.join(', ')}]` : '';
+  }
+
+  // Compact mode — short tags
+  const tags: string[] = [];
+  if (meta?.destructive) tags.push('destructive');
+  if (hasConfirm) tags.push('confirm');
+  if (hasDryRun) tags.push('dry_run');
+  return tags.length > 0 ? `[${tags.join(', ')}]` : '';
+}
+
+/**
  * Convert a MainWP Ability to an MCP Tool definition
  *
  * Enhances tool metadata with:
- * - MCP semantic annotations (readOnlyHint, destructiveHint, idempotentHint)
+ * - MCP semantic annotations (readOnlyHint, destructiveHint, idempotentHint, title, openWorldHint)
+ * - Contextual LLM instructions for safe tool usage
  * - Highlighted safety parameters (dry_run, confirm) in descriptions
  *
  * @param ability - The MainWP ability to convert
@@ -315,10 +388,8 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     mutableProps['user_confirmed'] = {
       type: 'boolean',
       description:
-        'Set to true ONLY after showing the preview to the user and receiving their explicit confirmation. ' +
-        'WORKFLOW: 1) Call with confirm:true (without user_confirmed) to get preview. ' +
-        '2) Show preview to user. 3) If user confirms, call again with user_confirmed:true. ' +
-        'NEVER set user_confirmed:true without first requesting a preview.',
+        'Confirm execution after reviewing preview. ' +
+        'FLOW: 1) confirm:true for preview, 2) show user, 3) user_confirmed:true if approved.',
     };
   }
 
@@ -327,46 +398,41 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     inputSchema = compressSchema(inputSchema as Record<string, unknown>) as Tool['inputSchema'];
   }
 
-  // Build description - base description is always included
-  let description = ability.description;
+  // Build description with safety context
+  let description: string;
 
-  // In standard mode, add custom instructions and safety tags
   if (verbosity === 'standard') {
-    // Add custom instructions from annotations if present
-    if (meta?.instructions) {
-      description += ` ${meta.instructions}`;
+    // Category prefix for standard mode (e.g., "[sites] ...")
+    const categoryLabel = ability.category?.replace(/^mainwp-/, '').replace(/-/g, ' ');
+    description = categoryLabel ? `[${categoryLabel}] ${ability.description}` : ability.description;
+
+    // Append contextual LLM instructions
+    const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
+    if (instructions) {
+      description += ` ${instructions}`;
     }
 
-    // Build description tags based on tool characteristics
-    if (isDestructive) {
-      // Destructive tools: highlight safety requirements prominently
-      const hints: string[] = [];
-      if (hasConfirm) hints.push('Requires two-step confirmation');
-      if (hasDryRun) hints.push('Supports dry_run');
-      if (!meta?.idempotent) hints.push('Not idempotent');
-      if (hints.length > 0) {
-        description += ` [DESTRUCTIVE, ${hints.join(', ')}]`;
-      } else {
-        description += ' [DESTRUCTIVE]';
-      }
+    // Append safety tags
+    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'standard');
+    if (tags) {
+      description += ` ${tags}`;
+    }
 
-      // Add confirmation workflow instructions for tools with confirm parameter
-      if (hasConfirm) {
-        description +=
-          '\n\nCONFIRMATION FLOW: ' +
-          '1) Call with confirm:true to preview what will be affected. ' +
-          '2) Show preview to user and ask for confirmation. ' +
-          '3) If confirmed, call again with user_confirmed:true to execute. ' +
-          'Do NOT set user_confirmed:true without explicit user consent.';
-      }
-    } else {
-      // Non-destructive tools: note available features
-      const notes: string[] = [];
-      if (hasDryRun) notes.push('Supports dry_run');
-      if (meta?.readonly) notes.push('Read-only');
-      if (notes.length > 0) {
-        description += ` [${notes.join(', ')}]`;
-      }
+    // Append confirmation workflow for destructive tools with confirm parameter
+    if (isDestructive && hasConfirm) {
+      description +=
+        '\n\nCONFIRMATION FLOW: ' +
+        '1) Call with confirm:true to preview what will be affected. ' +
+        '2) Show preview to user and ask for confirmation. ' +
+        '3) If confirmed, call again with user_confirmed:true to execute. ' +
+        'Do NOT set user_confirmed:true without explicit user consent.';
+    }
+  } else {
+    // Compact mode: truncated description + short safety tags
+    description = truncateDescription(ability.description);
+    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
+    if (tags) {
+      description += ` ${tags}`;
     }
   }
 
@@ -377,9 +443,11 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     // MCP semantic annotations for client UI hints (always included regardless of verbosity)
     annotations: meta
       ? {
+          title: ability.label || undefined,
           readOnlyHint: meta.readonly,
           destructiveHint: meta.destructive,
           idempotentHint: meta.idempotent,
+          openWorldHint: true,
         }
       : undefined,
   };

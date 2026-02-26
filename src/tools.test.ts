@@ -250,6 +250,158 @@ describe('getTools', () => {
     expect(listTool?.annotations?.readOnlyHint).toBe(true);
     expect(listTool?.annotations?.destructiveHint).toBe(false);
   });
+
+  it('should include title and openWorldHint in annotations', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const listTool = tools.find(t => t.name === 'list_sites_v1');
+    const deleteTool = tools.find(t => t.name === 'delete_site_v1');
+
+    expect(listTool?.annotations?.title).toBe('List Sites');
+    expect(listTool?.annotations?.openWorldHint).toBe(true);
+    expect(deleteTool?.annotations?.title).toBe('Delete Site');
+    expect(deleteTool?.annotations?.openWorldHint).toBe(true);
+  });
+
+  it('should include category prefix in standard mode descriptions', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const listTool = tools.find(t => t.name === 'list_sites_v1');
+    const deleteTool = tools.find(t => t.name === 'delete_site_v1');
+    const pluginTool = tools.find(t => t.name === 'delete_plugins_v1');
+
+    expect(listTool?.description).toMatch(/^\[sites\] /);
+    expect(deleteTool?.description).toMatch(/^\[sites\] /);
+    expect(pluginTool?.description).toMatch(/^\[plugins\] /);
+  });
+
+  it('should include LLM instructions for readonly tools', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const listTool = tools.find(t => t.name === 'list_sites_v1');
+
+    expect(listTool?.description).toContain('Read-only. Safe to call without confirmation.');
+  });
+
+  it('should include LLM instructions for destructive tools with confirm and dry_run', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const deleteTool = tools.find(t => t.name === 'delete_site_v1');
+
+    expect(deleteTool?.description).toContain(
+      'Always preview with dry_run or confirm before executing.'
+    );
+    expect(deleteTool?.description).toContain('Not idempotent');
+  });
+
+  it('should include LLM instructions for write non-destructive tools', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const updateTool = tools.find(t => t.name === 'update_site_v1');
+
+    expect(updateTool?.description).toContain('Write operation.');
+  });
+
+  it('should prepend API instructions with punctuation guard', async () => {
+    const abilitiesWithInstructions: Ability[] = [
+      {
+        name: 'mainwp/get-costs-v1',
+        label: 'Get Costs',
+        description: 'Get cost data',
+        category: 'mainwp-clients',
+        meta: {
+          annotations: {
+            readonly: true,
+            destructive: false,
+            idempotent: true,
+            instructions: 'Requires Cost Tracker module',
+          },
+        },
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => abilitiesWithInstructions,
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    // Should add period and then cleanly concatenate with read-only instruction
+    expect(tools[0].description).toContain(
+      'Requires Cost Tracker module. Read-only. Safe to call without confirmation.'
+    );
+  });
+
+  it('should include safety tags in compact mode for destructive tools', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const config = { ...baseConfig, schemaVerbosity: 'compact' as const };
+    const tools = await getTools(config);
+    const deleteTool = tools.find(t => t.name === 'delete_site_v1');
+
+    expect(deleteTool?.description).toContain('[destructive, confirm, dry_run]');
+  });
+
+  it('should not include safety tags in compact mode for readonly tools', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const config = { ...baseConfig, schemaVerbosity: 'compact' as const };
+    const tools = await getTools(config);
+    const listTool = tools.find(t => t.name === 'list_sites_v1');
+
+    // Readonly tools have no compact-mode tags (not destructive, no confirm, no dry_run)
+    expect(listTool?.description).not.toContain('[');
+  });
+
+  it('should truncate descriptions in compact mode', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const config = { ...baseConfig, schemaVerbosity: 'compact' as const };
+    const tools = await getTools(config);
+    const listTool = tools.find(t => t.name === 'list_sites_v1');
+
+    // Short descriptions should pass through unchanged (no category prefix in compact)
+    expect(listTool?.description).toBe('Get all managed sites');
+  });
 });
 
 describe('executeTool', () => {

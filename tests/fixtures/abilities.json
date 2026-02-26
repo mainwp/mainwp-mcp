@@ -75,7 +75,7 @@
       "annotations": {
         "readonly": false,
         "destructive": true,
-        "idempotent": true
+        "idempotent": false
       }
     }
   }

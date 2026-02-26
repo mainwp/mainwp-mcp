@@ -32,6 +32,7 @@ const baseConfig: Config = {
   requireUserConfirmation: true,
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
+  responseFormat: 'compact',
   configSource: 'environment',
   retryEnabled: false,
   maxRetries: 2,
