@@ -1,9 +1,19 @@
 {
   "name": "mainwp-mcp",
-  "version": "1.0.0-alpha.22",
+  "version": "1.0.0-alpha.23",
   "description": "MCP Server for MainWP Dashboard - Exposes MainWP Abilities API as MCP tools",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "mainwp-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "settings.schema.json",
+    "settings.example.json",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -16,7 +26,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check-version": "node scripts/check-version.js"
+    "check-version": "node scripts/check-version.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "mainwp",
