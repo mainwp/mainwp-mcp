@@ -347,7 +347,9 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
  */
 function createHttpError(status: number, errorCode: string, message: string): Error {
   const error = new Error(`Ability execution failed: ${errorCode} - ${message}`);
-  (error as Error & { status: number }).status = status;
+  const httpError = error as Error & { status: number; code: string };
+  httpError.status = status;
+  httpError.code = errorCode;
   return error;
 }
 

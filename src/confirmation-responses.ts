@@ -122,3 +122,18 @@ export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
     },
   };
 }
+
+/**
+ * Response when an idempotent operation had no effect (already in desired state)
+ */
+export function buildNoChangeResponse(ctx: ConfirmationContext, reason: string): object {
+  return {
+    status: 'NO_CHANGE',
+    message: `Operation had no effect: ${ctx.tool}`,
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      reason,
+    },
+  };
+}

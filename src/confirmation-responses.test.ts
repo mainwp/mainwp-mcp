@@ -10,6 +10,7 @@ import {
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
+  buildNoChangeResponse,
   type ConfirmationContext,
 } from './confirmation-responses.js';
 
@@ -167,5 +168,32 @@ describe('buildPreviewExpiredResponse', () => {
     const response = buildPreviewExpiredResponse(ctx) as { details: Record<string, unknown> };
 
     expect(response.details.resolution).toContain('confirm: true');
+  });
+});
+
+describe('buildNoChangeResponse', () => {
+  it('should include NO_CHANGE status and message', () => {
+    const response = buildNoChangeResponse(ctx, 'already_active') as Record<string, unknown>;
+
+    expect(response.status).toBe('NO_CHANGE');
+    expect(response.message).toContain('no effect');
+    expect(response.message).toContain('delete_site_v1');
+  });
+
+  it('should include tool, ability, and reason in details', () => {
+    const response = buildNoChangeResponse(ctx, 'already_active') as {
+      details: Record<string, unknown>;
+    };
+
+    expect(response.details.tool).toBe('delete_site_v1');
+    expect(response.details.ability).toBe('mainwp/delete-site-v1');
+    expect(response.details.reason).toBe('already_active');
+  });
+
+  it('should not include error or next_action fields', () => {
+    const response = buildNoChangeResponse(ctx, 'already_active') as Record<string, unknown>;
+
+    expect(response.error).toBeUndefined();
+    expect(response.next_action).toBeUndefined();
   });
 });

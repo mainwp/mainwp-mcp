@@ -108,6 +108,27 @@ const sampleAbilities: Ability[] = [
       },
     },
   },
+  {
+    name: 'mainwp/activate-site-plugins-v1',
+    label: 'Activate Site Plugins',
+    description: 'Activate plugins on a site',
+    category: 'mainwp-plugins',
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id: { type: 'integer', description: 'Site ID' },
+        plugins: { type: 'array', description: 'Plugin slugs to activate' },
+      },
+      required: ['site_id', 'plugins'],
+    },
+    meta: {
+      annotations: {
+        readonly: false,
+        destructive: false,
+        idempotent: true,
+      },
+    },
+  },
 ];
 
 const baseConfig: Config = {
@@ -161,7 +182,7 @@ describe('getTools', () => {
 
     const tools = await getTools(baseConfig);
 
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     expect(tools[0].name).toBe('list_sites_v1');
     expect(tools[1].name).toBe('delete_site_v1');
     expect(tools[2].name).toBe('delete_plugins_v1');
@@ -191,7 +212,7 @@ describe('getTools', () => {
     const config = { ...baseConfig, blockedTools: ['delete_site_v1'] };
     const tools = await getTools(config);
 
-    expect(tools).toHaveLength(3);
+    expect(tools).toHaveLength(4);
     expect(tools.find(t => t.name === 'delete_site_v1')).toBeUndefined();
   });
 
@@ -991,6 +1012,236 @@ describe('session data tracking', () => {
     resetSessionData();
     const usage = getSessionDataUsage(baseConfig);
     expect(usage.used).toBe(0);
+  });
+});
+
+describe('no-op error handling for idempotent tools', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearPendingPreviews();
+    resetSessionData();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should return NO_CHANGE for idempotent tool with recognized no-op error code', async () => {
+    // Abilities fetch
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    // API returns 409 with already_active error code
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: async () => JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['hello-dolly'] },
+      mockLogger
+    );
+
+    expect(result).toHaveLength(1);
+    const parsed = JSON.parse(result[0].text);
+    expect(parsed.status).toBe('NO_CHANGE');
+    expect(parsed.message).toContain('activate_site_plugins_v1');
+    expect(parsed.details.reason).toBe('already_active');
+    expect(parsed.details.tool).toBe('activate_site_plugins_v1');
+    expect(parsed.details.ability).toBe('mainwp/activate-site-plugins-v1');
+  });
+
+  it('should log no-op at info level with byte tracking', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: async () => JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
+      headers: new Headers(),
+    });
+
+    await executeTool(
+      baseConfig,
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['hello-dolly'] },
+      mockLogger
+    );
+
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'Tool execution no-op (idempotent already-state)',
+      expect.objectContaining({
+        toolName: 'activate_site_plugins_v1',
+        durationMs: expect.any(Number),
+        responseBytes: expect.any(Number),
+        sessionDataBytes: expect.any(Number),
+      })
+    );
+    // Should NOT log an error
+    expect(mockLogger.error).not.toHaveBeenCalledWith(
+      'Tool execution failed',
+      expect.anything()
+    );
+  });
+
+  it('should NOT intercept no-op errors for non-idempotent tools', async () => {
+    // Use a non-idempotent ability: delete-plugins-v1 (destructive: true, idempotent: false)
+    // Need to add a sample ability that is non-idempotent and non-destructive to avoid
+    // confirmation flow, so we use delete_plugins_v1 with a confirmation token path
+    const nonIdempotentAbilities: Ability[] = [
+      {
+        name: 'mainwp/simple-action-v1',
+        label: 'Simple Action',
+        description: 'A non-idempotent, non-destructive action',
+        category: 'mainwp-test',
+        input_schema: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer', description: 'ID' },
+          },
+          required: ['id'],
+        },
+        meta: {
+          annotations: {
+            readonly: false,
+            destructive: false,
+            idempotent: false,
+          },
+        },
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => nonIdempotentAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: async () => JSON.stringify({ code: 'already_active', message: 'Already active' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'simple_action_v1',
+      { id: 1 },
+      mockLogger
+    );
+
+    // Should surface as a normal error, not NO_CHANGE
+    const parsed = JSON.parse(result[0].text);
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.error).toBeDefined();
+  });
+
+  it('should NOT intercept unrecognized error codes for idempotent tools', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    // Unrecognized error code on an idempotent tool
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () => JSON.stringify({ code: 'invalid_plugin', message: 'Plugin not found' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['nonexistent'] },
+      mockLogger
+    );
+
+    // Should surface as a normal error, not NO_CHANGE
+    const parsed = JSON.parse(result[0].text);
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.error).toBeDefined();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Tool execution failed',
+      expect.anything()
+    );
+  });
+
+  it('should NOT intercept 5xx errors even with recognized error codes', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    // 500 with a no-op code — should NOT be intercepted
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => JSON.stringify({ code: 'already_active', message: 'Server error' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['hello-dolly'] },
+      mockLogger
+    );
+
+    const parsed = JSON.parse(result[0].text);
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.error).toBeDefined();
+  });
+
+  it('should track session data bytes for no-op responses', async () => {
+    resetSessionData();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: async () => JSON.stringify({ code: 'already_active', message: 'Already active' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['hello-dolly'] },
+      mockLogger
+    );
+
+    const responseBytes = Buffer.byteLength(result[0].text, 'utf8');
+    const usage = getSessionDataUsage(baseConfig);
+    expect(usage.used).toBeGreaterThanOrEqual(responseBytes);
   });
 });
 

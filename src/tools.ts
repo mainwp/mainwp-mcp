@@ -20,6 +20,7 @@ import {
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
+  buildNoChangeResponse,
 } from './confirmation-responses.js';
 
 /**
@@ -51,6 +52,34 @@ const PREVIEW_EXPIRY_MS = 5 * 60 * 1000;
 
 /** Maximum number of pending previews to prevent memory exhaustion */
 const MAX_PENDING_PREVIEWS = 100;
+
+/**
+ * Error codes from the Abilities API that indicate an idempotent no-op (already in desired state).
+ * When adding new idempotent abilities that return new error codes, add them here.
+ */
+const NOOP_ERROR_CODES = new Set([
+  'already_active',
+  'already_inactive',
+  'already_installed',
+  'already_connected',
+  'already_disconnected',
+  'already_suspended',
+  'already_unsuspended',
+  'no_updates_available',
+  'nothing_to_update',
+]);
+
+/**
+ * Check whether an error represents an idempotent no-op (already in desired state).
+ * Only matches 4xx HTTP errors with a recognized no-op error code.
+ */
+function isNoOpError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { status, code } = error as { status?: unknown; code?: unknown };
+  if (typeof status !== 'number' || status < 400 || status > 499) return false;
+  if (typeof code !== 'string') return false;
+  return NOOP_ERROR_CODES.has(code);
+}
 
 /**
  * Get the current cumulative session data usage in bytes and the configured limit.
@@ -523,6 +552,9 @@ export async function executeTool(
   // argument values or response content as they may contain sensitive data.
   logger.debug('Tool execution started', { toolName, hasArguments });
 
+  let abilityName: string | undefined;
+  let annotations: AbilityAnnotations | undefined;
+
   try {
     // Check for cancellation before starting
     if (options?.signal?.aborted) {
@@ -534,7 +566,7 @@ export async function executeTool(
 
     // Convert tool name to ability name
     // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
-    const abilityName = toolNameToAbilityName(toolName, 'mainwp');
+    abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
     // Fetch ability metadata to check if destructive
     const ability = await getAbility(config, abilityName, logger);
@@ -543,7 +575,7 @@ export async function executeTool(
     }
 
     // Check annotations for destructive classification
-    const annotations = ability.meta?.annotations;
+    annotations = ability.meta?.annotations;
     const isDestructive = annotations?.destructive ?? false;
     let effectiveArgs = args;
 
@@ -833,6 +865,35 @@ export async function executeTool(
       },
     ];
   } catch (error) {
+    // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
+    if (annotations?.idempotent && isNoOpError(error)) {
+      const reason = (error as { code: string }).code;
+      const ctx = { tool: toolName, ability: abilityName ?? toolName };
+      const noChangeText = formatJson(config, buildNoChangeResponse(ctx, reason));
+      const responseBytes = Buffer.byteLength(noChangeText, 'utf8');
+      if (sessionDataBytes + responseBytes > config.maxSessionData) {
+        logger.error('Session data limit exceeded during no-op response', {
+          toolName,
+          responseBytes,
+          sessionDataBytes,
+          maxSessionData: config.maxSessionData,
+          wouldBe: sessionDataBytes + responseBytes,
+        });
+        throw McpErrorFactory.resourceExhausted(
+          `Session data limit exceeded: ${sessionDataBytes + responseBytes} bytes would exceed ${config.maxSessionData} bytes limit`
+        );
+      }
+      sessionDataBytes += responseBytes;
+      const durationMs = Math.round(performance.now() - startTime);
+      logger.info('Tool execution no-op (idempotent already-state)', {
+        toolName,
+        durationMs,
+        responseBytes,
+        sessionDataBytes,
+      });
+      return [{ type: 'text', text: noChangeText }];
+    }
+
     const durationMs = Math.round(performance.now() - startTime);
     const errorMessage = sanitizeError(error instanceof Error ? error.message : String(error));
     logger.error('Tool execution failed', {
