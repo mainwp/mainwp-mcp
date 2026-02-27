@@ -72,8 +72,9 @@ const NOOP_ERROR_CODES = new Set([
 /**
  * Check whether an error represents an idempotent no-op (already in desired state).
  * Only matches 4xx HTTP errors with a recognized no-op error code.
+ * @internal
  */
-function isNoOpError(error: unknown): boolean {
+export function isNoOpError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const { status, code } = error as { status?: unknown; code?: unknown };
   if (typeof status !== 'number' || status < 400 || status > 499) return false;
@@ -320,8 +321,9 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
  * Produces safety guidance that tells the AI how to use a tool correctly:
  * preview-first workflows, dry-run suggestions, or read-only assurance.
  * API-provided instructions are prepended (they take priority).
+ * @internal
  */
-function generateInstructions(
+export function generateInstructions(
   meta: AbilityAnnotations | undefined,
   hasDryRun: boolean,
   hasConfirm: boolean
@@ -357,8 +359,9 @@ function generateInstructions(
  *
  * Standard mode: verbose tags like `[DESTRUCTIVE, Requires two-step confirmation]`
  * Compact mode:  short tags like `[destructive, confirm]`
+ * @internal
  */
-function buildSafetyTags(
+export function buildSafetyTags(
   meta: AbilityAnnotations | undefined,
   hasDryRun: boolean,
   hasConfirm: boolean,

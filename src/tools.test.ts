@@ -11,6 +11,9 @@ import {
   toolNameToAbilityName,
   abilityNameToToolName,
   clearPendingPreviews,
+  generateInstructions,
+  buildSafetyTags,
+  isNoOpError,
 } from './tools.js';
 import { type Config } from './config.js';
 import { type Logger } from './logging.js';
@@ -1242,6 +1245,141 @@ describe('no-op error handling for idempotent tools', () => {
     const responseBytes = Buffer.byteLength(result[0].text, 'utf8');
     const usage = getSessionDataUsage(baseConfig);
     expect(usage.used).toBeGreaterThanOrEqual(responseBytes);
+  });
+});
+
+describe('generateInstructions', () => {
+  it('should include preview guidance for destructive tools with confirm and dry_run', () => {
+    const meta = { destructive: true, idempotent: false, readonly: false };
+    const result = generateInstructions(meta, true, true);
+
+    expect(result).toContain('Always preview with dry_run or confirm');
+    expect(result).toContain('Not idempotent');
+  });
+
+  it('should include generic destructive warning when no dry_run or confirm', () => {
+    const meta = { destructive: true, idempotent: true, readonly: false };
+    const result = generateInstructions(meta, false, false);
+
+    expect(result).toContain('This is destructive');
+    expect(result).not.toContain('Not idempotent');
+  });
+
+  it('should include read-only assurance for readonly tools', () => {
+    const meta = { readonly: true, destructive: false, idempotent: true };
+    const result = generateInstructions(meta, false, false);
+
+    expect(result).toContain('Read-only. Safe to call');
+  });
+
+  it('should prepend API-provided instructions with punctuation guard', () => {
+    const meta = { readonly: true, destructive: false, idempotent: true, instructions: 'Requires module' };
+    const result = generateInstructions(meta, false, false);
+
+    expect(result).toMatch(/^Requires module\./);
+    expect(result).toContain('Read-only. Safe to call');
+  });
+
+  it('should return write operation text for non-destructive non-readonly tools', () => {
+    const meta = { readonly: false, destructive: false, idempotent: true };
+    const result = generateInstructions(meta, false, false);
+
+    expect(result).toContain('Write operation.');
+  });
+
+  it('should not duplicate period on instructions ending with punctuation', () => {
+    const meta = { readonly: true, destructive: false, idempotent: true, instructions: 'Needs Pro.' };
+    const result = generateInstructions(meta, false, false);
+
+    expect(result).toMatch(/^Needs Pro\./);
+    expect(result).not.toContain('Needs Pro..');
+  });
+});
+
+describe('buildSafetyTags', () => {
+  it('should build verbose tags for destructive tools with confirm and dry_run in standard mode', () => {
+    const meta = { destructive: true, idempotent: false, readonly: false };
+    const result = buildSafetyTags(meta, true, true, 'standard');
+
+    expect(result).toBe('[DESTRUCTIVE, Requires two-step confirmation, Supports dry_run, Not idempotent]');
+  });
+
+  it('should build minimal tag for destructive tools without confirm or dry_run in standard mode', () => {
+    const meta = { destructive: true, idempotent: true, readonly: false };
+    const result = buildSafetyTags(meta, false, false, 'standard');
+
+    expect(result).toBe('[DESTRUCTIVE]');
+  });
+
+  it('should build Read-only tag in standard mode', () => {
+    const meta = { readonly: true, destructive: false, idempotent: true };
+    const result = buildSafetyTags(meta, false, false, 'standard');
+
+    expect(result).toBe('[Read-only]');
+  });
+
+  it('should return empty string when no annotations apply in standard mode', () => {
+    const meta = { readonly: false, destructive: false, idempotent: true };
+    const result = buildSafetyTags(meta, false, false, 'standard');
+
+    expect(result).toBe('');
+  });
+
+  it('should build compact tags for destructive tools with confirm and dry_run', () => {
+    const meta = { destructive: true, idempotent: false, readonly: false };
+    const result = buildSafetyTags(meta, true, true, 'compact');
+
+    expect(result).toBe('[destructive, confirm, dry_run]');
+  });
+
+  it('should return empty string for readonly tools in compact mode', () => {
+    const meta = { readonly: true, destructive: false, idempotent: true };
+    const result = buildSafetyTags(meta, false, false, 'compact');
+
+    expect(result).toBe('');
+  });
+});
+
+describe('isNoOpError', () => {
+  it('should match known no-op error code with 4xx status', () => {
+    expect(isNoOpError({ status: 409, code: 'already_active' })).toBe(true);
+  });
+
+  it('should match all nine NOOP_ERROR_CODES', () => {
+    const codes = [
+      'already_active',
+      'already_inactive',
+      'already_installed',
+      'already_connected',
+      'already_disconnected',
+      'already_suspended',
+      'already_unsuspended',
+      'no_updates_available',
+      'nothing_to_update',
+    ];
+
+    for (const code of codes) {
+      expect(isNoOpError({ status: 400, code })).toBe(true);
+    }
+  });
+
+  it('should reject 5xx status even with recognized code', () => {
+    expect(isNoOpError({ status: 500, code: 'already_active' })).toBe(false);
+  });
+
+  it('should reject missing status property', () => {
+    expect(isNoOpError({ code: 'already_active' })).toBe(false);
+  });
+
+  it('should reject unknown error code', () => {
+    expect(isNoOpError({ status: 409, code: 'invalid_plugin' })).toBe(false);
+  });
+
+  it('should reject non-object values', () => {
+    expect(isNoOpError(null)).toBe(false);
+    expect(isNoOpError('string')).toBe(false);
+    expect(isNoOpError(42)).toBe(false);
+    expect(isNoOpError(undefined)).toBe(false);
   });
 });
 
