@@ -13,6 +13,7 @@ import {
   initRateLimiter,
   generateToolHelp,
   generateHelpDocument,
+  readLimitedBody,
   type Ability,
 } from './abilities.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
@@ -353,20 +354,30 @@ describe('fetchAbilities', () => {
     await expect(fetchAbilities(baseConfig)).rejects.toThrow(/401/);
   });
 
-  it('should warn when X-WP-Total exceeds 100', async () => {
+  it('should paginate when X-WP-TotalPages > 1', async () => {
     vi.resetAllMocks();
 
+    // Page 1: returns 3 abilities with 2 pages total
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers({ 'X-WP-Total': '150' }),
+      json: async () => sampleAbilities.slice(0, 3),
+      headers: new Headers({ 'X-WP-TotalPages': '2' }),
     });
 
-    await fetchAbilities(baseConfig, false, mockLogger);
+    // Page 2: returns remaining abilities
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities.slice(3),
+      headers: new Headers({ 'X-WP-TotalPages': '2' }),
+    });
 
-    expect(mockLogger.warning).toHaveBeenCalledWith(
-      expect.stringContaining('X-WP-Total=150'),
-      expect.objectContaining({ total: 150 })
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    // All abilities should be fetched across both pages
+    expect(abilities).toHaveLength(7);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Fetched 7 abilities across 2 pages')
     );
   });
 
@@ -433,21 +444,31 @@ describe('fetchCategories', () => {
     expect(categories[0].slug).toBe('mainwp-sites');
   });
 
-  it('should warn when X-WP-Total exceeds 100', async () => {
+  it('should paginate when X-WP-TotalPages > 1', async () => {
     vi.resetAllMocks();
 
+    const extraCategories = [
+      { slug: 'mainwp-clients', label: 'Clients', description: 'Client management' },
+    ];
+
+    // Page 1
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleCategories,
-      headers: new Headers({ 'X-WP-Total': '150' }),
+      headers: new Headers({ 'X-WP-TotalPages': '2' }),
     });
 
-    await fetchCategories(baseConfig, false, mockLogger);
+    // Page 2
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => extraCategories,
+      headers: new Headers({ 'X-WP-TotalPages': '2' }),
+    });
 
-    expect(mockLogger.warning).toHaveBeenCalledWith(
-      expect.stringContaining('X-WP-Total=150'),
-      expect.objectContaining({ total: 150 })
-    );
+    const categories = await fetchCategories(baseConfig, false, mockLogger);
+
+    expect(categories).toHaveLength(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('should log warning via logger when using cached fallback', async () => {
@@ -776,6 +797,20 @@ describe('executeAbility', () => {
     const url = calls[1][0] as string;
     expect(url).toContain('input[page]=2');
   });
+
+  it('should throw when GET URL exceeds 8000 characters', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    // Create input with a very long string parameter that will produce a URL > 8000 chars
+    const longValue = 'x'.repeat(8000);
+    await expect(
+      executeAbility(baseConfig, 'mainwp/list-sites-v1', { filter: longValue })
+    ).rejects.toThrow(/URL exceeds 8000 characters/);
+  });
 });
 
 describe('clearCache', () => {
@@ -945,5 +980,86 @@ describe('generateHelpDocument', () => {
     expect(helpDoc.overview.safetyConventions).toHaveProperty('dryRun');
     expect(helpDoc.overview.safetyConventions).toHaveProperty('confirm');
     expect(helpDoc.overview.safetyConventions).toHaveProperty('destructive');
+  });
+});
+
+describe('readLimitedBody', () => {
+  it('should read a streaming response body within size limit', async () => {
+    const data = 'hello world';
+    const encoded = new TextEncoder().encode(data);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoded);
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+
+    const result = await readLimitedBody(response, 1000);
+    expect(result).toBe(data);
+  });
+
+  it('should reject a streaming response exceeding maxBytes', async () => {
+    const chunk = new Uint8Array(5000).fill(65); // 5KB of 'A'
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.enqueue(chunk); // 10KB total
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+
+    await expect(readLimitedBody(response, 8000)).rejects.toThrow(
+      /Response body exceeds 8000 bytes limit/
+    );
+  });
+
+  it('should reject mid-stream when a chunk pushes past the limit', async () => {
+    const smallChunk = new Uint8Array(100).fill(65);
+    const bigChunk = new Uint8Array(10000).fill(66);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(smallChunk); // 100 bytes — OK
+        controller.enqueue(bigChunk); // 10100 bytes total — exceeds 5000
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+
+    await expect(readLimitedBody(response, 5000)).rejects.toThrow(
+      /Response body exceeds 5000 bytes limit/
+    );
+  });
+
+  it('should fall back to response.text() when body is unavailable', async () => {
+    const mockResponse = {
+      body: null,
+      text: async () => 'fallback text',
+    } as unknown as Response;
+
+    const result = await readLimitedBody(mockResponse, 1000);
+    expect(result).toBe('fallback text');
+  });
+
+  it('should reject via fallback when text exceeds maxBytes', async () => {
+    const mockResponse = {
+      body: null,
+      text: async () => 'x'.repeat(2000),
+    } as unknown as Response;
+
+    await expect(readLimitedBody(mockResponse, 1000)).rejects.toThrow(
+      /Response body exceeds 1000 bytes limit/
+    );
+  });
+
+  it('should fall back to response.json() when text is unavailable', async () => {
+    const mockResponse = {
+      body: null,
+      json: async () => ({ key: 'value' }),
+    } as unknown as Response;
+
+    const result = await readLimitedBody(mockResponse, 1000);
+    expect(result).toBe('{"key":"value"}');
   });
 });

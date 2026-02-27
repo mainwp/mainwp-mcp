@@ -241,6 +241,14 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (uri === 'mainwp://status') {
         // Test connection by fetching abilities
+        // Redact dashboardUrl to host-only to avoid leaking full URL path to untrusted MCP clients
+        let redactedHost: string;
+        try {
+          redactedHost = new URL(config.dashboardUrl).host;
+        } catch {
+          redactedHost = '[invalid-url]';
+        }
+
         try {
           const abilities = await fetchAbilities(config, true, logger); // Force refresh
           return {
@@ -250,9 +258,8 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
                 mimeType: 'application/json',
                 text: formatJson(config, {
                   connected: true,
-                  dashboardUrl: config.dashboardUrl,
+                  dashboardHost: redactedHost,
                   abilitiesCount: abilities.length,
-                  abilities: abilities.map(a => a.name),
                   sessionData: getSessionDataUsage(config),
                 }),
               },
@@ -267,7 +274,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
                 mimeType: 'application/json',
                 text: formatJson(config, {
                   connected: false,
-                  dashboardUrl: config.dashboardUrl,
+                  dashboardHost: redactedHost,
                   error: sanitizeError(errorMsg),
                 }),
               },

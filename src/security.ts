@@ -15,9 +15,17 @@ const MAX_OBJECT_DEPTH = 5;
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
+ * Recurses into nested objects and arrays to enforce string length and ID range checks.
  * Throws McpError with INVALID_PARAMS code on validation failure.
  */
-export function validateInput(args: Record<string, unknown>): void {
+export function validateInput(args: Record<string, unknown>, depth = 0): void {
+  if (depth > MAX_OBJECT_DEPTH) {
+    throw McpErrorFactory.invalidParams(
+      `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
+      { maxDepth: MAX_OBJECT_DEPTH }
+    );
+  }
+
   for (const [key, value] of Object.entries(args)) {
     // String length check
     if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
@@ -47,7 +55,7 @@ export function validateInput(args: Record<string, unknown>): void {
           { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
         );
       }
-      // Validate array elements
+      // Validate array elements (strings and nested objects)
       for (const item of value) {
         if (typeof item === 'string' && item.length > MAX_STRING_LENGTH) {
           throw McpErrorFactory.invalidParams(
@@ -55,35 +63,19 @@ export function validateInput(args: Record<string, unknown>): void {
             { parameter: key, maxLength: MAX_STRING_LENGTH }
           );
         }
+        if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+          validateInput(item as Record<string, unknown>, depth + 1);
+        }
       }
     }
 
-    // Nested object depth check (prevent deeply nested payloads)
+    // Nested object: recurse to validate contents (string lengths, ID ranges, depth)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const depth = getObjectDepth(value as Record<string, unknown>);
-      if (depth > MAX_OBJECT_DEPTH) {
-        throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" is too deeply nested (max depth: ${MAX_OBJECT_DEPTH})`,
-          { parameter: key, maxDepth: MAX_OBJECT_DEPTH }
-        );
-      }
+      validateInput(value as Record<string, unknown>, depth + 1);
     }
   }
 }
 
-/**
- * Calculate the nesting depth of an object
- */
-function getObjectDepth(obj: Record<string, unknown>, current = 0): number {
-  if (current > MAX_OBJECT_DEPTH) return current; // Short-circuit
-  let maxDepth = current;
-  for (const val of Object.values(obj)) {
-    if (typeof val === 'object' && val !== null) {
-      maxDepth = Math.max(maxDepth, getObjectDepth(val as Record<string, unknown>, current + 1));
-    }
-  }
-  return maxDepth;
-}
 
 /**
  * Sanitize error messages before returning to clients.
@@ -144,13 +136,31 @@ export class RateLimiter {
   /**
    * Acquire a token, waiting if necessary.
    * Returns immediately if rate limiting is disabled (maxTokens = 0).
+   * @param signal - Optional AbortSignal to cancel the wait
    */
-  async acquire(): Promise<void> {
+  async acquire(signal?: AbortSignal): Promise<void> {
     if (this.maxTokens === 0) return; // Disabled
     this.refill();
     if (this.tokens < 1) {
+      if (signal?.aborted) {
+        throw new Error('Rate limiter acquire aborted');
+      }
       const waitTime = Math.ceil((1 - this.tokens) / this.refillRate);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, waitTime);
+        const onAbort = () => {
+          clearTimeout(timer);
+          cleanup();
+          reject(new Error('Rate limiter acquire aborted'));
+        };
+        const cleanup = () => {
+          signal?.removeEventListener('abort', onAbort);
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
       this.refill();
     }
     this.tokens -= 1;

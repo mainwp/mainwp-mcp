@@ -140,3 +140,47 @@ describe('getPromptArgumentCompletions', () => {
     expect(completions).toEqual([]);
   });
 });
+
+describe('getPrompt - argument validation', () => {
+  it('should reject non-numeric site_id', () => {
+    expect(() => getPrompt('troubleshoot-site', { site_id: 'abc' })).toThrow('Invalid site_id');
+  });
+
+  it('should accept numeric site_id', () => {
+    expect(() => getPrompt('troubleshoot-site', { site_id: '123' })).not.toThrow();
+  });
+
+  it('should reject invalid issue_type', () => {
+    expect(() => getPrompt('troubleshoot-site', { site_id: '1', issue_type: 'hacking' })).toThrow(
+      'Invalid issue_type'
+    );
+  });
+
+  it('should accept valid issue_type', () => {
+    expect(() =>
+      getPrompt('troubleshoot-site', { site_id: '1', issue_type: 'security' })
+    ).not.toThrow();
+  });
+
+  it('should accept comma-separated numeric site_ids', () => {
+    expect(() => getPrompt('security-audit', { site_ids: '1,2,3' })).not.toThrow();
+  });
+
+  it('should accept "all" as site_ids', () => {
+    expect(() => getPrompt('security-audit', { site_ids: 'all' })).not.toThrow();
+  });
+
+  it('should reject non-numeric site_ids', () => {
+    expect(() => getPrompt('security-audit', { site_ids: 'abc' })).toThrow('Invalid site_ids');
+  });
+
+  it('should reject invalid update_type', () => {
+    expect(() => getPrompt('update-workflow', { update_type: 'backdoor' })).toThrow(
+      'Invalid update_type'
+    );
+  });
+
+  it('should accept valid update_type', () => {
+    expect(() => getPrompt('update-workflow', { update_type: 'plugins' })).not.toThrow();
+  });
+});

@@ -66,6 +66,25 @@ export function createLogger(server: Server, loggerName = 'mainwp-mcp'): Logger 
 }
 
 /**
+ * Create a child logger that automatically includes a request correlation ID
+ * in every log entry. Useful for tracing a tool call across log entries.
+ */
+export function withRequestId(logger: Logger, requestId: string): Logger {
+  const wrap =
+    (fn: (msg: string, data?: Record<string, unknown>) => void) =>
+    (message: string, data?: Record<string, unknown>) =>
+      fn(message, { ...data, requestId });
+  return {
+    debug: wrap(logger.debug.bind(logger)),
+    info: wrap(logger.info.bind(logger)),
+    notice: wrap(logger.notice.bind(logger)),
+    warning: wrap(logger.warning.bind(logger)),
+    error: wrap(logger.error.bind(logger)),
+    critical: wrap(logger.critical.bind(logger)),
+  };
+}
+
+/**
  * Simple stderr logger for use before MCP server is initialized.
  * Does not require a server instance.
  */

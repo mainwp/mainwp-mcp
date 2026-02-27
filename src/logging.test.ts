@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createLogger, createStderrLogger } from './logging.js';
+import { createLogger, createStderrLogger, withRequestId } from './logging.js';
 
 describe('createLogger', () => {
   let mockServer: {
@@ -168,5 +168,34 @@ describe('createStderrLogger', () => {
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('[WARNING]'));
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('[ERROR]'));
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('[CRITICAL]'));
+  });
+});
+
+describe('withRequestId', () => {
+  it('should add requestId to all log calls', () => {
+    const inner = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      notice: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+      critical: vi.fn(),
+    };
+
+    const wrapped = withRequestId(inner, 'abc-123');
+
+    wrapped.debug('d');
+    wrapped.info('i', { extra: 1 });
+    wrapped.notice('n');
+    wrapped.warning('w');
+    wrapped.error('e');
+    wrapped.critical('c');
+
+    expect(inner.debug).toHaveBeenCalledWith('d', { requestId: 'abc-123' });
+    expect(inner.info).toHaveBeenCalledWith('i', { extra: 1, requestId: 'abc-123' });
+    expect(inner.notice).toHaveBeenCalledWith('n', { requestId: 'abc-123' });
+    expect(inner.warning).toHaveBeenCalledWith('w', { requestId: 'abc-123' });
+    expect(inner.error).toHaveBeenCalledWith('e', { requestId: 'abc-123' });
+    expect(inner.critical).toHaveBeenCalledWith('c', { requestId: 'abc-123' });
   });
 });

@@ -1394,3 +1394,112 @@ describe('name conversion re-exports', () => {
     expect(toolNameToAbilityName('test_v1', 'mainwp')).toBe('mainwp/test-v1');
   });
 });
+
+describe('default-deny annotations', () => {
+  const abilityWithoutAnnotations: Ability = {
+    name: 'mainwp/mystery-action-v1',
+    label: 'Mystery Action',
+    description: 'An ability with no annotations',
+    category: 'mainwp-misc',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target' },
+      },
+    },
+    // Note: no meta.annotations
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearPendingPreviews();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should block ability without annotations in safe mode (defaults to destructive)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [abilityWithoutAnnotations],
+      headers: new Headers(),
+    });
+
+    const config = { ...baseConfig, safeMode: true };
+    const result = await executeTool(
+      config,
+      'mystery_action_v1',
+      { target: 'test' },
+      mockLogger
+    );
+
+    expect(result[0].text).toContain('SAFE_MODE_BLOCKED');
+  });
+
+  it('should log warning about missing annotations', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [abilityWithoutAnnotations],
+      headers: new Headers(),
+    });
+
+    const config = { ...baseConfig, safeMode: true };
+    await executeTool(config, 'mystery_action_v1', { target: 'test' }, mockLogger);
+
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Ability missing destructive annotation, defaulting to destructive',
+      expect.objectContaining({
+        toolName: 'mystery_action_v1',
+        abilityName: 'mainwp/mystery-action-v1',
+        hasAnnotations: false,
+      })
+    );
+  });
+});
+
+describe('request correlation IDs', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearPendingPreviews();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should include requestId (UUID format) in log calls', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+      headers: new Headers(),
+    });
+
+    await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
+
+    // The mockLogger receives calls from withRequestId wrapper, which adds requestId
+    // Check the debug call for 'Tool execution started' — it uses the reqLogger
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    const debugCalls = (mockLogger.debug as ReturnType<typeof vi.fn>).mock.calls;
+    const startedCall = debugCalls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && call[0].includes('Tool execution started')
+    );
+
+    expect(startedCall).toBeDefined();
+    expect(startedCall![1]).toHaveProperty('requestId');
+    expect(startedCall![1].requestId).toMatch(uuidRegex);
+  });
+});

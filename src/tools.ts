@@ -11,7 +11,7 @@ import { Ability, AbilityAnnotations, fetchAbilities, executeAbility, getAbility
 import { Config, SchemaVerbosity, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
-import { Logger } from './logging.js';
+import { Logger, withRequestId } from './logging.js';
 import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
 import {
   buildSafeModeBlockedResponse,
@@ -550,10 +550,15 @@ export async function executeTool(
 ): Promise<TextContent[]> {
   const startTime = performance.now();
   const hasArguments = Object.keys(args).length > 0;
+  const requestId = crypto.randomUUID();
+
+  // Create a child logger that includes requestId in every log entry
+  // for end-to-end tracing of this tool call through retry and API execution
+  const reqLogger = withRequestId(logger, requestId);
 
   // SECURITY: Only log metadata (toolName, hasArguments boolean), never log actual
   // argument values or response content as they may contain sensitive data.
-  logger.debug('Tool execution started', { toolName, hasArguments });
+  reqLogger.debug('Tool execution started', { toolName, hasArguments });
 
   let abilityName: string | undefined;
   let annotations: AbilityAnnotations | undefined;
@@ -572,19 +577,30 @@ export async function executeTool(
     abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
     // Fetch ability metadata to check if destructive
-    const ability = await getAbility(config, abilityName, logger);
+    const ability = await getAbility(config, abilityName, reqLogger);
     if (!ability) {
       throw new Error(`Ability not found: ${abilityName}`);
     }
 
     // Check annotations for destructive classification
+    // Default-deny: treat missing annotations as destructive (fail-closed)
     annotations = ability.meta?.annotations;
-    const isDestructive = annotations?.destructive ?? false;
+    const isDestructive = annotations?.destructive ?? true;
     let effectiveArgs = args;
+
+    // Always warn when annotations are missing — abilities without annotations
+    // are treated as destructive and require confirmation as a safety default
+    if (!annotations || typeof annotations.destructive !== 'boolean') {
+      reqLogger.warning('Ability missing destructive annotation, defaulting to destructive', {
+        toolName,
+        abilityName,
+        hasAnnotations: !!annotations,
+      });
+    }
 
     // Log all destructive operation attempts for audit purposes (regardless of safe mode)
     if (isDestructive) {
-      logger.info('Destructive operation invoked', {
+      reqLogger.info('Destructive operation invoked', {
         toolName,
         abilityName,
         safeMode: config.safeMode,
@@ -593,20 +609,12 @@ export async function executeTool(
 
     // Safe mode handling
     if (config.safeMode) {
-      // Warn if annotations are missing - can't reliably classify the ability
-      if (!annotations || typeof annotations.destructive !== 'boolean') {
-        logger.warning('Safe mode cannot reliably classify ability (missing annotations)', {
-          toolName,
-          abilityName,
-          hasAnnotations: !!annotations,
-        });
-      }
 
       // Always strip confirm parameter in safe mode (defensive approach)
       if ('confirm' in args) {
         const { confirm, ...safeArgs } = args;
         effectiveArgs = safeArgs;
-        logger.info('Stripped confirm parameter in safe mode', { toolName, hadConfirm: confirm });
+        reqLogger.info('Stripped confirm parameter in safe mode', { toolName, hadConfirm: confirm });
       }
 
       // Block destructive operations with a clear user-visible message.
@@ -614,7 +622,7 @@ export async function executeTool(
       // sessionDataBytes tracking. The session data limit is designed to prevent
       // runaway API responses, not small fixed-size local error messages.
       if (isDestructive) {
-        logger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
+        reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
         const ctx = { tool: toolName, ability: abilityName };
 
         return [
@@ -636,7 +644,7 @@ export async function executeTool(
 
       // Validation: user_confirmed on tools without confirm parameter
       if (!hasConfirmParam && args.user_confirmed === true) {
-        logger.warning('Invalid parameter: user_confirmed on tool without confirm support', {
+        reqLogger.warning('Invalid parameter: user_confirmed on tool without confirm support', {
           toolName,
           abilityName,
         });
@@ -653,7 +661,7 @@ export async function executeTool(
       if (hasConfirmParam) {
         // Validation: Conflicting parameters (user_confirmed + dry_run)
         if (args.user_confirmed === true && args.dry_run === true) {
-          logger.warning('Conflicting parameters: user_confirmed and dry_run both set', {
+          reqLogger.warning('Conflicting parameters: user_confirmed and dry_run both set', {
             toolName,
             abilityName,
             userConfirmed: args.user_confirmed,
@@ -671,7 +679,7 @@ export async function executeTool(
 
         // Case 1: Explicit dry_run bypass - skip confirmation flow entirely
         if (args.dry_run === true) {
-          logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
+          reqLogger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
           // Proceed to normal execution with effectiveArgs unchanged
         }
         // Case 2: Preview request (confirm: true without user_confirmed)
@@ -680,7 +688,7 @@ export async function executeTool(
 
           // Execute preview with dry_run: true
           const previewArgs = { ...effectiveArgs, dry_run: true, confirm: undefined };
-          const previewResult = await executeAbility(config, abilityName, previewArgs, logger);
+          const previewResult = await executeAbility(config, abilityName, previewArgs, reqLogger);
 
           // Store preview for later validation
           const previewKey = getPreviewKey(toolName, args);
@@ -698,7 +706,7 @@ export async function executeTool(
           const token = crypto.randomUUID();
           tokenIndex.set(token, previewKey);
 
-          logger.info('Preview generated for confirmation', { toolName });
+          reqLogger.info('Preview generated for confirmation', { toolName });
 
           // Return structured preview response
           const ctx = { tool: toolName, ability: abilityName };
@@ -708,7 +716,7 @@ export async function executeTool(
           // Track preview response size (contains API data that could be large)
           const previewBytes = Buffer.byteLength(previewResponse, 'utf8');
           if (sessionDataBytes + previewBytes > config.maxSessionData) {
-            logger.error('Session data limit exceeded during preview', {
+            reqLogger.error('Session data limit exceeded during preview', {
               toolName,
               previewBytes,
               sessionDataBytes,
@@ -728,7 +736,7 @@ export async function executeTool(
           // Warning: Ambiguous parameters (confirm + user_confirmed both set)
           // Per PRD line 319: allow execution but log for tracking
           if (args.confirm === true) {
-            logger.warning(
+            reqLogger.warning(
               'Ambiguous parameters: both confirm and user_confirmed set, treating as confirmation',
               {
                 toolName,
@@ -746,7 +754,7 @@ export async function executeTool(
             const tokenPreviewKey = tokenIndex.get(confirmationToken);
             if (!tokenPreviewKey) {
               // Token is invalid or already consumed
-              logger.warning('Confirmation failed - invalid confirmation token', { toolName });
+              reqLogger.warning('Confirmation failed - invalid confirmation token', { toolName });
               const ctx = { tool: toolName, ability: abilityName };
               return [
                 { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
@@ -755,7 +763,7 @@ export async function executeTool(
             // Verify token belongs to this tool (prevent cross-tool reuse)
             if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
               tokenIndex.delete(confirmationToken);
-              logger.warning('Confirmation failed - token belongs to different tool', { toolName });
+              reqLogger.warning('Confirmation failed - token belongs to different tool', { toolName });
               const ctx = { tool: toolName, ability: abilityName };
               return [
                 { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
@@ -774,7 +782,7 @@ export async function executeTool(
 
           // Check if preview exists
           if (previewTimestamp === undefined) {
-            logger.warning('Confirmation failed - no preview found', { toolName });
+            reqLogger.warning('Confirmation failed - no preview found', { toolName });
 
             // Note: This fixed-size local error message is intentionally excluded from
             // sessionDataBytes tracking. The session data limit targets runaway API
@@ -789,7 +797,7 @@ export async function executeTool(
           if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
             pendingPreviews.delete(previewKey);
             if (confirmationToken) tokenIndex.delete(confirmationToken);
-            logger.warning('Confirmation failed - preview expired', { toolName });
+            reqLogger.warning('Confirmation failed - preview expired', { toolName });
 
             // Note: This fixed-size local error message is intentionally excluded from
             // sessionDataBytes tracking. The session data limit targets runaway API
@@ -804,7 +812,7 @@ export async function executeTool(
           pendingPreviews.delete(previewKey);
           if (confirmationToken) tokenIndex.delete(confirmationToken);
           const previewAge = Date.now() - previewTimestamp;
-          logger.info('User confirmation validated', { toolName, previewAge });
+          reqLogger.info('User confirmation validated', { toolName, previewAge });
 
           // Remove user_confirmed and confirmation_token flags, keep confirm: true for the actual execution
           const {
@@ -818,7 +826,7 @@ export async function executeTool(
         else {
           // This shouldn't happen for tools with confirm param if schema is properly enforced
           // Log warning but proceed to maintain backward compatibility
-          logger.warning('Destructive tool called without confirmation parameters', {
+          reqLogger.warning('Destructive tool called without confirmation parameters', {
             toolName,
             abilityName,
           });
@@ -826,7 +834,7 @@ export async function executeTool(
       }
     }
 
-    const result = await executeAbility(config, abilityName, effectiveArgs, logger);
+    const result = await executeAbility(config, abilityName, effectiveArgs, reqLogger);
 
     // Check for cancellation after execution
     if (options?.signal?.aborted) {
@@ -839,7 +847,7 @@ export async function executeTool(
     // Track response size and enforce session data limit
     const responseBytes = Buffer.byteLength(formattedResult, 'utf8');
     if (sessionDataBytes + responseBytes > config.maxSessionData) {
-      logger.error('Session data limit exceeded', {
+      reqLogger.error('Session data limit exceeded', {
         toolName,
         responseBytes,
         sessionDataBytes,
@@ -853,7 +861,7 @@ export async function executeTool(
     sessionDataBytes += responseBytes;
 
     const durationMs = Math.round(performance.now() - startTime);
-    logger.info('Tool execution succeeded', {
+    reqLogger.info('Tool execution succeeded', {
       toolName,
       success: true,
       durationMs,
@@ -875,7 +883,7 @@ export async function executeTool(
       const noChangeText = formatJson(config, buildNoChangeResponse(ctx, reason));
       const responseBytes = Buffer.byteLength(noChangeText, 'utf8');
       if (sessionDataBytes + responseBytes > config.maxSessionData) {
-        logger.error('Session data limit exceeded during no-op response', {
+        reqLogger.error('Session data limit exceeded during no-op response', {
           toolName,
           responseBytes,
           sessionDataBytes,
@@ -888,7 +896,7 @@ export async function executeTool(
       }
       sessionDataBytes += responseBytes;
       const durationMs = Math.round(performance.now() - startTime);
-      logger.info('Tool execution no-op (idempotent already-state)', {
+      reqLogger.info('Tool execution no-op (idempotent already-state)', {
         toolName,
         durationMs,
         responseBytes,
@@ -899,7 +907,7 @@ export async function executeTool(
 
     const durationMs = Math.round(performance.now() - startTime);
     const errorMessage = sanitizeError(error instanceof Error ? error.message : String(error));
-    logger.error('Tool execution failed', {
+    reqLogger.error('Tool execution failed', {
       toolName,
       success: false,
       durationMs,

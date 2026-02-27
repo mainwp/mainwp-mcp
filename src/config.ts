@@ -265,7 +265,7 @@ export function loadSettingsFile(): SettingsFile | null {
       }
 
       validateSettingsFile(parsed, filePath);
-      console.error(`[mainwp-mcp] Loaded settings from: ${filePath}`);
+      console.error('[mainwp-mcp] Loaded settings from file');
       return parsed as SettingsFile;
     }
   }
