@@ -78,12 +78,14 @@ export function buildConfirmationRequiredResponse(
     next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
-    instructions: 'To execute this operation, call the tool again with user_confirmed: true',
+    confirmation_token: token,
+    instructions:
+      'Show the preview to the user. If they approve, call this tool again with ' +
+      'user_confirmed: true and confirmation_token: "<token above>".',
     metadata: {
       tool: ctx.tool,
       ability: ctx.ability,
       expiresIn: '5 minutes',
-      confirmation_token: token,
     },
   };
 }
@@ -126,13 +128,14 @@ export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
 /**
  * Response when an idempotent operation had no effect (already in desired state)
  */
-export function buildNoChangeResponse(ctx: ConfirmationContext, reason: string): object {
+export function buildNoChangeResponse(ctx: ConfirmationContext, code: string, reason: string): object {
   return {
     status: 'NO_CHANGE',
     message: `Operation had no effect: ${ctx.tool}`,
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
+      code,
       reason,
     },
   };

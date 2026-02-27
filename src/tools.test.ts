@@ -11,6 +11,7 @@ import {
   toolNameToAbilityName,
   abilityNameToToolName,
   clearPendingPreviews,
+  clearToolsCache,
   generateInstructions,
   buildSafetyTags,
   isNoOpError,
@@ -169,6 +170,7 @@ describe('getTools', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearCache();
+    clearToolsCache();
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -395,6 +397,7 @@ describe('getTools', () => {
     const deleteTool = tools.find(t => t.name === 'delete_site_v1');
 
     expect(deleteTool?.description).toContain('[destructive, confirm, dry_run]');
+    expect(deleteTool?.description).toContain('FLOW:');
   });
 
   it('should not include safety tags in compact mode for readonly tools', async () => {
@@ -410,6 +413,7 @@ describe('getTools', () => {
 
     // Readonly tools have no compact-mode tags (not destructive, no confirm, no dry_run)
     expect(listTool?.description).not.toContain('[');
+    expect(listTool?.description).not.toContain('FLOW:');
   });
 
   it('should truncate descriptions in compact mode', async () => {
@@ -432,6 +436,7 @@ describe('executeTool', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearCache();
+    clearToolsCache();
     clearPendingPreviews();
     initRateLimiter(0);
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -534,11 +539,11 @@ describe('executeTool', () => {
     expect(result[0].text).toContain('CONFIRMATION_REQUIRED');
     expect(result[0].text).toContain('preview');
 
-    // Should include a confirmation token
+    // Should include a confirmation token at top level
     const parsed = JSON.parse(result[0].text);
-    expect(parsed.metadata.confirmation_token).toBeDefined();
-    expect(typeof parsed.metadata.confirmation_token).toBe('string');
-    expect(parsed.metadata.confirmation_token.length).toBeGreaterThan(0);
+    expect(parsed.confirmation_token).toBeDefined();
+    expect(typeof parsed.confirmation_token).toBe('string');
+    expect(parsed.confirmation_token.length).toBeGreaterThan(0);
   });
 
   it('should reject user_confirmed without prior preview', async () => {
@@ -595,7 +600,7 @@ describe('executeTool', () => {
       mockLogger
     );
     const parsed = JSON.parse(previewResult[0].text);
-    const token = parsed.metadata.confirmation_token;
+    const token = parsed.confirmation_token;
 
     // Step 2: Confirm with token
     mockFetch.mockResolvedValueOnce({
@@ -882,7 +887,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
     const parsed = JSON.parse(previewResult[0].text);
-    const token = parsed.metadata.confirmation_token;
+    const token = parsed.confirmation_token;
 
     // Step 2: Confirm with token (consumes it)
     mockFetch.mockResolvedValueOnce({
@@ -929,7 +934,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
     const parsed = JSON.parse(previewResult[0].text);
-    const token = parsed.metadata.confirmation_token;
+    const token = parsed.confirmation_token;
 
     // Step 2: Attempt to use that token on a different destructive tool
     const crossToolResult = await executeTool(
@@ -1022,6 +1027,7 @@ describe('no-op error handling for idempotent tools', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearCache();
+    clearToolsCache();
     clearPendingPreviews();
     resetSessionData();
     initRateLimiter(0);
@@ -1060,7 +1066,8 @@ describe('no-op error handling for idempotent tools', () => {
     const parsed = JSON.parse(result[0].text);
     expect(parsed.status).toBe('NO_CHANGE');
     expect(parsed.message).toContain('activate_site_plugins_v1');
-    expect(parsed.details.reason).toBe('already_active');
+    expect(parsed.details.code).toBe('already_active');
+    expect(parsed.details.reason).toContain('Already active');
     expect(parsed.details.tool).toBe('activate_site_plugins_v1');
     expect(parsed.details.ability).toBe('mainwp/activate-site-plugins-v1');
   });

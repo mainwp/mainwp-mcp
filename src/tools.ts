@@ -54,20 +54,32 @@ const PREVIEW_EXPIRY_MS = 5 * 60 * 1000;
 const MAX_PENDING_PREVIEWS = 100;
 
 /**
- * Error codes from the Abilities API that indicate an idempotent no-op (already in desired state).
+ * No-op error codes and their human-readable descriptions.
+ * Single source of truth: NOOP_ERROR_CODES is derived from this map's keys.
  * When adding new idempotent abilities that return new error codes, add them here.
  */
-const NOOP_ERROR_CODES = new Set([
-  'already_active',
-  'already_inactive',
-  'already_installed',
-  'already_connected',
-  'already_disconnected',
-  'already_suspended',
-  'already_unsuspended',
-  'no_updates_available',
-  'nothing_to_update',
-]);
+const NOOP_DESCRIPTIONS: Record<string, string> = {
+  already_active: 'Already active — no action needed',
+  already_inactive: 'Already inactive — no action needed',
+  already_installed: 'Already installed — no action needed',
+  already_connected: 'Already connected — no action needed',
+  already_disconnected: 'Already disconnected — no action needed',
+  already_suspended: 'Already suspended — no action needed',
+  already_unsuspended: 'Already unsuspended — no action needed',
+  no_updates_available: 'No updates available',
+  nothing_to_update: 'Nothing to update',
+};
+
+const NOOP_ERROR_CODES = new Set(Object.keys(NOOP_DESCRIPTIONS));
+
+/**
+ * Format byte counts as human-readable strings (e.g., "50.0 MB", "2.5 KB").
+ */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} bytes`;
+}
 
 /**
  * Check whether an error represents an idempotent no-op (already in desired state).
@@ -466,6 +478,9 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
     if (tags) {
       description += ` ${tags}`;
     }
+    if (isDestructive && hasConfirm) {
+      description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
+    }
   }
 
   return {
@@ -486,17 +501,45 @@ function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'
 }
 
 /**
+ * Cached tool list to avoid re-converting abilities on every ListTools call.
+ * Invalidated by abilities array reference change or config fingerprint change.
+ */
+let cachedTools: Tool[] | null = null;
+let cachedToolsAbilitiesRef: Ability[] | null = null;
+let cachedToolsFingerprint: string | null = null;
+
+/**
+ * Clear the cached tool list (for testing).
+ * @internal
+ */
+export function clearToolsCache(): void {
+  cachedTools = null;
+  cachedToolsAbilitiesRef = null;
+  cachedToolsFingerprint = null;
+}
+
+/**
  * Fetch all MainWP abilities and convert them to MCP tools
  *
  * Applies optional filtering based on config:
  * - allowedTools: If set, only include tools in this list
  * - blockedTools: If set, exclude tools in this list
  *
+ * Caches the converted tool list by abilities array reference and config
+ * fingerprint. fetchAbilities() returns the same cached array while valid,
+ * so reference equality is a reliable cache key.
+ *
  * @param config - Server configuration
  * @param logger - Optional structured logger for filtering/verbosity messages
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config, false, logger);
+  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}`;
+
+  if (cachedTools && abilities === cachedToolsAbilitiesRef && fingerprint === cachedToolsFingerprint) {
+    return cachedTools;
+  }
+
   let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
   const originalCount = tools.length;
 
@@ -532,6 +575,9 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
     });
   }
 
+  cachedTools = tools;
+  cachedToolsAbilitiesRef = abilities;
+  cachedToolsFingerprint = fingerprint;
   return tools;
 }
 
@@ -724,7 +770,7 @@ export async function executeTool(
               wouldBe: sessionDataBytes + previewBytes,
             });
             throw McpErrorFactory.resourceExhausted(
-              `Session data limit exceeded: ${sessionDataBytes + previewBytes} bytes would exceed ${config.maxSessionData} bytes limit`
+              `Session data limit reached (${formatBytes(sessionDataBytes + previewBytes)} of ${formatBytes(config.maxSessionData)}). Start a new session to continue.`
             );
           }
           sessionDataBytes += previewBytes;
@@ -855,7 +901,7 @@ export async function executeTool(
         wouldBe: sessionDataBytes + responseBytes,
       });
       throw McpErrorFactory.resourceExhausted(
-        `Session data limit exceeded: ${sessionDataBytes + responseBytes} bytes would exceed ${config.maxSessionData} bytes limit`
+        `Session data limit reached (${formatBytes(sessionDataBytes + responseBytes)} of ${formatBytes(config.maxSessionData)}). Start a new session to continue.`
       );
     }
     sessionDataBytes += responseBytes;
@@ -878,9 +924,10 @@ export async function executeTool(
   } catch (error) {
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
-      const reason = (error as { code: string }).code;
+      const code = (error as { code: string }).code;
+      const reason = NOOP_DESCRIPTIONS[code] ?? code;
       const ctx = { tool: toolName, ability: abilityName ?? toolName };
-      const noChangeText = formatJson(config, buildNoChangeResponse(ctx, reason));
+      const noChangeText = formatJson(config, buildNoChangeResponse(ctx, code, reason));
       const responseBytes = Buffer.byteLength(noChangeText, 'utf8');
       if (sessionDataBytes + responseBytes > config.maxSessionData) {
         reqLogger.error('Session data limit exceeded during no-op response', {
@@ -891,7 +938,7 @@ export async function executeTool(
           wouldBe: sessionDataBytes + responseBytes,
         });
         throw McpErrorFactory.resourceExhausted(
-          `Session data limit exceeded: ${sessionDataBytes + responseBytes} bytes would exceed ${config.maxSessionData} bytes limit`
+          `Session data limit reached (${formatBytes(sessionDataBytes + responseBytes)} of ${formatBytes(config.maxSessionData)}). Start a new session to continue.`
         );
       }
       sessionDataBytes += responseBytes;

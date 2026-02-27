@@ -118,7 +118,13 @@ describe('buildConfirmationRequiredResponse', () => {
     const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
 
     expect(response.instructions).toContain('user_confirmed');
-    expect(response.instructions).toContain('true');
+    expect(response.instructions).toContain('confirmation_token');
+  });
+
+  it('should include confirmation_token at top level', () => {
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
+
+    expect(response.confirmation_token).toBe('test-token-uuid');
   });
 
   it('should include metadata with expiry', () => {
@@ -129,7 +135,8 @@ describe('buildConfirmationRequiredResponse', () => {
     expect(response.metadata.tool).toBe('delete_site_v1');
     expect(response.metadata.ability).toBe('mainwp/delete-site-v1');
     expect(response.metadata.expiresIn).toContain('5 minutes');
-    expect(response.metadata.confirmation_token).toBe('test-token-uuid');
+    // confirmation_token is at top level, not in metadata
+    expect(response.metadata.confirmation_token).toBeUndefined();
   });
 });
 
@@ -173,25 +180,26 @@ describe('buildPreviewExpiredResponse', () => {
 
 describe('buildNoChangeResponse', () => {
   it('should include NO_CHANGE status and message', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active') as Record<string, unknown>;
+    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as Record<string, unknown>;
 
     expect(response.status).toBe('NO_CHANGE');
     expect(response.message).toContain('no effect');
     expect(response.message).toContain('delete_site_v1');
   });
 
-  it('should include tool, ability, and reason in details', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active') as {
+  it('should include tool, ability, code, and reason in details', () => {
+    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as {
       details: Record<string, unknown>;
     };
 
     expect(response.details.tool).toBe('delete_site_v1');
     expect(response.details.ability).toBe('mainwp/delete-site-v1');
-    expect(response.details.reason).toBe('already_active');
+    expect(response.details.code).toBe('already_active');
+    expect(response.details.reason).toContain('Already active');
   });
 
   it('should not include error or next_action fields', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active') as Record<string, unknown>;
+    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as Record<string, unknown>;
 
     expect(response.error).toBeUndefined();
     expect(response.next_action).toBeUndefined();

@@ -271,7 +271,7 @@ export async function fetchAbilities(config: Config, forceRefresh = false, logge
 
     if (page >= MAX_PAGES) {
       logger?.warning(
-        `Pagination capped at ${MAX_PAGES} pages — some abilities may be missing`
+        `Pagination capped at ${MAX_PAGES} pages (fetched ${allAbilities.length} abilities) — some may be missing`
       );
     } else if (page > 1) {
       logger?.info(`Fetched ${allAbilities.length} abilities across ${page} pages`);
@@ -308,7 +308,11 @@ export async function fetchAbilities(config: Config, forceRefresh = false, logge
   } catch (error) {
     // If we have cached data, return it even if expired
     if (cachedAbilities) {
-      logger?.warning('Failed to refresh abilities, using cached data', { error: String(error) });
+      const cacheAgeMinutes = Math.round((Date.now() - abilitiesCacheTimestamp) / 60000);
+      logger?.warning('Failed to refresh abilities, using cached data', {
+        error: String(error),
+        cacheAgeMinutes,
+      });
       return cachedAbilities;
     }
     throw error;
@@ -353,7 +357,7 @@ export async function fetchCategories(config: Config, forceRefresh = false, logg
 
     if (page >= MAX_PAGES) {
       logger?.warning(
-        `Pagination capped at ${MAX_PAGES} pages — some categories may be missing`
+        `Pagination capped at ${MAX_PAGES} pages (fetched ${allCategories.length} categories) — some may be missing`
       );
     }
 
@@ -364,7 +368,11 @@ export async function fetchCategories(config: Config, forceRefresh = false, logg
     return cachedCategories;
   } catch (error) {
     if (cachedCategories) {
-      logger?.warning('Failed to refresh categories, using cached data', { error: String(error) });
+      const cacheAgeMinutes = Math.round((Date.now() - categoriesCacheTimestamp) / 60000);
+      logger?.warning('Failed to refresh categories, using cached data', {
+        error: String(error),
+        cacheAgeMinutes,
+      });
       return cachedCategories;
     }
     throw error;

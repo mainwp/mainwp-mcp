@@ -332,7 +332,10 @@ describe('fetchAbilities', () => {
     expect(abilities).toHaveLength(7);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Failed to refresh abilities, using cached data',
-      expect.objectContaining({ error: expect.stringContaining('Network error') })
+      expect.objectContaining({
+        error: expect.stringContaining('Network error'),
+        cacheAgeMinutes: expect.any(Number),
+      })
     );
   });
 
@@ -489,7 +492,10 @@ describe('fetchCategories', () => {
     expect(categories).toHaveLength(1);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Failed to refresh categories, using cached data',
-      expect.objectContaining({ error: expect.stringContaining('Network error') })
+      expect.objectContaining({
+        error: expect.stringContaining('Network error'),
+        cacheAgeMinutes: expect.any(Number),
+      })
     );
   });
 });
