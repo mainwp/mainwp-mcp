@@ -204,14 +204,32 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   // The abilities API uses JSON Schema, which is compatible with MCP
   // We just need to ensure it has the required structure
   // Cast to the expected MCP SDK type
-  const properties = (schema.properties || {}) as { [key: string]: object };
+  const properties = (schema.properties || {}) as { [key: string]: Record<string, unknown> };
   const required = (schema.required as string[]) || [];
+
+  // Backfill missing descriptions from parameter names.
+  // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
+  for (const [name, prop] of Object.entries(properties)) {
+    if (prop && (!prop.description || String(prop.description).trim() === '')) {
+      prop.description = paramNameToDescription(name);
+    }
+  }
 
   return {
     type: 'object' as const,
     properties,
     required,
   };
+}
+
+/**
+ * Generate a human-readable description from a parameter name.
+ * "client_id_or_email" → "Client ID or email."
+ * "address_1" → "Address 1."
+ */
+function paramNameToDescription(name: string): string {
+  const words = name.replace(/_/g, ' ').replace(/\bid\b/gi, 'ID');
+  return words.charAt(0).toUpperCase() + words.slice(1) + '.';
 }
 
 /**
