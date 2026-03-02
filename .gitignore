@@ -21,5 +21,8 @@ settings.json
 # Test coverage (generated)
 coverage/
 
+# Manual test results (generated)
+test-results/
+
 # Override global gitignore for CI/CD
 !.github/

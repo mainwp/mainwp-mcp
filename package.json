@@ -28,6 +28,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test:manual": "tsx scripts/manual-test.ts",
     "check-version": "node scripts/check-version.js",
     "prepublishOnly": "npm run build"
   },
