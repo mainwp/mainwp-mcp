@@ -16,7 +16,6 @@
  */
 
 import fs from 'fs';
-import https from 'https';
 import { performance } from 'perf_hooks';
 import { loadConfig, getAbilitiesApiUrl, getAuthHeaders, type Config } from '../src/config.js';
 
@@ -25,7 +24,7 @@ import { loadConfig, getAbilitiesApiUrl, getAuthHeaders, type Config } from '../
 // ---------------------------------------------------------------------------
 
 type TestStatus = 'pass' | 'fail' | 'skipped';
-type TestCategory = 'read' | 'safe-write';
+type TestCategory = 'read' | 'safe-write' | 'destructive';
 
 interface TestResult {
   name: string;
@@ -106,8 +105,14 @@ function parseArgs(): CliOptions {
     switch (args[i]) {
       case '--category':
         opts.category = args[++i] as TestCategory;
-        if (opts.category !== 'read' && opts.category !== 'safe-write') {
-          console.error(`Invalid category: ${opts.category}. Must be "read" or "safe-write".`);
+        if (
+          opts.category !== 'read' &&
+          opts.category !== 'safe-write' &&
+          opts.category !== 'destructive'
+        ) {
+          console.error(
+            `Invalid category: ${opts.category}. Must be "read", "safe-write", or "destructive".`
+          );
           process.exit(1);
         }
         break;
@@ -133,8 +138,9 @@ MainWP MCP Manual Test Harness
 
 Usage:
   npm run test:manual                          Run all tests
-  npm run test:manual -- --category read       Read-only tests only
-  npm run test:manual -- --category safe-write Safe-write tests only
+  npm run test:manual -- --category read        Read-only tests only
+  npm run test:manual -- --category safe-write  Safe-write tests only
+  npm run test:manual -- --category destructive Destructive tests only
   npm run test:manual -- --test <name>         Run specific test(s)
   npm run test:manual -- --site-id <id>        Skip discovery, use this site ID
   npm run test:manual -- --dry-run             Show what would run
@@ -180,7 +186,7 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
 // HTTP Call Helper
 // ---------------------------------------------------------------------------
 
-let sharedAgent: https.Agent | undefined;
+let sslVerifyDisabled = false;
 
 async function callAbility(
   config: Config,
@@ -198,19 +204,15 @@ async function callAbility(
   const headers = getAuthHeaders(config);
   const hasParams = Object.keys(params).length > 0;
 
-  // Set up SSL agent for self-signed certs
-  if (config.skipSslVerify && !sharedAgent) {
-    sharedAgent = new https.Agent({ rejectUnauthorized: false });
+  // Disable SSL verification for self-signed certs (process-wide, set once)
+  if (config.skipSslVerify && !sslVerifyDisabled) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    sslVerifyDisabled = true;
   }
-  const agent = config.skipSslVerify ? sharedAgent : undefined;
 
-  const fetchOptions: RequestInit & { agent?: https.Agent } = {
+  const fetchOptions: RequestInit = {
     headers,
   };
-
-  if (agent) {
-    (fetchOptions as unknown as { agent: https.Agent }).agent = agent;
-  }
 
   let fullUrl: string;
   if (isReadonly) {
@@ -438,7 +440,7 @@ function buildTestCatalog(): TestScenario[] {
       name: 'delete-plugin',
       question: 'Delete a plugin from this site',
       abilityName: 'mainwp/delete-site-plugins-v1',
-      category: 'safe-write',
+      category: 'destructive',
       readonly: false,
       params: ctx => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug], confirm: true }),
     },
@@ -548,7 +550,11 @@ function needsSiteId(scenario: TestScenario, ctx: DiscoveryContext): boolean {
 }
 
 function needsPluginSlug(scenario: TestScenario): boolean {
-  return scenario.name === 'deactivate-plugin' || scenario.name === 'activate-plugin';
+  return (
+    scenario.name === 'activate-plugin' ||
+    scenario.name === 'deactivate-plugin' ||
+    scenario.name === 'delete-plugin'
+  );
 }
 
 function shouldSkip(scenario: TestScenario, ctx: DiscoveryContext): string | null {
@@ -741,7 +747,8 @@ async function main(): Promise<void> {
     console.log(`\nDry run — ${tests.length} tests would execute:\n`);
     tests.forEach((t, i) => {
       const num = String(i + 1).padStart(3);
-      const cat = t.category === 'read' ? 'READ' : 'WRITE';
+      const cat =
+        t.category === 'read' ? 'READ' : t.category === 'destructive' ? 'DESTRUCTIVE' : 'WRITE';
       console.log(`${num}. [${cat}] ${t.name} → ${t.abilityName}`);
       console.log(`     "${t.question}"`);
     });

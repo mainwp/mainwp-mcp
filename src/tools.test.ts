@@ -956,6 +956,45 @@ describe('confirmation flow - full cycle', () => {
     expect(reuseResult[0].text).toContain('PREVIEW_REQUIRED');
   });
 
+  it('should reject confirmation when arguments differ from preview (arg-swap)', async () => {
+    // Step 1: Generate preview for delete_site_v1 with site_id: 1
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, site_id: 1 }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    const parsed = JSON.parse(previewResult[0].text);
+    const token = parsed.confirmation_token;
+    expect(token).toBeDefined();
+
+    // Step 2: Attempt to confirm with different site_id (arg-swap attack)
+    const swapResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 2, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+
+    // Should be rejected — args don't match the preview
+    expect(swapResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - arguments do not match preview',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
   it('should complete two-phase confirmation flow', async () => {
     // Step 1: Preview
     mockFetch.mockResolvedValueOnce({

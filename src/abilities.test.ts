@@ -19,7 +19,6 @@ import {
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
 import { type Logger } from './logging.js';
-import https from 'https';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -384,10 +383,7 @@ describe('fetchAbilities', () => {
     );
   });
 
-  it('should reuse the same https.Agent across multiple createFetch calls', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-extraneous-class
-    const agentSpy = vi.spyOn(https, 'Agent').mockImplementation(class {} as never);
-
+  it('should set NODE_TLS_REJECT_UNAUTHORIZED when skipSslVerify is true', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => sampleAbilities,
@@ -395,13 +391,9 @@ describe('fetchAbilities', () => {
     });
 
     await fetchAbilities(baseConfig, true);
-    await fetchAbilities(baseConfig, true);
 
-    // sharedAgent persists for process lifetime (not reset by clearCache),
-    // so it may already be warm from earlier tests — expect at most 1 construction.
-    expect(agentSpy.mock.calls.length).toBeLessThanOrEqual(1);
-
-    agentSpy.mockRestore();
+    // skipSslVerify: true in baseConfig should set the env var
+    expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
   });
 });
 

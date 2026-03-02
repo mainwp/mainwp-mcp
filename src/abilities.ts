@@ -11,7 +11,6 @@ import { RateLimiter, sanitizeError } from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { withRetry, type RetryContext } from './retry.js';
 import type { Logger } from './logging.js';
-import https from 'https';
 
 /** Maximum size for error response bodies (64KB) — prevents transient memory spikes */
 const MAX_ERROR_BODY_BYTES = 65536;
@@ -79,7 +78,7 @@ let cachedCategories: Category[] | null = null;
 let abilitiesCacheTimestamp: number = 0;
 let categoriesCacheTimestamp: number = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-let sharedAgent: https.Agent | undefined;
+let sslVerifyDisabled = false;
 
 /**
  * Hardcoded namespace filter for MainWP abilities.
@@ -122,10 +121,10 @@ function notifyCacheRefresh(): void {
  * @param perCallTimeout - Optional per-call timeout override (for retry budget enforcement)
  */
 function createFetch(config: Config, perCallTimeout?: number) {
-  if (config.skipSslVerify && !sharedAgent) {
-    sharedAgent = new https.Agent({ rejectUnauthorized: false });
+  if (config.skipSslVerify && !sslVerifyDisabled) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    sslVerifyDisabled = true;
   }
-  const agent = config.skipSslVerify ? sharedAgent : undefined;
   const effectiveTimeout = perCallTimeout ?? config.requestTimeout;
 
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
@@ -143,7 +142,7 @@ function createFetch(config: Config, perCallTimeout?: number) {
     }
 
     try {
-      const fetchOptions: RequestInit & { agent?: https.Agent } = {
+      const fetchOptions: RequestInit = {
         ...options,
         signal: controller.signal,
         headers: {
@@ -152,12 +151,6 @@ function createFetch(config: Config, perCallTimeout?: number) {
         },
       };
 
-      // For Node.js fetch with custom agent
-      if (agent) {
-        (fetchOptions as unknown as { agent: https.Agent }).agent = agent;
-      }
-
-      // Use native fetch (Node 18+) with agent support
       const response = await fetch(url, fetchOptions);
       clearTimeout(timeoutId);
 
@@ -314,7 +307,7 @@ export async function fetchAbilities(
     if (cachedAbilities) {
       const cacheAgeMinutes = Math.round((Date.now() - abilitiesCacheTimestamp) / 60000);
       logger?.warning('Failed to refresh abilities, using cached data', {
-        error: String(error),
+        error: sanitizeError(String(error)),
         cacheAgeMinutes,
       });
       return cachedAbilities;
@@ -378,7 +371,7 @@ export async function fetchCategories(
     if (cachedCategories) {
       const cacheAgeMinutes = Math.round((Date.now() - categoriesCacheTimestamp) / 60000);
       logger?.warning('Failed to refresh categories, using cached data', {
-        error: String(error),
+        error: sanitizeError(String(error)),
         cacheAgeMinutes,
       });
       return cachedCategories;

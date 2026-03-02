@@ -847,6 +847,18 @@ export async function executeTool(
                 { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
               ];
             }
+            // Verify token matches current arguments (prevent arg-swap)
+            const currentPreviewKey = getPreviewKey(toolName, args);
+            if (currentPreviewKey !== tokenPreviewKey) {
+              tokenIndex.delete(confirmationToken);
+              reqLogger.warning('Confirmation failed - arguments do not match preview', {
+                toolName,
+              });
+              const ctx = { tool: toolName, ability: abilityName };
+              return [
+                { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },
+              ];
+            }
             previewKey = tokenPreviewKey;
           } else {
             previewKey = getPreviewKey(toolName, args);
