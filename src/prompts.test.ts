@@ -150,6 +150,10 @@ describe('getPrompt - argument validation', () => {
     expect(() => getPrompt('troubleshoot-site', { site_id: '123' })).not.toThrow();
   });
 
+  it('should accept "all" as site_id', () => {
+    expect(() => getPrompt('performance-check', { site_id: 'all' })).not.toThrow();
+  });
+
   it('should reject invalid issue_type', () => {
     expect(() => getPrompt('troubleshoot-site', { site_id: '1', issue_type: 'hacking' })).toThrow(
       'Invalid issue_type'

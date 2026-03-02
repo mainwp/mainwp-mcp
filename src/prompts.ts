@@ -379,10 +379,10 @@ function validatePromptArgs(
   for (const [key, value] of Object.entries(args)) {
     if (typeof value !== 'string') continue;
 
-    // site_id / site_ids: must be numeric (or comma-separated numeric for site_ids)
+    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric
     if (key === 'site_id') {
-      if (!/^\d+$/.test(value)) {
-        throw new Error(`Invalid site_id: must be a numeric value`);
+      if (value !== 'all' && !/^\d+$/.test(value)) {
+        throw new Error(`Invalid site_id: must be a numeric value or "all"`);
       }
       sanitized[key] = value;
     } else if (key === 'site_ids') {

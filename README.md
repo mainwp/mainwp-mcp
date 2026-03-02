@@ -28,7 +28,7 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 ## Quick Start
 
-**Requirements:** Node.js 20+ and MainWP Dashboard 6.0+
+**Requirements:** Node.js >=20.19.0 and MainWP Dashboard 6.0+
 
 ### Option A: Run with npx (recommended)
 

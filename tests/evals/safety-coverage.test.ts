@@ -299,7 +299,11 @@ describe('Safety Coverage', () => {
         // Find matching ability
         const abilityName = `mainwp/${tool.name.replace(/_/g, '-')}`;
         const ability = abilities.find(a => a.name === abilityName);
-        if (!ability?.meta?.annotations) continue;
+        if (!ability) {
+          violations.push(`${tool.name}: no matching ability found (${abilityName})`);
+          continue;
+        }
+        if (!ability.meta?.annotations) continue;
 
         const meta = ability.meta.annotations;
 

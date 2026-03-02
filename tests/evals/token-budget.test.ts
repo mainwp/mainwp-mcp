@@ -7,7 +7,7 @@
  * - Compact mode < 20K tokens
  * - Compact saves >= 20% vs standard
  * - No single tool exceeds 600 tokens
- * - Outputs per-category breakdown to stderr
+ * - Outputs per-category breakdown via console.warn
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -103,14 +103,14 @@ describe('Token Budget', () => {
 
     // Log breakdown to stderr for visibility
     const breakdown = buildCategoryBreakdown(tools);
-    console.error('\n--- Standard Mode Token Breakdown ---');
-    console.error(`Total: ${totalTokens} tokens (${tools.length} tools)`);
+    console.warn('\n--- Standard Mode Token Breakdown ---');
+    console.warn(`Total: ${totalTokens} tokens (${tools.length} tools)`);
     for (const [category, data] of [...breakdown.entries()].sort(
       (a, b) => b[1].tokens - a[1].tokens
     )) {
-      console.error(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
+      console.warn(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
     }
-    console.error('---');
+    console.warn('---');
 
     expect(totalTokens).toBeLessThan(30_000);
   });
@@ -124,14 +124,14 @@ describe('Token Budget', () => {
 
     // Log breakdown to stderr for visibility
     const breakdown = buildCategoryBreakdown(tools);
-    console.error('\n--- Compact Mode Token Breakdown ---');
-    console.error(`Total: ${totalTokens} tokens (${tools.length} tools)`);
+    console.warn('\n--- Compact Mode Token Breakdown ---');
+    console.warn(`Total: ${totalTokens} tokens (${tools.length} tools)`);
     for (const [category, data] of [...breakdown.entries()].sort(
       (a, b) => b[1].tokens - a[1].tokens
     )) {
-      console.error(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
+      console.warn(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
     }
-    console.error('---');
+    console.warn('---');
 
     expect(totalTokens).toBeLessThan(20_000);
   });
@@ -149,11 +149,11 @@ describe('Token Budget', () => {
 
     const savings = ((standardTokens - compactTokens) / standardTokens) * 100;
 
-    console.error(`\n--- Verbosity Comparison ---`);
-    console.error(`Standard: ${standardTokens} tokens`);
-    console.error(`Compact:  ${compactTokens} tokens`);
-    console.error(`Savings:  ${savings.toFixed(1)}%`);
-    console.error('---');
+    console.warn(`\n--- Verbosity Comparison ---`);
+    console.warn(`Standard: ${standardTokens} tokens`);
+    console.warn(`Compact:  ${compactTokens} tokens`);
+    console.warn(`Savings:  ${savings.toFixed(1)}%`);
+    console.warn('---');
 
     expect(savings).toBeGreaterThanOrEqual(20);
   });
