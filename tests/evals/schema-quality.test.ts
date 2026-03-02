@@ -230,12 +230,14 @@ describe('Schema Quality', () => {
       let refCount = 0;
       if (fs.existsSync(refPath)) {
         const content = fs.readFileSync(refPath, 'utf8');
-        // Count ## headings (each ability gets an h2)
-        const headings = content.match(/^## /gm);
+        // Count ### headings that match ability names (e.g., ### list_sites_v1)
+        const headings = content.match(/^### \w+_v\d+/gm);
         refCount = headings?.length ?? 0;
       }
 
-      const fixtureCount = abilitiesFixture.length;
+      const fixtureCount = abilitiesFixture.filter(
+        (a: { name: string }) => a.name.startsWith('mainwp/')
+      ).length;
 
       if (refCount > 0 && fixtureCount !== refCount) {
         console.warn(
