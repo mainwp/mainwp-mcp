@@ -187,7 +187,12 @@ async function callAbility(
   abilityName: string,
   params: Record<string, unknown>,
   isReadonly: boolean
-): Promise<{ statusCode: number; body: unknown; responseTimeMs: number; responseSizeBytes: number }> {
+): Promise<{
+  statusCode: number;
+  body: unknown;
+  responseTimeMs: number;
+  responseSizeBytes: number;
+}> {
   const baseUrl = getAbilitiesApiUrl(config);
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const headers = getAuthHeaders(config);
@@ -269,7 +274,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-site-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'get-sites-basic',
@@ -285,7 +290,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-site-plugins-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'get-site-themes',
@@ -293,7 +298,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-site-themes-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'get-site-security',
@@ -301,7 +306,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-site-security-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'get-site-changes',
@@ -309,7 +314,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-site-changes-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId, per_page: 5 }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId, per_page: 5 }),
     },
     {
       name: 'get-abandoned-plugins',
@@ -317,7 +322,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-abandoned-plugins-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'get-abandoned-themes',
@@ -325,7 +330,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/get-abandoned-themes-v1',
       category: 'read',
       readonly: true,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'list-updates',
@@ -376,7 +381,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/sync-sites-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_ids_or_domains: [ctx.siteId] }),
+      params: ctx => ({ site_ids_or_domains: [ctx.siteId] }),
     },
     {
       name: 'check-site',
@@ -384,7 +389,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/check-site-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'reconnect-site',
@@ -392,7 +397,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/reconnect-site-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'suspend-site',
@@ -400,7 +405,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/suspend-site-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
       pairedWith: 'unsuspend-site',
     },
     {
@@ -409,7 +414,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/unsuspend-site-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId }),
     },
     {
       name: 'activate-plugin',
@@ -417,7 +422,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/activate-site-plugins-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
       pairedWith: 'deactivate-plugin',
     },
     {
@@ -426,7 +431,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/deactivate-site-plugins-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
       pairedWith: 'delete-plugin',
     },
     {
@@ -435,7 +440,7 @@ function buildTestCatalog(): TestScenario[] {
       abilityName: 'mainwp/delete-site-plugins-v1',
       category: 'safe-write',
       readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug], confirm: true }),
+      params: ctx => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug], confirm: true }),
     },
   ];
 }
@@ -466,7 +471,9 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
       }
     } catch (err) {
       console.error(`  Discovery failed (list-sites): ${(err as Error).message}`);
-      throw new Error(`Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`);
+      throw new Error(
+        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`
+      );
     }
   }
 
@@ -488,12 +495,12 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
       const data = result.body as { plugins?: Array<{ slug: string; active: boolean }> };
       if (data.plugins) {
         // Find any non-essential plugin (active or inactive) for lifecycle testing
-        const candidate = data.plugins.find(
-          (p) => !p.slug.startsWith('mainwp-child')
-        );
+        const candidate = data.plugins.find(p => !p.slug.startsWith('mainwp-child'));
         if (candidate) {
           ctx.pluginSlug = candidate.slug;
-          console.log(`  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`);
+          console.log(
+            `  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`
+          );
         } else {
           console.log('  No non-essential plugin found — plugin tests will be skipped.');
         }
@@ -515,7 +522,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
     if (result.statusCode === 200 && result.body) {
       const data = result.body as { themes?: Array<{ slug: string; active: boolean }> };
       if (data.themes) {
-        const candidate = data.themes.find((t) => !t.active);
+        const candidate = data.themes.find(t => !t.active);
         if (candidate) {
           ctx.themeSlug = candidate.slug;
           console.log(`  Found theme: ${ctx.themeSlug}`);
@@ -625,7 +632,9 @@ function printSummaryTable(config: Config, results: TestResult[], durationMs: nu
 
   console.log('\n' + '='.repeat(90));
   console.log('MainWP MCP Manual Test Report');
-  console.log(`Dashboard: ${hostname} | Auth: ${authType} | Duration: ${(durationMs / 1000).toFixed(1)}s`);
+  console.log(
+    `Dashboard: ${hostname} | Auth: ${authType} | Duration: ${(durationMs / 1000).toFixed(1)}s`
+  );
   console.log('='.repeat(90));
 
   // Table header
@@ -646,22 +655,27 @@ function printSummaryTable(config: Config, results: TestResult[], durationMs: nu
     const ability = r.abilityName.padEnd(38);
     const status = r.status === 'pass' ? 'PASS' : r.status === 'fail' ? 'FAIL' : 'SKIP';
     const statusStr = status.padEnd(8);
-    const time = r.responseTimeMs !== undefined ? String(Math.round(r.responseTimeMs)).padStart(10) : '       N/A';
+    const time =
+      r.responseTimeMs !== undefined
+        ? String(Math.round(r.responseTimeMs)).padStart(10)
+        : '       N/A';
     const http = r.statusCode !== undefined ? String(r.statusCode).padStart(5) : '  N/A';
     console.log(`${num} | ${name} | ${ability} | ${statusStr} | ${time} | ${http}`);
   });
 
   console.log('-'.repeat(90));
 
-  const passed = results.filter((r) => r.status === 'pass').length;
-  const failed = results.filter((r) => r.status === 'fail').length;
-  const skipped = results.filter((r) => r.status === 'skipped').length;
-  const times = results.filter((r) => r.responseTimeMs !== undefined).map((r) => r.responseTimeMs!);
+  const passed = results.filter(r => r.status === 'pass').length;
+  const failed = results.filter(r => r.status === 'fail').length;
+  const skipped = results.filter(r => r.status === 'skipped').length;
+  const times = results.filter(r => r.responseTimeMs !== undefined).map(r => r.responseTimeMs!);
   const avg = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
   const min = times.length > 0 ? Math.round(Math.min(...times)) : 0;
   const max = times.length > 0 ? Math.round(Math.max(...times)) : 0;
 
-  console.log(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped (${results.length} total)`);
+  console.log(
+    `Summary: ${passed} passed, ${failed} failed, ${skipped} skipped (${results.length} total)`
+  );
   if (times.length > 0) {
     console.log(`Avg: ${avg}ms | Min: ${min}ms | Max: ${max}ms`);
   }
@@ -700,7 +714,7 @@ async function main(): Promise<void> {
   let tests = allTests;
 
   if (opts.category) {
-    tests = tests.filter((t) => t.category === opts.category);
+    tests = tests.filter(t => t.category === opts.category);
     console.log(`Category filter: ${opts.category} (${tests.length} tests)`);
   }
 
@@ -708,12 +722,12 @@ async function main(): Promise<void> {
     // When specific tests are requested, also include their paired cleanup tests
     const requestedNames = new Set(opts.testNames);
     for (const name of opts.testNames) {
-      const scenario = allTests.find((t) => t.name === name);
+      const scenario = allTests.find(t => t.name === name);
       if (scenario?.pairedWith) {
         requestedNames.add(scenario.pairedWith);
       }
     }
-    tests = tests.filter((t) => requestedNames.has(t.name));
+    tests = tests.filter(t => requestedNames.has(t.name));
     console.log(`Test filter: ${[...requestedNames].join(', ')} (${tests.length} tests)`);
   }
 
@@ -749,7 +763,9 @@ async function main(): Promise<void> {
   for (const scenario of tests) {
     // Circuit breaker
     if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_ERRORS) {
-      console.error(`\nCircuit breaker: ${MAX_CONSECUTIVE_ERRORS} consecutive network errors. Aborting remaining tests.`);
+      console.error(
+        `\nCircuit breaker: ${MAX_CONSECUTIVE_ERRORS} consecutive network errors. Aborting remaining tests.`
+      );
       // Mark remaining as skipped
       const remaining = tests.slice(tests.indexOf(scenario));
       for (const s of remaining) {
@@ -797,7 +813,7 @@ async function main(): Promise<void> {
   printSummaryTable(config, results, runDuration);
 
   // Build report
-  const times = results.filter((r) => r.responseTimeMs !== undefined).map((r) => r.responseTimeMs!);
+  const times = results.filter(r => r.responseTimeMs !== undefined).map(r => r.responseTimeMs!);
   const report: RunReport = {
     runId: new Date().toISOString().replace(/[:.]/g, '-'),
     startedAt: new Date(Date.now() - runDuration).toISOString(),
@@ -807,10 +823,11 @@ async function main(): Promise<void> {
     discovery: ctx,
     summary: {
       total: results.length,
-      passed: results.filter((r) => r.status === 'pass').length,
-      failed: results.filter((r) => r.status === 'fail').length,
-      skipped: results.filter((r) => r.status === 'skipped').length,
-      avgResponseTimeMs: times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0,
+      passed: results.filter(r => r.status === 'pass').length,
+      failed: results.filter(r => r.status === 'fail').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
+      avgResponseTimeMs:
+        times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0,
       minResponseTimeMs: times.length > 0 ? Math.round(Math.min(...times)) : 0,
       maxResponseTimeMs: times.length > 0 ? Math.round(Math.max(...times)) : 0,
     },
@@ -825,13 +842,13 @@ async function main(): Promise<void> {
   console.log(`\nSaved to: ${outFile}\n`);
 
   // Exit with non-zero if any failures
-  const failCount = results.filter((r) => r.status === 'fail').length;
+  const failCount = results.filter(r => r.status === 'fail').length;
   if (failCount > 0) {
     process.exit(1);
   }
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(`\nFatal error: ${(err as Error).message}`);
   process.exit(1);
 });

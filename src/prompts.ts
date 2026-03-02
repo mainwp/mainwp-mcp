@@ -369,7 +369,9 @@ const VALID_UPDATE_TYPES = new Set(['plugins', 'themes', 'core', 'all']);
  * Validate and sanitize prompt arguments before interpolation.
  * Prevents prompt injection via template arguments.
  */
-function validatePromptArgs(args: Record<string, string> | undefined): Record<string, string> | undefined {
+function validatePromptArgs(
+  args: Record<string, string> | undefined
+): Record<string, string> | undefined {
   if (!args) return args;
 
   const sanitized: Record<string, string> = {};
@@ -396,11 +398,14 @@ function validatePromptArgs(args: Record<string, string> | undefined): Record<st
       sanitized[key] = value;
     } else if (key === 'update_type') {
       if (!VALID_UPDATE_TYPES.has(value)) {
-        throw new Error(`Invalid update_type: must be one of ${[...VALID_UPDATE_TYPES].join(', ')}`);
+        throw new Error(
+          `Invalid update_type: must be one of ${[...VALID_UPDATE_TYPES].join(', ')}`
+        );
       }
       sanitized[key] = value;
     } else {
       // Unknown argument: truncate to reasonable length and strip control characters
+      // eslint-disable-next-line no-control-regex
       sanitized[key] = value.slice(0, 200).replace(/[\x00-\x1f]/g, '');
     }
   }

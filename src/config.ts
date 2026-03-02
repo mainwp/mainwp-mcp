@@ -612,9 +612,7 @@ export function loadConfig(): Config {
  * 'compact' omits whitespace; 'pretty' uses 2-space indentation.
  */
 export function formatJson(config: Pick<Config, 'responseFormat'>, data: unknown): string {
-  return config.responseFormat === 'pretty'
-    ? JSON.stringify(data, null, 2)
-    : JSON.stringify(data);
+  return config.responseFormat === 'pretty' ? JSON.stringify(data, null, 2) : JSON.stringify(data);
 }
 
 /**

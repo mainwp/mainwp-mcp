@@ -236,7 +236,11 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
 /**
  * Fetch all abilities from the MainWP Dashboard
  */
-export async function fetchAbilities(config: Config, forceRefresh = false, logger?: Logger): Promise<Ability[]> {
+export async function fetchAbilities(
+  config: Config,
+  forceRefresh = false,
+  logger?: Logger
+): Promise<Ability[]> {
   // Return cached data if still valid
   if (!forceRefresh && cachedAbilities && Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS) {
     return cachedAbilities;
@@ -322,7 +326,11 @@ export async function fetchAbilities(config: Config, forceRefresh = false, logge
 /**
  * Fetch all categories from the MainWP Dashboard
  */
-export async function fetchCategories(config: Config, forceRefresh = false, logger?: Logger): Promise<Category[]> {
+export async function fetchCategories(
+  config: Config,
+  forceRefresh = false,
+  logger?: Logger
+): Promise<Category[]> {
   // Return cached data if still valid
   if (!forceRefresh && cachedCategories && Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS) {
     return cachedCategories;
@@ -382,7 +390,11 @@ export async function fetchCategories(config: Config, forceRefresh = false, logg
 /**
  * Get a specific ability by name
  */
-export async function getAbility(config: Config, name: string, logger?: Logger): Promise<Ability | undefined> {
+export async function getAbility(
+  config: Config,
+  name: string,
+  logger?: Logger
+): Promise<Ability | undefined> {
   await fetchAbilities(config, false, logger);
   return abilitiesIndex?.get(name);
 }

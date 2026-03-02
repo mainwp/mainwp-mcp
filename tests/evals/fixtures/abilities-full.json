@@ -83,22 +83,12 @@
     "input_schema": [],
     "output_schema": {
       "type": "object",
-      "required": [
-        "environment",
-        "php_version",
-        "db_server_info",
-        "wp_version"
-      ],
+      "required": ["environment", "php_version", "db_server_info", "wp_version"],
       "properties": {
         "environment": {
           "type": "string",
           "description": "The site's runtime environment classification (can be one of these: production, staging, development, local).",
-          "enum": [
-            "production",
-            "staging",
-            "development",
-            "local"
-          ]
+          "enum": ["production", "staging", "development", "local"]
         },
         "php_version": {
           "type": "string",
@@ -130,10 +120,7 @@
     "description": "List MainWP child sites with pagination and filtering. Returns basic site information including ID, URL, name, and connection status.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "page": {
           "type": "integer",
@@ -151,12 +138,7 @@
         "status": {
           "type": "string",
           "description": "Filter by connection status.",
-          "enum": [
-            "any",
-            "connected",
-            "disconnected",
-            "suspended"
-          ],
+          "enum": ["any", "connected", "disconnected", "suspended"],
           "default": "any"
         },
         "search": {
@@ -201,11 +183,7 @@
               },
               "status": {
                 "type": "string",
-                "enum": [
-                  "connected",
-                  "disconnected",
-                  "suspended"
-                ],
+                "enum": ["connected", "disconnected", "suspended"],
                 "description": "Connection status."
               },
               "client_id": {
@@ -221,12 +199,7 @@
                 "description": "Associated client ID if any."
               }
             },
-            "required": [
-              "id",
-              "url",
-              "name",
-              "status"
-            ],
+            "required": ["id", "url", "name", "status"],
             "additionalProperties": false
           }
         },
@@ -243,12 +216,7 @@
           "description": "Total number of sites matching filters."
         }
       },
-      "required": [
-        "items",
-        "page",
-        "per_page",
-        "total"
-      ]
+      "required": ["items", "page", "per_page", "total"]
     },
     "meta": {
       "annotations": {
@@ -269,10 +237,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (integer) or domain/URL (string)."
         },
         "include_stats": {
@@ -281,9 +246,7 @@
           "default": false
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -304,11 +267,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "connected",
-            "disconnected",
-            "suspended"
-          ],
+          "enum": ["connected", "disconnected", "suspended"],
           "description": "Connection status."
         },
         "client_id": {
@@ -383,12 +342,7 @@
           }
         }
       },
-      "required": [
-        "id",
-        "url",
-        "name",
-        "status"
-      ]
+      "required": ["id", "url", "name", "status"]
     },
     "meta": {
       "annotations": {
@@ -406,19 +360,13 @@
     "description": "Trigger synchronization for one or more child sites. Operations with >200 sites are automatically queued for background processing.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Site IDs or domains to sync. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         }
@@ -445,11 +393,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "id",
-              "url",
-              "name"
-            ]
+            "required": ["id", "url", "name"]
           }
         },
         "errors": {
@@ -475,11 +419,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "identifier",
-              "code",
-              "message"
-            ]
+            "required": ["identifier", "code", "message"]
           }
         },
         "total_synced": {
@@ -529,19 +469,12 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain/URL."
         },
         "status": {
           "type": "string",
-          "enum": [
-            "all",
-            "active",
-            "inactive"
-          ],
+          "enum": ["all", "active", "inactive"],
           "default": "all",
           "description": "Filter by plugin status."
         },
@@ -550,9 +483,7 @@
           "description": "Filter to only plugins with available updates."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -596,12 +527,7 @@
                 ]
               }
             },
-            "required": [
-              "slug",
-              "name",
-              "version",
-              "active"
-            ]
+            "required": ["slug", "name", "version", "active"]
           }
         },
         "total": {
@@ -609,12 +535,7 @@
           "description": "Total number of plugins."
         }
       },
-      "required": [
-        "site_id",
-        "site_url",
-        "plugins",
-        "total"
-      ]
+      "required": ["site_id", "site_url", "plugins", "total"]
     },
     "meta": {
       "annotations": {
@@ -635,19 +556,12 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain/URL."
         },
         "status": {
           "type": "string",
-          "enum": [
-            "all",
-            "active",
-            "inactive"
-          ],
+          "enum": ["all", "active", "inactive"],
           "default": "all",
           "description": "Filter by theme status."
         },
@@ -656,9 +570,7 @@
           "description": "Filter to only themes with available updates."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -706,12 +618,7 @@
                 ]
               }
             },
-            "required": [
-              "slug",
-              "name",
-              "version",
-              "active"
-            ]
+            "required": ["slug", "name", "version", "active"]
           }
         },
         "total": {
@@ -719,13 +626,7 @@
           "description": "Total number of themes."
         }
       },
-      "required": [
-        "site_id",
-        "site_url",
-        "active_theme",
-        "themes",
-        "total"
-      ]
+      "required": ["site_id", "site_url", "active_theme", "themes", "total"]
     },
     "meta": {
       "annotations": {
@@ -744,11 +645,7 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "url",
-        "name",
-        "admin_username"
-      ],
+      "required": ["url", "name", "admin_username"],
       "additionalProperties": false,
       "properties": {
         "url": {
@@ -767,11 +664,7 @@
           "type": "integer",
           "description": "SSL verification (0=off, 1=on, 2=global)",
           "default": 1,
-          "enum": [
-            0,
-            1,
-            2
-          ]
+          "enum": [0, 1, 2]
         },
         "ssl_version": {
           "type": "integer",
@@ -825,11 +718,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "connected",
-            "disconnected",
-            "suspended"
-          ],
+          "enum": ["connected", "disconnected", "suspended"],
           "description": "Connection status."
         },
         "client_id": {
@@ -904,12 +793,7 @@
           }
         }
       },
-      "required": [
-        "id",
-        "url",
-        "name",
-        "status"
-      ]
+      "required": ["id", "url", "name", "status"]
     },
     "meta": {
       "annotations": {
@@ -928,16 +812,11 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false,
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "name": {
@@ -955,11 +834,7 @@
         "verify_certificate": {
           "type": "integer",
           "description": "SSL verification (0=off, 1=on, 2=global)",
-          "enum": [
-            0,
-            1,
-            2
-          ]
+          "enum": [0, 1, 2]
         },
         "ssl_version": {
           "type": "integer",
@@ -987,10 +862,7 @@
         "suspended": {
           "type": "integer",
           "description": "Suspended status (0 or 1)",
-          "enum": [
-            0,
-            1
-          ]
+          "enum": [0, 1]
         }
       }
     },
@@ -1012,11 +884,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "connected",
-            "disconnected",
-            "suspended"
-          ],
+          "enum": ["connected", "disconnected", "suspended"],
           "description": "Connection status."
         },
         "client_id": {
@@ -1091,12 +959,7 @@
           }
         }
       },
-      "required": [
-        "id",
-        "url",
-        "name",
-        "status"
-      ]
+      "required": ["id", "url", "name", "status"]
     },
     "meta": {
       "annotations": {
@@ -1115,15 +978,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "confirm": {
@@ -1183,15 +1041,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1226,15 +1079,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1269,15 +1117,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1312,15 +1155,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1355,15 +1193,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1421,16 +1254,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain",
-        "plugins"
-      ],
+      "required": ["site_id_or_domain", "plugins"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "plugins": {
@@ -1490,16 +1317,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain",
-        "plugins"
-      ],
+      "required": ["site_id_or_domain", "plugins"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "plugins": {
@@ -1559,16 +1380,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain",
-        "plugins"
-      ],
+      "required": ["site_id_or_domain", "plugins"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "plugins": {
@@ -1643,15 +1458,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1677,10 +1487,7 @@
                 "type": "string"
               },
               "days_since_update": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": ["integer", "null"]
               }
             }
           }
@@ -1707,16 +1514,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain",
-        "theme"
-      ],
+      "required": ["site_id_or_domain", "theme"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "theme": {
@@ -1753,16 +1554,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain",
-        "themes"
-      ],
+      "required": ["site_id_or_domain", "themes"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "themes": {
@@ -1837,15 +1632,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1871,10 +1661,7 @@
                 "type": "string"
               },
               "days_since_update": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": ["integer", "null"]
               }
             }
           }
@@ -1901,15 +1688,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -1945,15 +1727,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         },
         "page": {
@@ -2012,15 +1789,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -2030,10 +1802,7 @@
       "description": "Client assignment result with client data or null.",
       "properties": {
         "client": {
-          "type": [
-            "object",
-            "null"
-          ],
+          "type": ["object", "null"],
           "description": "Client object or null if no client assigned.",
           "additionalProperties": true
         },
@@ -2042,9 +1811,7 @@
           "description": "Status message explaining the result."
         }
       },
-      "required": [
-        "client"
-      ]
+      "required": ["client"]
     },
     "meta": {
       "annotations": {
@@ -2063,15 +1830,10 @@
     "category": "mainwp-sites",
     "input_schema": {
       "type": "object",
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain"
         }
       }
@@ -2110,19 +1872,12 @@
     "description": "Count total MainWP child sites with optional filtering.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "status": {
           "type": "string",
           "description": "Filter by status",
-          "enum": [
-            "connected",
-            "disconnected",
-            "suspended"
-          ]
+          "enum": ["connected", "disconnected", "suspended"]
         },
         "tag_ids": {
           "type": "array",
@@ -2162,10 +1917,7 @@
     "description": "Get basic site info (id, url, name only) for fast bulk retrieval. Use list_sites_v1 for full details with filtering, or get_site_v1 for complete single-site information.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "page": {
           "type": "integer",
@@ -2182,11 +1934,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "connected",
-            "disconnected",
-            "suspended"
-          ]
+          "enum": ["connected", "disconnected", "suspended"]
         },
         "tag_ids": {
           "type": "array",
@@ -2246,19 +1994,13 @@
     "description": "Reconnect multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Site IDs or domains. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         }
@@ -2340,19 +2082,13 @@
     "description": "Disconnect multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Site IDs or domains. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         }
@@ -2434,19 +2170,13 @@
     "description": "Check connectivity status of multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Site IDs or domains. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         }
@@ -2528,19 +2258,13 @@
     "description": "Suspend multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Site IDs or domains. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         }
@@ -2622,19 +2346,13 @@
     "description": "List available updates across MainWP child sites with filtering and pagination.",
     "category": "mainwp-updates",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Filter to specific sites. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         },
@@ -2643,12 +2361,7 @@
           "description": "Update types to include. Empty array means all types.",
           "items": {
             "type": "string",
-            "enum": [
-              "core",
-              "plugins",
-              "themes",
-              "translations"
-            ]
+            "enum": ["core", "plugins", "themes", "translations"]
           },
           "default": []
         },
@@ -2689,12 +2402,7 @@
               },
               "type": {
                 "type": "string",
-                "enum": [
-                  "core",
-                  "plugin",
-                  "theme",
-                  "translation"
-                ]
+                "enum": ["core", "plugin", "theme", "translation"]
               },
               "slug": {
                 "type": "string"
@@ -2741,13 +2449,7 @@
               "type": "integer"
             }
           },
-          "required": [
-            "core",
-            "plugins",
-            "themes",
-            "translations",
-            "total"
-          ]
+          "required": ["core", "plugins", "themes", "translations", "total"]
         },
         "page": {
           "type": "integer"
@@ -2790,24 +2492,11 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "site_url",
-              "type",
-              "slug",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "site_url", "type", "slug", "code", "message"]
           }
         }
       },
-      "required": [
-        "updates",
-        "summary",
-        "page",
-        "per_page",
-        "total"
-      ]
+      "required": ["updates", "summary", "page", "per_page", "total"]
     },
     "meta": {
       "annotations": {
@@ -2825,19 +2514,13 @@
     "description": "Execute updates on one or more MainWP child sites. Operations with >200 sites are automatically queued for background processing.",
     "category": "mainwp-updates",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Sites to update. Empty array means all sites with available updates.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         },
@@ -2846,12 +2529,7 @@
           "description": "Update types to apply. Empty array means all types.",
           "items": {
             "type": "string",
-            "enum": [
-              "core",
-              "plugins",
-              "themes",
-              "translations"
-            ]
+            "enum": ["core", "plugins", "themes", "translations"]
           },
           "default": []
         },
@@ -2949,14 +2627,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "site_id",
-                  "site_url",
-                  "type",
-                  "slug",
-                  "code",
-                  "message"
-                ]
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
               }
             },
             "summary": {
@@ -2972,18 +2643,10 @@
                   "type": "integer"
                 }
               },
-              "required": [
-                "total_updated",
-                "total_errors",
-                "sites_updated"
-              ]
+              "required": ["total_updated", "total_errors", "sites_updated"]
             }
           },
-          "required": [
-            "updated",
-            "errors",
-            "summary"
-          ]
+          "required": ["updated", "errors", "summary"]
         },
         {
           "type": "object",
@@ -3038,24 +2701,11 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "site_id",
-                  "site_url",
-                  "type",
-                  "slug",
-                  "code",
-                  "message"
-                ]
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
               }
             }
           },
-          "required": [
-            "queued",
-            "job_id",
-            "status_url",
-            "updates_queued",
-            "errors"
-          ]
+          "required": ["queued", "job_id", "status_url", "updates_queued", "errors"]
         }
       ]
     },
@@ -3075,19 +2725,13 @@
     "description": "List updates that have been marked as ignored.",
     "category": "mainwp-updates",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "description": "Filter to specific sites. Empty array means all sites.",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": []
         },
@@ -3096,11 +2740,7 @@
           "description": "Filter by update type. Empty array means all types.",
           "items": {
             "type": "string",
-            "enum": [
-              "core",
-              "plugins",
-              "themes"
-            ]
+            "enum": ["core", "plugins", "themes"]
           },
           "default": []
         }
@@ -3128,11 +2768,7 @@
               },
               "type": {
                 "type": "string",
-                "enum": [
-                  "core",
-                  "plugin",
-                  "theme"
-                ],
+                "enum": ["core", "plugin", "theme"],
                 "description": "Update type. Use for filtering or grouping results."
               },
               "slug": {
@@ -3191,21 +2827,11 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "site_url",
-              "type",
-              "slug",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "site_url", "type", "slug", "code", "message"]
           }
         }
       },
-      "required": [
-        "ignored",
-        "total"
-      ]
+      "required": ["ignored", "total"]
     },
     "meta": {
       "annotations": {
@@ -3227,26 +2853,16 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": [
-            "ignore",
-            "unignore"
-          ],
+          "enum": ["ignore", "unignore"],
           "description": "Action to perform."
         },
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID or domain/URL."
         },
         "type": {
           "type": "string",
-          "enum": [
-            "core",
-            "plugin",
-            "theme"
-          ],
+          "enum": ["core", "plugin", "theme"],
           "description": "Type of update to ignore/unignore."
         },
         "slug": {
@@ -3254,12 +2870,7 @@
           "description": "Slug of the item to ignore/unignore. Use \"wordpress\" for core updates."
         }
       },
-      "required": [
-        "action",
-        "site_id_or_domain",
-        "type",
-        "slug"
-      ],
+      "required": ["action", "site_id_or_domain", "type", "slug"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3271,10 +2882,7 @@
         },
         "action": {
           "type": "string",
-          "enum": [
-            "ignore",
-            "unignore"
-          ],
+          "enum": ["ignore", "unignore"],
           "description": "Action that was performed."
         },
         "site_id": {
@@ -3290,13 +2898,7 @@
           "description": "Item slug."
         }
       },
-      "required": [
-        "success",
-        "action",
-        "site_id",
-        "type",
-        "slug"
-      ]
+      "required": ["success", "action", "site_id", "type", "slug"]
     },
     "meta": {
       "annotations": {
@@ -3317,35 +2919,20 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "types": {
           "type": "array",
           "items": {
             "type": "string",
-            "enum": [
-              "core",
-              "plugins",
-              "themes",
-              "translations"
-            ]
+            "enum": ["core", "plugins", "themes", "translations"]
           },
-          "default": [
-            "core",
-            "plugins",
-            "themes",
-            "translations"
-          ],
+          "default": ["core", "plugins", "themes", "translations"],
           "description": "Update types to retrieve."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3372,12 +2959,7 @@
             "properties": {
               "type": {
                 "type": "string",
-                "enum": [
-                  "core",
-                  "plugin",
-                  "theme",
-                  "translation"
-                ]
+                "enum": ["core", "plugin", "theme", "translation"]
               },
               "slug": {
                 "type": "string"
@@ -3434,14 +3016,7 @@
           }
         }
       },
-      "required": [
-        "site_id",
-        "site_url",
-        "site_name",
-        "updates",
-        "rollback_items",
-        "summary"
-      ]
+      "required": ["site_id", "site_url", "site_name", "updates", "rollback_items", "summary"]
     },
     "meta": {
       "annotations": {
@@ -3462,16 +3037,11 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3519,9 +3089,7 @@
           ]
         }
       },
-      "required": [
-        "updated"
-      ]
+      "required": ["updated"]
     },
     "meta": {
       "annotations": {
@@ -3542,10 +3110,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "slugs": {
@@ -3557,9 +3122,7 @@
           "description": "Specific plugin slugs to update. Empty = all available."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3638,15 +3201,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "site_url",
-              "site_name",
-              "type",
-              "slug",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
           }
         },
         "summary": {
@@ -3659,17 +3214,10 @@
               "type": "integer"
             }
           },
-          "required": [
-            "total_updated",
-            "total_errors"
-          ]
+          "required": ["total_updated", "total_errors"]
         }
       },
-      "required": [
-        "updated",
-        "errors",
-        "summary"
-      ]
+      "required": ["updated", "errors", "summary"]
     },
     "meta": {
       "annotations": {
@@ -3690,10 +3238,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "slugs": {
@@ -3705,9 +3250,7 @@
           "description": "Specific theme slugs to update. Empty = all available."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3786,15 +3329,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "site_url",
-              "site_name",
-              "type",
-              "slug",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
           }
         },
         "summary": {
@@ -3807,17 +3342,10 @@
               "type": "integer"
             }
           },
-          "required": [
-            "total_updated",
-            "total_errors"
-          ]
+          "required": ["total_updated", "total_errors"]
         }
       },
-      "required": [
-        "updated",
-        "errors",
-        "summary"
-      ]
+      "required": ["updated", "errors", "summary"]
     },
     "meta": {
       "annotations": {
@@ -3838,10 +3366,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "slugs": {
@@ -3853,9 +3378,7 @@
           "description": "Specific translation slugs to update. Empty = all available."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -3934,15 +3457,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "site_url",
-              "site_name",
-              "type",
-              "slug",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
           }
         },
         "summary": {
@@ -3955,17 +3470,10 @@
               "type": "integer"
             }
           },
-          "required": [
-            "total_updated",
-            "total_errors"
-          ]
+          "required": ["total_updated", "total_errors"]
         }
       },
-      "required": [
-        "updated",
-        "errors",
-        "summary"
-      ]
+      "required": ["updated", "errors", "summary"]
     },
     "meta": {
       "annotations": {
@@ -3986,25 +3494,17 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "action": {
           "type": "string",
-          "enum": [
-            "add",
-            "remove"
-          ],
+          "enum": ["add", "remove"],
           "default": "add",
           "description": "Add to or remove from ignored list."
         }
       },
-      "required": [
-        "site_id_or_domain"
-      ],
+      "required": ["site_id_or_domain"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -4023,11 +3523,7 @@
           "description": "Number of items affected."
         }
       },
-      "required": [
-        "success",
-        "message",
-        "ignored_count"
-      ]
+      "required": ["success", "message", "ignored_count"]
     },
     "meta": {
       "annotations": {
@@ -4048,10 +3544,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "slugs": {
@@ -4063,18 +3556,12 @@
         },
         "action": {
           "type": "string",
-          "enum": [
-            "add",
-            "remove"
-          ],
+          "enum": ["add", "remove"],
           "default": "add",
           "description": "Add to or remove from ignored list."
         }
       },
-      "required": [
-        "site_id_or_domain",
-        "slugs"
-      ],
+      "required": ["site_id_or_domain", "slugs"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -4093,11 +3580,7 @@
           "description": "Number of items affected."
         }
       },
-      "required": [
-        "success",
-        "message",
-        "ignored_count"
-      ]
+      "required": ["success", "message", "ignored_count"]
     },
     "meta": {
       "annotations": {
@@ -4118,10 +3601,7 @@
       "type": "object",
       "properties": {
         "site_id_or_domain": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Site ID (numeric) or domain."
         },
         "slugs": {
@@ -4133,18 +3613,12 @@
         },
         "action": {
           "type": "string",
-          "enum": [
-            "add",
-            "remove"
-          ],
+          "enum": ["add", "remove"],
           "default": "add",
           "description": "Add to or remove from ignored list."
         }
       },
-      "required": [
-        "site_id_or_domain",
-        "slugs"
-      ],
+      "required": ["site_id_or_domain", "slugs"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -4163,11 +3637,7 @@
           "description": "Number of items affected."
         }
       },
-      "required": [
-        "success",
-        "message",
-        "ignored_count"
-      ]
+      "required": ["success", "message", "ignored_count"]
     },
     "meta": {
       "annotations": {
@@ -4185,18 +3655,12 @@
     "description": "Execute ALL available updates (core, plugins, themes, translations) across all sites or specified sites. WARNING: This is a broad operation. For targeted updates, use run_updates_v1 with specific types[] and site_ids_or_domains[]. Operations with >200 sites are queued.",
     "category": "mainwp-updates",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
           "items": {
-            "type": [
-              "integer",
-              "string"
-            ]
+            "type": ["integer", "string"]
           },
           "default": [],
           "description": "Sites to update. Empty array means all sites."
@@ -4205,19 +3669,9 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": [
-              "core",
-              "plugins",
-              "themes",
-              "translations"
-            ]
+            "enum": ["core", "plugins", "themes", "translations"]
           },
-          "default": [
-            "core",
-            "plugins",
-            "themes",
-            "translations"
-          ],
+          "default": ["core", "plugins", "themes", "translations"],
           "description": "Update types to execute."
         }
       },
@@ -4306,14 +3760,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "site_id",
-                  "site_url",
-                  "type",
-                  "slug",
-                  "code",
-                  "message"
-                ]
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
               }
             },
             "summary": {
@@ -4329,18 +3776,10 @@
                   "type": "integer"
                 }
               },
-              "required": [
-                "total_updated",
-                "total_errors",
-                "sites_updated"
-              ]
+              "required": ["total_updated", "total_errors", "sites_updated"]
             }
           },
-          "required": [
-            "updated",
-            "errors",
-            "summary"
-          ]
+          "required": ["updated", "errors", "summary"]
         },
         {
           "type": "object",
@@ -4395,24 +3834,11 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "site_id",
-                  "site_url",
-                  "type",
-                  "slug",
-                  "code",
-                  "message"
-                ]
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
               }
             }
           },
-          "required": [
-            "queued",
-            "job_id",
-            "status_url",
-            "updates_queued",
-            "errors"
-          ]
+          "required": ["queued", "job_id", "status_url", "updates_queued", "errors"]
         }
       ]
     },
@@ -4432,10 +3858,7 @@
     "description": "List MainWP clients with pagination and filtering. Possible errors: mainwp_invalid_input, ability_invalid_permissions",
     "category": "mainwp-clients",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "page": {
           "type": "integer",
@@ -4451,11 +3874,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "any",
-            "active",
-            "suspended"
-          ],
+          "enum": ["any", "active", "suspended"],
           "default": "any"
         },
         "search": {
@@ -4524,10 +3943,7 @@
                 "type": "integer"
               },
               "created": {
-                "type": [
-                  "string",
-                  "null"
-                ],
+                "type": ["string", "null"],
                 "format": "date-time"
               },
               "facebook": {
@@ -4572,10 +3988,7 @@
     "description": "Count total number of MainWP clients. Possible errors: ability_invalid_permissions",
     "category": "mainwp-clients",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "default": []
     },
     "output_schema": {
@@ -4605,15 +4018,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -4655,10 +4063,7 @@
           "type": "integer"
         },
         "created": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "facebook": {
@@ -4743,9 +4148,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "name"
-      ]
+      "required": ["name"]
     },
     "output_schema": {
       "type": "object",
@@ -4787,10 +4190,7 @@
           "type": "integer"
         },
         "created": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "facebook": {
@@ -4826,10 +4226,7 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         },
         "name": {
           "type": "string"
@@ -4881,9 +4278,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -4925,10 +4320,7 @@
           "type": "integer"
         },
         "created": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "facebook": {
@@ -4964,10 +4356,7 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         },
         "confirm": {
           "type": "boolean",
@@ -4978,9 +4367,7 @@
           "default": false
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "oneOf": [
@@ -5024,10 +4411,7 @@
               "type": "integer"
             },
             "created": {
-              "type": [
-                "string",
-                "null"
-              ],
+              "type": ["string", "null"],
               "format": "date-time"
             },
             "facebook": {
@@ -5043,17 +4427,11 @@
               "type": "string"
             }
           },
-          "required": [
-            "id",
-            "name"
-          ]
+          "required": ["id", "name"]
         },
         {
           "type": "object",
-          "required": [
-            "dry_run",
-            "would_affect"
-          ],
+          "required": ["dry_run", "would_affect"],
           "properties": {
             "dry_run": {
               "type": "boolean"
@@ -5101,10 +4479,7 @@
                       "type": "integer"
                     },
                     "created": {
-                      "type": [
-                        "string",
-                        "null"
-                      ],
+                      "type": ["string", "null"],
                       "format": "date-time"
                     },
                     "facebook": {
@@ -5158,15 +4533,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -5189,10 +4559,7 @@
                 "type": "string"
               },
               "client_id": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": ["integer", "null"]
               }
             }
           }
@@ -5221,15 +4588,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -5258,15 +4620,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -5298,16 +4655,10 @@
                 "type": "string"
               },
               "last_renewal": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": ["string", "null"]
               },
               "next_renewal": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": ["string", "null"]
               }
             }
           }
@@ -5336,15 +4687,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -5386,10 +4732,7 @@
           "type": "integer"
         },
         "created": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "facebook": {
@@ -5425,15 +4768,10 @@
       "type": "object",
       "properties": {
         "client_id_or_email": {
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": ["integer", "string"]
         }
       },
-      "required": [
-        "client_id_or_email"
-      ]
+      "required": ["client_id_or_email"]
     },
     "output_schema": {
       "type": "object",
@@ -5475,10 +4813,7 @@
           "type": "integer"
         },
         "created": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "format": "date-time"
         },
         "facebook": {
@@ -5511,10 +4846,7 @@
     "description": "List MainWP tags with pagination and filtering. Returns tag information including ID, name, color, and sites count.",
     "category": "mainwp-tags",
     "input_schema": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "properties": {
         "page": {
           "type": "integer",
@@ -5569,10 +4901,7 @@
                 "description": "Tag name."
               },
               "color": {
-                "type": [
-                  "string",
-                  "null"
-                ],
+                "type": ["string", "null"],
                 "description": "Tag color (hex format)."
               },
               "sites_count": {
@@ -5627,9 +4956,7 @@
           "minimum": 1
         }
       },
-      "required": [
-        "tag_id"
-      ],
+      "required": ["tag_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -5644,10 +4971,7 @@
           "description": "Tag name."
         },
         "color": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "Tag color (hex format)."
         },
         "sites_count": {
@@ -5692,9 +5016,7 @@
           "pattern": "^#[0-9A-Fa-f]{6}$"
         }
       },
-      "required": [
-        "name"
-      ],
+      "required": ["name"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -5709,10 +5031,7 @@
           "description": "Tag name."
         },
         "color": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "Tag color (hex format)."
         },
         "sites_count": {
@@ -5762,9 +5081,7 @@
           "pattern": "^#[0-9A-Fa-f]{6}$"
         }
       },
-      "required": [
-        "tag_id"
-      ],
+      "required": ["tag_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -5779,10 +5096,7 @@
           "description": "Tag name."
         },
         "color": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "Tag color (hex format)."
         },
         "sites_count": {
@@ -5832,9 +5146,7 @@
           "default": false
         }
       },
-      "required": [
-        "tag_id"
-      ],
+      "required": ["tag_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -5842,10 +5154,7 @@
         {
           "type": "object",
           "description": "Successful deletion response.",
-          "required": [
-            "deleted",
-            "tag"
-          ],
+          "required": ["deleted", "tag"],
           "properties": {
             "deleted": {
               "type": "boolean",
@@ -5867,10 +5176,7 @@
         {
           "type": "object",
           "description": "Dry run response.",
-          "required": [
-            "dry_run",
-            "would_affect"
-          ],
+          "required": ["dry_run", "would_affect"],
           "properties": {
             "dry_run": {
               "type": "boolean",
@@ -5940,9 +5246,7 @@
           "maximum": 100
         }
       },
-      "required": [
-        "tag_id"
-      ],
+      "required": ["tag_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -5971,10 +5275,7 @@
                 "description": "Connection status."
               },
               "client_id": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
+                "type": ["integer", "null"],
                 "description": "Assigned client ID."
               }
             }
@@ -6031,9 +5332,7 @@
           "maximum": 100
         }
       },
-      "required": [
-        "tag_id"
-      ],
+      "required": ["tag_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -6101,9 +5400,7 @@
           "description": "Batch job ID returned from queued operation (e.g., sync_abc123, update_xyz789)"
         }
       },
-      "required": [
-        "job_id"
-      ],
+      "required": ["job_id"],
       "additionalProperties": false
     },
     "output_schema": {
@@ -6114,23 +5411,11 @@
         },
         "type": {
           "type": "string",
-          "enum": [
-            "sync",
-            "update",
-            "reconnect",
-            "disconnect",
-            "check",
-            "suspend"
-          ]
+          "enum": ["sync", "update", "reconnect", "disconnect", "check", "suspend"]
         },
         "status": {
           "type": "string",
-          "enum": [
-            "queued",
-            "processing",
-            "completed",
-            "failed"
-          ]
+          "enum": ["queued", "processing", "completed", "failed"]
         },
         "progress": {
           "type": "integer",
@@ -6190,11 +5475,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "site_id",
-              "code",
-              "message"
-            ]
+            "required": ["site_id", "code", "message"]
           }
         },
         "job_timed_out": {

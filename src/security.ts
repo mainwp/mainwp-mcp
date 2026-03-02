@@ -76,7 +76,6 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
   }
 }
 
-
 /**
  * Sanitize error messages before returning to clients.
  * Removes potentially sensitive information like file paths, credentials, and stack traces.

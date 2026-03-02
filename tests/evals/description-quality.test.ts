@@ -81,10 +81,9 @@ describe('Description Quality', () => {
         }
       }
 
-      expect(
-        violations,
-        `Tools with insufficient descriptions: ${violations.join(', ')}`
-      ).toEqual([]);
+      expect(violations, `Tools with insufficient descriptions: ${violations.join(', ')}`).toEqual(
+        []
+      );
     });
 
     it('destructive tools should mention safety/confirmation in description or tags', async () => {
@@ -180,10 +179,7 @@ describe('Description Quality', () => {
         }
       }
 
-      expect(
-        violations,
-        `Descriptions exceeding 1200 chars: ${violations.join(', ')}`
-      ).toEqual([]);
+      expect(violations, `Descriptions exceeding 1200 chars: ${violations.join(', ')}`).toEqual([]);
     });
   });
 

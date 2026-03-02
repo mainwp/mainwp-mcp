@@ -105,7 +105,9 @@ describe('Token Budget', () => {
     const breakdown = buildCategoryBreakdown(tools);
     console.error('\n--- Standard Mode Token Breakdown ---');
     console.error(`Total: ${totalTokens} tokens (${tools.length} tools)`);
-    for (const [category, data] of [...breakdown.entries()].sort((a, b) => b[1].tokens - a[1].tokens)) {
+    for (const [category, data] of [...breakdown.entries()].sort(
+      (a, b) => b[1].tokens - a[1].tokens
+    )) {
       console.error(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
     }
     console.error('---');
@@ -124,7 +126,9 @@ describe('Token Budget', () => {
     const breakdown = buildCategoryBreakdown(tools);
     console.error('\n--- Compact Mode Token Breakdown ---');
     console.error(`Total: ${totalTokens} tokens (${tools.length} tools)`);
-    for (const [category, data] of [...breakdown.entries()].sort((a, b) => b[1].tokens - a[1].tokens)) {
+    for (const [category, data] of [...breakdown.entries()].sort(
+      (a, b) => b[1].tokens - a[1].tokens
+    )) {
       console.error(`  ${category}: ${data.tokens} tokens (${data.count} tools)`);
     }
     console.error('---');
@@ -166,9 +170,6 @@ describe('Token Budget', () => {
       }
     }
 
-    expect(
-      violations,
-      `Tools exceeding 600 token limit: ${violations.join(', ')}`
-    ).toEqual([]);
+    expect(violations, `Tools exceeding 600 token limit: ${violations.join(', ')}`).toEqual([]);
   });
 });

@@ -121,11 +121,23 @@ Suitable for dashboards, reporting, and scenarios where the AI should observe bu
 ```json
 {
   "allowedTools": [
-    "list_sites_v1", "get_site_v1", "get_site_plugins_v1", "get_site_themes_v1",
-    "get_site_updates_v1", "list_updates_v1", "list_ignored_updates_v1",
-    "list_clients_v1", "get_client_v1", "count_clients_v1", "count_client_sites_v1",
-    "get_client_sites_v1", "get_client_costs_v1",
-    "list_tags_v1", "get_tag_v1", "get_tag_sites_v1", "get_tag_clients_v1"
+    "list_sites_v1",
+    "get_site_v1",
+    "get_site_plugins_v1",
+    "get_site_themes_v1",
+    "get_site_updates_v1",
+    "list_updates_v1",
+    "list_ignored_updates_v1",
+    "list_clients_v1",
+    "get_client_v1",
+    "count_clients_v1",
+    "count_client_sites_v1",
+    "get_client_sites_v1",
+    "get_client_costs_v1",
+    "list_tags_v1",
+    "get_tag_v1",
+    "get_tag_sites_v1",
+    "get_tag_clients_v1"
   ]
 }
 ```
@@ -137,17 +149,36 @@ Full site management without client, tag, or update management. Good for site-fo
 ```json
 {
   "allowedTools": [
-    "list_sites_v1", "get_site_v1", "count_sites_v1", "get_sites_basic_v1",
-    "add_site_v1", "update_site_v1", "delete_site_v1",
-    "sync_sites_v1", "check_site_v1", "check_sites_v1",
-    "reconnect_site_v1", "reconnect_sites_v1",
-    "disconnect_site_v1", "disconnect_sites_v1",
-    "suspend_site_v1", "suspend_sites_v1", "unsuspend_site_v1",
-    "get_site_plugins_v1", "get_site_themes_v1",
-    "activate_site_plugins_v1", "deactivate_site_plugins_v1", "delete_site_plugins_v1",
-    "activate_site_theme_v1", "delete_site_themes_v1",
-    "get_abandoned_plugins_v1", "get_abandoned_themes_v1",
-    "get_site_security_v1", "get_site_client_v1", "get_site_costs_v1", "get_site_changes_v1"
+    "list_sites_v1",
+    "get_site_v1",
+    "count_sites_v1",
+    "get_sites_basic_v1",
+    "add_site_v1",
+    "update_site_v1",
+    "delete_site_v1",
+    "sync_sites_v1",
+    "check_site_v1",
+    "check_sites_v1",
+    "reconnect_site_v1",
+    "reconnect_sites_v1",
+    "disconnect_site_v1",
+    "disconnect_sites_v1",
+    "suspend_site_v1",
+    "suspend_sites_v1",
+    "unsuspend_site_v1",
+    "get_site_plugins_v1",
+    "get_site_themes_v1",
+    "activate_site_plugins_v1",
+    "deactivate_site_plugins_v1",
+    "delete_site_plugins_v1",
+    "activate_site_theme_v1",
+    "delete_site_themes_v1",
+    "get_abandoned_plugins_v1",
+    "get_abandoned_themes_v1",
+    "get_site_security_v1",
+    "get_site_client_v1",
+    "get_site_costs_v1",
+    "get_site_changes_v1"
   ]
 }
 ```
@@ -159,10 +190,19 @@ Focused update management. Ideal for maintenance automation and CI/CD pipelines.
 ```json
 {
   "allowedTools": [
-    "list_updates_v1", "run_updates_v1", "update_all_v1", "get_site_updates_v1",
-    "update_site_core_v1", "update_site_plugins_v1", "update_site_themes_v1",
-    "update_site_translations_v1", "list_ignored_updates_v1", "set_ignored_updates_v1",
-    "ignore_site_core_v1", "ignore_site_plugins_v1", "ignore_site_themes_v1"
+    "list_updates_v1",
+    "run_updates_v1",
+    "update_all_v1",
+    "get_site_updates_v1",
+    "update_site_core_v1",
+    "update_site_plugins_v1",
+    "update_site_themes_v1",
+    "update_site_translations_v1",
+    "list_ignored_updates_v1",
+    "set_ignored_updates_v1",
+    "ignore_site_core_v1",
+    "ignore_site_plugins_v1",
+    "ignore_site_themes_v1"
   ]
 }
 ```
@@ -174,8 +214,11 @@ Keep all functionality while blocking deletions. A conservative choice for produ
 ```json
 {
   "blockedTools": [
-    "delete_site_v1", "delete_client_v1", "delete_tag_v1",
-    "delete_site_plugins_v1", "delete_site_themes_v1"
+    "delete_site_v1",
+    "delete_client_v1",
+    "delete_tag_v1",
+    "delete_site_plugins_v1",
+    "delete_site_themes_v1"
   ]
 }
 ```
@@ -184,7 +227,7 @@ Keep all functionality while blocking deletions. A conservative choice for produ
 
 Just enough to check and apply updates. Pair with compact mode for minimal context usage.
 
-```json
+````json
 {
   "schemaVerbosity": "compact",
   "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
@@ -205,7 +248,7 @@ Control the detail level of tool descriptions sent to the AI. This affects token
 {
   "schemaVerbosity": "compact"
 }
-```
+````
 
 Or via environment variable:
 

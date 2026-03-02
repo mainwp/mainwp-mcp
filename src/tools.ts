@@ -7,7 +7,13 @@
 
 import crypto from 'crypto';
 import { Tool, TextContent } from '@modelcontextprotocol/sdk/types.js';
-import { Ability, AbilityAnnotations, fetchAbilities, executeAbility, getAbility } from './abilities.js';
+import {
+  Ability,
+  AbilityAnnotations,
+  fetchAbilities,
+  executeAbility,
+  getAbility,
+} from './abilities.js';
 import { Config, SchemaVerbosity, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse } from './errors.js';
@@ -554,7 +560,11 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   const abilities = await fetchAbilities(config, false, logger);
   const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}`;
 
-  if (cachedTools && abilities === cachedToolsAbilitiesRef && fingerprint === cachedToolsFingerprint) {
+  if (
+    cachedTools &&
+    abilities === cachedToolsAbilitiesRef &&
+    fingerprint === cachedToolsFingerprint
+  ) {
     return cachedTools;
   }
 
@@ -673,12 +683,14 @@ export async function executeTool(
 
     // Safe mode handling
     if (config.safeMode) {
-
       // Always strip confirm parameter in safe mode (defensive approach)
       if ('confirm' in args) {
         const { confirm, ...safeArgs } = args;
         effectiveArgs = safeArgs;
-        reqLogger.info('Stripped confirm parameter in safe mode', { toolName, hadConfirm: confirm });
+        reqLogger.info('Stripped confirm parameter in safe mode', {
+          toolName,
+          hadConfirm: confirm,
+        });
       }
 
       // Block destructive operations with a clear user-visible message.
@@ -827,7 +839,9 @@ export async function executeTool(
             // Verify token belongs to this tool (prevent cross-tool reuse)
             if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
               tokenIndex.delete(confirmationToken);
-              reqLogger.warning('Confirmation failed - token belongs to different tool', { toolName });
+              reqLogger.warning('Confirmation failed - token belongs to different tool', {
+                toolName,
+              });
               const ctx = { tool: toolName, ability: abilityName };
               return [
                 { type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) },

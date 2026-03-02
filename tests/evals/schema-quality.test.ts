@@ -69,7 +69,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of tools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
         const required = (tool.inputSchema.required || []) as string[];
 
         for (const paramName of required) {
@@ -91,7 +94,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of tools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
 
         for (const [paramName, param] of Object.entries(props)) {
           // Skip injected params (user_confirmed, confirmation_token) — they're always typed
@@ -112,7 +118,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of tools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
 
         for (const [paramName, param] of Object.entries(props)) {
           const paramType = param?.type;
@@ -144,10 +153,7 @@ describe('Schema Quality', () => {
         }
       }
 
-      expect(
-        violations,
-        `Schemas exceeding 16 properties: ${violations.join(', ')}`
-      ).toEqual([]);
+      expect(violations, `Schemas exceeding 16 properties: ${violations.join(', ')}`).toEqual([]);
     });
   });
 
@@ -158,7 +164,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of compactTools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
         const required = (tool.inputSchema.required || []) as string[];
 
         for (const paramName of required) {
@@ -181,7 +190,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of compactTools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
 
         for (const [paramName, param] of Object.entries(props)) {
           if (paramName === 'user_confirmed' || paramName === 'confirmation_token') continue;
@@ -200,7 +212,10 @@ describe('Schema Quality', () => {
 
       const violations: string[] = [];
       for (const tool of compactTools) {
-        const props = (tool.inputSchema.properties || {}) as Record<string, Record<string, unknown>>;
+        const props = (tool.inputSchema.properties || {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
 
         for (const [paramName, param] of Object.entries(props)) {
           const paramType = param?.type;
@@ -222,10 +237,7 @@ describe('Schema Quality', () => {
       // Count section headings in abilities-reference.md
       const fs = await import('fs');
       const path = await import('path');
-      const refPath = path.resolve(
-        import.meta.dirname,
-        '../../.mwpdev/abilities-reference.md'
-      );
+      const refPath = path.resolve(import.meta.dirname, '../../.mwpdev/abilities-reference.md');
 
       let refCount = 0;
       if (fs.existsSync(refPath)) {
@@ -235,8 +247,8 @@ describe('Schema Quality', () => {
         refCount = headings?.length ?? 0;
       }
 
-      const fixtureCount = abilitiesFixture.filter(
-        (a: { name: string }) => a.name.startsWith('mainwp/')
+      const fixtureCount = abilitiesFixture.filter((a: { name: string }) =>
+        a.name.startsWith('mainwp/')
       ).length;
 
       if (refCount > 0 && fixtureCount !== refCount) {

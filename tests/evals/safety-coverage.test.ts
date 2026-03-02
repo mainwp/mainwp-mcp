@@ -99,10 +99,7 @@ describe('Safety Coverage', () => {
         }
       }
 
-      expect(
-        missing,
-        `Abilities with non-boolean destructive: ${missing.join(', ')}`
-      ).toEqual([]);
+      expect(missing, `Abilities with non-boolean destructive: ${missing.join(', ')}`).toEqual([]);
     });
 
     it('every ability should have explicit readonly boolean', () => {
@@ -115,10 +112,7 @@ describe('Safety Coverage', () => {
         }
       }
 
-      expect(
-        missing,
-        `Abilities with non-boolean readonly: ${missing.join(', ')}`
-      ).toEqual([]);
+      expect(missing, `Abilities with non-boolean readonly: ${missing.join(', ')}`).toEqual([]);
     });
   });
 
@@ -320,10 +314,7 @@ describe('Safety Coverage', () => {
         }
       }
 
-      expect(
-        violations,
-        `MCP annotation mismatches: ${violations.join(', ')}`
-      ).toEqual([]);
+      expect(violations, `MCP annotation mismatches: ${violations.join(', ')}`).toEqual([]);
     });
   });
 });

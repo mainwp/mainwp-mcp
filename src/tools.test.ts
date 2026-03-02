@@ -649,12 +649,7 @@ describe('executeTool', () => {
       headers: new Headers(),
     });
 
-    await executeTool(
-      baseConfig,
-      'delete_site_v1',
-      { site_id: 1, confirm: true },
-      mockLogger
-    );
+    await executeTool(baseConfig, 'delete_site_v1', { site_id: 1, confirm: true }, mockLogger);
 
     // Generate second preview with a confirmation_token in args (shouldn't affect key)
     mockFetch.mockResolvedValueOnce({
@@ -1051,7 +1046,8 @@ describe('no-op error handling for idempotent tools', () => {
       ok: false,
       status: 409,
       statusText: 'Conflict',
-      text: async () => JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
+      text: async () =>
+        JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
       headers: new Headers(),
     });
 
@@ -1083,7 +1079,8 @@ describe('no-op error handling for idempotent tools', () => {
       ok: false,
       status: 409,
       statusText: 'Conflict',
-      text: async () => JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
+      text: async () =>
+        JSON.stringify({ code: 'already_active', message: 'Plugin is already active' }),
       headers: new Headers(),
     });
 
@@ -1104,10 +1101,7 @@ describe('no-op error handling for idempotent tools', () => {
       })
     );
     // Should NOT log an error
-    expect(mockLogger.error).not.toHaveBeenCalledWith(
-      'Tool execution failed',
-      expect.anything()
-    );
+    expect(mockLogger.error).not.toHaveBeenCalledWith('Tool execution failed', expect.anything());
   });
 
   it('should NOT intercept no-op errors for non-idempotent tools', async () => {
@@ -1151,12 +1145,7 @@ describe('no-op error handling for idempotent tools', () => {
       headers: new Headers(),
     });
 
-    const result = await executeTool(
-      baseConfig,
-      'simple_action_v1',
-      { id: 1 },
-      mockLogger
-    );
+    const result = await executeTool(baseConfig, 'simple_action_v1', { id: 1 }, mockLogger);
 
     // Should surface as a normal error, not NO_CHANGE
     const parsed = JSON.parse(result[0].text);
@@ -1191,10 +1180,7 @@ describe('no-op error handling for idempotent tools', () => {
     const parsed = JSON.parse(result[0].text);
     expect(parsed.status).toBeUndefined();
     expect(parsed.error).toBeDefined();
-    expect(mockLogger.error).toHaveBeenCalledWith(
-      'Tool execution failed',
-      expect.anything()
-    );
+    expect(mockLogger.error).toHaveBeenCalledWith('Tool execution failed', expect.anything());
   });
 
   it('should NOT intercept 5xx errors even with recognized error codes', async () => {
@@ -1280,7 +1266,12 @@ describe('generateInstructions', () => {
   });
 
   it('should prepend API-provided instructions with punctuation guard', () => {
-    const meta = { readonly: true, destructive: false, idempotent: true, instructions: 'Requires module' };
+    const meta = {
+      readonly: true,
+      destructive: false,
+      idempotent: true,
+      instructions: 'Requires module',
+    };
     const result = generateInstructions(meta, false, false);
 
     expect(result).toMatch(/^Requires module\./);
@@ -1295,7 +1286,12 @@ describe('generateInstructions', () => {
   });
 
   it('should not duplicate period on instructions ending with punctuation', () => {
-    const meta = { readonly: true, destructive: false, idempotent: true, instructions: 'Needs Pro.' };
+    const meta = {
+      readonly: true,
+      destructive: false,
+      idempotent: true,
+      instructions: 'Needs Pro.',
+    };
     const result = generateInstructions(meta, false, false);
 
     expect(result).toMatch(/^Needs Pro\./);
@@ -1308,7 +1304,9 @@ describe('buildSafetyTags', () => {
     const meta = { destructive: true, idempotent: false, readonly: false };
     const result = buildSafetyTags(meta, true, true, 'standard');
 
-    expect(result).toBe('[DESTRUCTIVE, Requires two-step confirmation, Supports dry_run, Not idempotent]');
+    expect(result).toBe(
+      '[DESTRUCTIVE, Requires two-step confirmation, Supports dry_run, Not idempotent]'
+    );
   });
 
   it('should build minimal tag for destructive tools without confirm or dry_run in standard mode', () => {
@@ -1437,12 +1435,7 @@ describe('default-deny annotations', () => {
     });
 
     const config = { ...baseConfig, safeMode: true };
-    const result = await executeTool(
-      config,
-      'mystery_action_v1',
-      { target: 'test' },
-      mockLogger
-    );
+    const result = await executeTool(config, 'mystery_action_v1', { target: 'test' }, mockLogger);
 
     expect(result[0].text).toContain('SAFE_MODE_BLOCKED');
   });

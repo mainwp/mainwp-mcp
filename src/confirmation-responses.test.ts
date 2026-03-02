@@ -107,7 +107,10 @@ describe('buildConfirmationRequiredResponse', () => {
   const preview = { affected_sites: [1, 2, 3], total: 3 };
 
   it('should include status and preview data', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
+      string,
+      unknown
+    >;
 
     expect(response.status).toBe('CONFIRMATION_REQUIRED');
     expect(response.next_action).toBe('show_preview_and_confirm');
@@ -115,14 +118,20 @@ describe('buildConfirmationRequiredResponse', () => {
   });
 
   it('should include instructions for confirmation', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
+      string,
+      unknown
+    >;
 
     expect(response.instructions).toContain('user_confirmed');
     expect(response.instructions).toContain('confirmation_token');
   });
 
   it('should include confirmation_token at top level', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<string, unknown>;
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
+      string,
+      unknown
+    >;
 
     expect(response.confirmation_token).toBe('test-token-uuid');
   });
@@ -180,7 +189,11 @@ describe('buildPreviewExpiredResponse', () => {
 
 describe('buildNoChangeResponse', () => {
   it('should include NO_CHANGE status and message', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as Record<string, unknown>;
+    const response = buildNoChangeResponse(
+      ctx,
+      'already_active',
+      'Already active — no action needed'
+    ) as Record<string, unknown>;
 
     expect(response.status).toBe('NO_CHANGE');
     expect(response.message).toContain('no effect');
@@ -188,7 +201,11 @@ describe('buildNoChangeResponse', () => {
   });
 
   it('should include tool, ability, code, and reason in details', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as {
+    const response = buildNoChangeResponse(
+      ctx,
+      'already_active',
+      'Already active — no action needed'
+    ) as {
       details: Record<string, unknown>;
     };
 
@@ -199,7 +216,11 @@ describe('buildNoChangeResponse', () => {
   });
 
   it('should not include error or next_action fields', () => {
-    const response = buildNoChangeResponse(ctx, 'already_active', 'Already active — no action needed') as Record<string, unknown>;
+    const response = buildNoChangeResponse(
+      ctx,
+      'already_active',
+      'Already active — no action needed'
+    ) as Record<string, unknown>;
 
     expect(response.error).toBeUndefined();
     expect(response.next_action).toBeUndefined();
