@@ -412,21 +412,30 @@ function buildTestCatalog(): TestScenario[] {
       params: (ctx) => ({ site_id_or_domain: ctx.siteId }),
     },
     {
-      name: 'deactivate-plugin',
-      question: 'Deactivate a plugin on this site',
-      abilityName: 'mainwp/deactivate-site-plugins-v1',
-      category: 'safe-write',
-      readonly: false,
-      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
-      pairedWith: 'activate-plugin',
-    },
-    {
       name: 'activate-plugin',
       question: 'Activate a plugin on this site',
       abilityName: 'mainwp/activate-site-plugins-v1',
       category: 'safe-write',
       readonly: false,
       params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
+      pairedWith: 'deactivate-plugin',
+    },
+    {
+      name: 'deactivate-plugin',
+      question: 'Deactivate a plugin on this site',
+      abilityName: 'mainwp/deactivate-site-plugins-v1',
+      category: 'safe-write',
+      readonly: false,
+      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
+      pairedWith: 'delete-plugin',
+    },
+    {
+      name: 'delete-plugin',
+      question: 'Delete a plugin from this site',
+      abilityName: 'mainwp/delete-site-plugins-v1',
+      category: 'safe-write',
+      readonly: false,
+      params: (ctx) => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug], confirm: true }),
     },
   ];
 }
@@ -478,14 +487,15 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
     if (result.statusCode === 200 && result.body) {
       const data = result.body as { plugins?: Array<{ slug: string; active: boolean }> };
       if (data.plugins) {
+        // Find any non-essential plugin (active or inactive) for lifecycle testing
         const candidate = data.plugins.find(
-          (p) => p.active && !p.slug.startsWith('mainwp-child')
+          (p) => !p.slug.startsWith('mainwp-child')
         );
         if (candidate) {
           ctx.pluginSlug = candidate.slug;
-          console.log(`  Found plugin: ${ctx.pluginSlug}`);
+          console.log(`  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`);
         } else {
-          console.log('  No non-essential active plugin found — plugin tests will be skipped.');
+          console.log('  No non-essential plugin found — plugin tests will be skipped.');
         }
       }
     }
