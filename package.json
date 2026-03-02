@@ -49,6 +49,9 @@
     "url": "https://github.com/mainwp/mainwp-mcp/issues"
   },
   "homepage": "https://github.com/mainwp/mainwp-mcp#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1"
   },

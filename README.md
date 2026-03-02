@@ -3,13 +3,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha">
+  <img src="https://img.shields.io/badge/status-beta-blue" alt="Beta">
+  <a href="https://www.npmjs.com/package/@mainwp/mcp"><img src="https://img.shields.io/npm/v/@mainwp/mcp" alt="npm version"></a>
   <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 # MainWP MCP Server
 
-**Alpha Release** — This project is under active development. APIs may change between versions.
+**Beta Release** — This project is under active development. APIs may change between versions.
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
@@ -27,16 +28,14 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 ## Quick Start
 
-> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in pre-release testing. Until the full release of MainWP 6.0 this needs to be used with the [MainWP Early Access Extension](https://mainwp.com/add-on/early-access/_)
-
-**Requirements:** Node.js 18, 20, or 22
+**Requirements:** Node.js 18, 20, or 22 and MainWP Dashboard 6.0+
 
 ### Option A: Run with npx (recommended)
 
 No installation needed. Run the server directly:
 
 ```bash
-npx mainwp-mcp
+npx @mainwp/mcp
 ```
 
 Credentials are loaded from a `settings.json` file in either the current working directory or `~/.config/mainwp-mcp/settings.json`. See [Credential Configuration](#credential-configuration) for the file format.
@@ -75,7 +74,7 @@ Include credentials directly in each AI tool's MCP configuration using the `env`
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -109,7 +108,7 @@ If you manage multiple dashboards, this approach works well. The server checks t
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "cwd": "/path/to/dashboard-credentials"
     }
   }
@@ -163,7 +162,7 @@ claude mcp add --transport stdio mainwp \
   --env MAINWP_URL=https://your-dashboard.com \
   --env MAINWP_USER=admin \
   --env MAINWP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx" \
-  -- npx -y mainwp-mcp
+  -- npx -y @mainwp/mcp
 ```
 
 **Or add to `~/.claude.json`:**
@@ -173,7 +172,7 @@ claude mcp add --transport stdio mainwp \
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -189,7 +188,7 @@ claude mcp add --transport stdio mainwp \
 If you prefer centralized credentials, first create `~/.config/mainwp-mcp/settings.json` with your credentials, then simply run:
 
 ```bash
-claude mcp add --transport stdio mainwp -- npx -y mainwp-mcp
+claude mcp add --transport stdio mainwp -- npx -y @mainwp/mcp
 ```
 
 [Claude Code MCP Documentation](https://code.claude.com/docs/en/mcp)
@@ -211,7 +210,7 @@ Config file location:
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -231,7 +230,7 @@ If you prefer centralized credentials, create `~/.config/mainwp-mcp/settings.jso
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"]
+      "args": ["-y", "@mainwp/mcp"]
     }
   }
 }
@@ -254,7 +253,7 @@ Add to `.vscode/mcp.json` in your workspace:
     "mainwp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -283,7 +282,7 @@ VS Code can prompt for credentials at runtime so they aren't stored in the file:
     "mainwp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -314,7 +313,7 @@ Config file: `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global)
   "mcpServers": {
     "mainwp": {
       "command": "npx",
-      "args": ["-y", "mainwp-mcp"],
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -345,7 +344,7 @@ Config file: `~/.codex/config.toml` (uses TOML format, unlike the others)
 ```toml
 [mcp_servers.mainwp]
 command = "npx"
-args = ["-y", "mainwp-mcp"]
+args = ["-y", "@mainwp/mcp"]
 
 [mcp_servers.mainwp.env]
 MAINWP_URL = "https://your-dashboard.com"
@@ -372,7 +371,7 @@ AI coding assistant for VS Code and JetBrains IDEs.
 "zencoder.mcpServers": {
   "mainwp": {
     "command": "npx",
-    "args": ["-y", "mainwp-mcp"],
+    "args": ["-y", "@mainwp/mcp"],
     "env": {
       "MAINWP_URL": "https://your-dashboard.com",
       "MAINWP_USER": "admin",
