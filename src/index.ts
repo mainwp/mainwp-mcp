@@ -26,8 +26,8 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, Config } from './config.js';
-import { getTools, executeTool, toolNameToAbilityName } from './tools.js';
+import { loadConfig, Config, formatJson } from './config.js';
+import { getTools, executeTool, toolNameToAbilityName, getSessionDataUsage } from './tools.js';
 import {
   fetchAbilities,
   fetchCategories,
@@ -47,7 +47,7 @@ import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-alpha.21';
+const SERVER_VERSION = '1.0.0-beta.1';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -214,26 +214,26 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
     try {
       // Static URI handlers (no validation needed - exact match)
       if (uri === 'mainwp://abilities') {
-        const abilities = await fetchAbilities(config);
+        const abilities = await fetchAbilities(config, false, logger);
         return {
           contents: [
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(abilities, null, 2),
+              text: formatJson(config, abilities),
             },
           ],
         };
       }
 
       if (uri === 'mainwp://categories') {
-        const categories = await fetchCategories(config);
+        const categories = await fetchCategories(config, false, logger);
         return {
           contents: [
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(categories, null, 2),
+              text: formatJson(config, categories),
             },
           ],
         };
@@ -241,23 +241,27 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (uri === 'mainwp://status') {
         // Test connection by fetching abilities
+        // Redact dashboardUrl to host-only to avoid leaking full URL path to untrusted MCP clients
+        let redactedHost: string;
         try {
-          const abilities = await fetchAbilities(config, true); // Force refresh
+          redactedHost = new URL(config.dashboardUrl).host;
+        } catch {
+          redactedHost = '[invalid-url]';
+        }
+
+        try {
+          const abilities = await fetchAbilities(config, true, logger); // Force refresh
           return {
             contents: [
               {
                 uri,
                 mimeType: 'application/json',
-                text: JSON.stringify(
-                  {
-                    connected: true,
-                    dashboardUrl: config.dashboardUrl,
-                    abilitiesCount: abilities.length,
-                    abilities: abilities.map(a => a.name),
-                  },
-                  null,
-                  2
-                ),
+                text: formatJson(config, {
+                  connected: true,
+                  dashboardHost: redactedHost,
+                  abilitiesCount: abilities.length,
+                  sessionData: getSessionDataUsage(config),
+                }),
               },
             ],
           };
@@ -268,15 +272,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
               {
                 uri,
                 mimeType: 'application/json',
-                text: JSON.stringify(
-                  {
-                    connected: false,
-                    dashboardUrl: config.dashboardUrl,
-                    error: sanitizeError(errorMsg),
-                  },
-                  null,
-                  2
-                ),
+                text: formatJson(config, {
+                  connected: false,
+                  dashboardHost: redactedHost,
+                  error: sanitizeError(errorMsg),
+                }),
               },
             ],
           };
@@ -285,14 +285,14 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       // Handle help resource: comprehensive documentation
       if (uri === 'mainwp://help') {
-        const abilities = await fetchAbilities(config);
+        const abilities = await fetchAbilities(config, false, logger);
         const helpDoc = generateHelpDocument(abilities);
         return {
           contents: [
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(helpDoc, null, 2),
+              text: formatJson(config, helpDoc),
             },
           ],
         };
@@ -314,7 +314,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(result, null, 2),
+              text: formatJson(config, result),
             },
           ],
         };
@@ -326,7 +326,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
         // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
         const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
-        const ability = await getAbility(config, abilityName);
+        const ability = await getAbility(config, abilityName, logger);
         if (!ability) {
           throw McpErrorFactory.resourceNotFound(uri);
         }
@@ -336,7 +336,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(generateToolHelp(ability), null, 2),
+              text: formatJson(config, generateToolHelp(ability)),
             },
           ],
         };
@@ -378,7 +378,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       }
       // Sanitize unexpected errors
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(sanitizeError(errorMessage));
+      throw new Error(sanitizeError(errorMessage), { cause: error });
     }
   });
 
@@ -397,7 +397,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       // For site_id arguments, try to fetch site list dynamically
       if ((argName === 'site_id' || argName === 'site_ids') && values.length === 0) {
         try {
-          const abilities = await fetchAbilities(config);
+          const abilities = await fetchAbilities(config, false, logger);
           const listSitesAbility = abilities.find(a => a.name === 'mainwp/list-sites-v1');
           if (listSitesAbility) {
             const result = await executeAbility(config, 'mainwp/list-sites-v1', {}, logger);
@@ -480,7 +480,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
  */
 async function validateCredentials(config: Config, logger: Logger): Promise<Ability[]> {
   try {
-    const abilities = await fetchAbilities(config);
+    const abilities = await fetchAbilities(config, false, logger);
     logger.info('Credential validation successful: Connected to MainWP Dashboard');
     return abilities;
   } catch (error) {
@@ -498,20 +498,24 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
           : 'Verify MAINWP_TOKEN (or apiToken in settings.json) is correct and has not expired.';
-      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`);
+      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`, {
+        cause: error,
+      });
     }
 
     // Endpoint not found (404) - likely missing Abilities API plugin
     if (lowerMessage.includes('404') || lowerMessage.includes('not found')) {
       throw new Error(
-        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.'
+        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.',
+        { cause: error }
       );
     }
 
     // Connection timeout
     if (lowerMessage.includes('timeout')) {
       throw new Error(
-        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.'
+        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.',
+        { cause: error }
       );
     }
 
@@ -524,7 +528,8 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
       lowerMessage.includes('unable to verify')
     ) {
       throw new Error(
-        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).'
+        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).',
+        { cause: error }
       );
     }
 
@@ -537,12 +542,13 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
       lowerMessage.includes('econnreset')
     ) {
       throw new Error(
-        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.'
+        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.',
+        { cause: error }
       );
     }
 
     // Other errors - re-throw with prefix
-    throw new Error(`Credential validation failed: ${message}`);
+    throw new Error(`Credential validation failed: ${message}`, { cause: error });
   }
 }
 

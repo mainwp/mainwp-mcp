@@ -70,13 +70,18 @@ export function buildConflictingParametersResponse(ctx: ConfirmationContext): ob
  */
 export function buildConfirmationRequiredResponse(
   ctx: ConfirmationContext,
-  preview: unknown
+  preview: unknown,
+  token: string
 ): object {
   return {
     status: 'CONFIRMATION_REQUIRED',
+    next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
-    instructions: 'To execute this operation, call the tool again with user_confirmed: true',
+    confirmation_token: token,
+    instructions:
+      'Show the preview to the user. If they approve, call this tool again with ' +
+      'user_confirmed: true and confirmation_token: "<token above>".',
     metadata: {
       tool: ctx.tool,
       ability: ctx.ability,
@@ -91,6 +96,7 @@ export function buildConfirmationRequiredResponse(
 export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
   return {
     error: 'PREVIEW_REQUIRED',
+    next_action: 'request_preview_first',
     message: 'No preview found. You must first call with confirm: true to generate a preview.',
     details: {
       tool: ctx.tool,
@@ -108,12 +114,33 @@ export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
 export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
   return {
     error: 'PREVIEW_EXPIRED',
+    next_action: 'request_new_preview',
     message: 'Preview has expired. Please request a new preview.',
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
       reason: 'Preview expired after 5 minutes',
       resolution: 'Call the tool again with confirm: true to generate a fresh preview.',
+    },
+  };
+}
+
+/**
+ * Response when an idempotent operation had no effect (already in desired state)
+ */
+export function buildNoChangeResponse(
+  ctx: ConfirmationContext,
+  code: string,
+  reason: string
+): object {
+  return {
+    status: 'NO_CHANGE',
+    message: `Operation had no effect: ${ctx.tool}`,
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      code,
+      reason,
     },
   };
 }

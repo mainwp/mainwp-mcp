@@ -3,13 +3,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha">
+  <img src="https://img.shields.io/badge/status-beta-blue" alt="Beta">
+  <a href="https://www.npmjs.com/package/@mainwp/mcp"><img src="https://img.shields.io/npm/v/@mainwp/mcp" alt="npm version"></a>
   <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 # MainWP MCP Server
 
-**Alpha Release** — This project is under active development. APIs may change between versions.
+**Beta Release** — This project is under active development. APIs may change between versions.
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
@@ -27,24 +28,34 @@ Built for WordPress agencies and site managers who want AI assistance with their
 
 ## Quick Start
 
-> **Pre-Release Notice:** This MCP server requires the MainWP Abilities API, which is currently in pre-release testing. Until the full release of MainWP 6.0 this needs to be used with the [MainWP Early Access Extension](https://mainwp.com/add-on/early-access/_)
+**Requirements:** Node.js >=20.19.0 and MainWP Dashboard 6.0+
 
-**Requirements:** Node.js 18, 20, or 22
+### Option A: Run with npx (recommended)
 
-1. Install and build the server:
+No installation needed. Run the server directly:
 
-   ```bash
-   git clone https://github.com/mainwp/mainwp-mcp.git
-   cd mainwp-mcp
-   npm ci
-   npm run build
-   ```
+```bash
+npx @mainwp/mcp
+```
 
-2. Create an Application Password (see [instructions below](#creating-an-application-password))
+Credentials are loaded from a `settings.json` file in either the current working directory or `~/.config/mainwp-mcp/settings.json`. See [Credential Configuration](#credential-configuration) for the file format.
 
-3. Configure your AI tool (see [Installation](#installation))
+### Option B: Clone and build (for development)
 
-4. Start chatting: "What sites need updates?" or "Sync all my sites"
+```bash
+git clone https://github.com/mainwp/mainwp-mcp.git
+cd mainwp-mcp
+npm ci
+npm run build
+```
+
+### Then:
+
+1. Create an Application Password (see [instructions below](#creating-an-application-password))
+
+2. Configure your AI tool (see [Installation](#installation))
+
+3. Start chatting: "What sites need updates?" or "Sync all my sites"
 
 Need inspiration? See the [Example Prompts](docs/example-prompts.md) for more ideas.
 
@@ -62,8 +73,8 @@ Include credentials directly in each AI tool's MCP configuration using the `env`
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -96,8 +107,8 @@ If you manage multiple dashboards, this approach works well. The server checks t
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "cwd": "/path/to/dashboard-credentials"
     }
   }
@@ -151,7 +162,7 @@ claude mcp add --transport stdio mainwp \
   --env MAINWP_URL=https://your-dashboard.com \
   --env MAINWP_USER=admin \
   --env MAINWP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx" \
-  -- node /path/to/mainwp-mcp/dist/index.js
+  -- npx -y @mainwp/mcp
 ```
 
 **Or add to `~/.claude.json`:**
@@ -160,8 +171,8 @@ claude mcp add --transport stdio mainwp \
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -177,7 +188,7 @@ claude mcp add --transport stdio mainwp \
 If you prefer centralized credentials, first create `~/.config/mainwp-mcp/settings.json` with your credentials, then simply run:
 
 ```bash
-claude mcp add --transport stdio mainwp -- node /path/to/mainwp-mcp/dist/index.js
+claude mcp add --transport stdio mainwp -- npx -y @mainwp/mcp
 ```
 
 [Claude Code MCP Documentation](https://code.claude.com/docs/en/mcp)
@@ -198,8 +209,8 @@ Config file location:
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -218,8 +229,8 @@ If you prefer centralized credentials, create `~/.config/mainwp-mcp/settings.jso
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"]
     }
   }
 }
@@ -241,8 +252,8 @@ Add to `.vscode/mcp.json` in your workspace:
   "servers": {
     "mainwp": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -270,8 +281,8 @@ VS Code can prompt for credentials at runtime so they aren't stored in the file:
   "servers": {
     "mainwp": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -301,8 +312,8 @@ Config file: `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global)
 {
   "mcpServers": {
     "mainwp": {
-      "command": "node",
-      "args": ["/path/to/mainwp-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@mainwp/mcp"],
       "env": {
         "MAINWP_URL": "https://your-dashboard.com",
         "MAINWP_USER": "admin",
@@ -332,8 +343,8 @@ Config file: `~/.codex/config.toml` (uses TOML format, unlike the others)
 
 ```toml
 [mcp_servers.mainwp]
-command = "node"
-args = ["/path/to/mainwp-mcp/dist/index.js"]
+command = "npx"
+args = ["-y", "@mainwp/mcp"]
 
 [mcp_servers.mainwp.env]
 MAINWP_URL = "https://your-dashboard.com"
@@ -359,8 +370,8 @@ AI coding assistant for VS Code and JetBrains IDEs.
 ```json
 "zencoder.mcpServers": {
   "mainwp": {
-    "command": "node",
-    "args": ["/path/to/mainwp-mcp/dist/index.js"],
+    "command": "npx",
+    "args": ["-y", "@mainwp/mcp"],
     "env": {
       "MAINWP_URL": "https://your-dashboard.com",
       "MAINWP_USER": "admin",
@@ -462,55 +473,102 @@ Compact mode truncates descriptions to 60 characters and removes examples while 
 You can expose only the tools you need. These configurations cover common scenarios:
 
 **Read-only monitoring** (17 tools, ~73% reduction):
+
 ```json
 {
   "allowedTools": [
-    "list_sites_v1", "get_site_v1", "get_site_plugins_v1", "get_site_themes_v1",
-    "get_site_updates_v1", "list_updates_v1", "list_ignored_updates_v1",
-    "list_clients_v1", "get_client_v1", "count_clients_v1", "count_client_sites_v1",
-    "get_client_sites_v1", "get_client_costs_v1",
-    "list_tags_v1", "get_tag_v1", "get_tag_sites_v1", "get_tag_clients_v1"
+    "list_sites_v1",
+    "get_site_v1",
+    "get_site_plugins_v1",
+    "get_site_themes_v1",
+    "get_site_updates_v1",
+    "list_updates_v1",
+    "list_ignored_updates_v1",
+    "list_clients_v1",
+    "get_client_v1",
+    "count_clients_v1",
+    "count_client_sites_v1",
+    "get_client_sites_v1",
+    "get_client_costs_v1",
+    "list_tags_v1",
+    "get_tag_v1",
+    "get_tag_sites_v1",
+    "get_tag_clients_v1"
   ]
 }
 ```
 
 **Site management only** (30 tools, ~53% reduction):
+
 ```json
 {
   "allowedTools": [
-    "list_sites_v1", "get_site_v1", "count_sites_v1", "get_sites_basic_v1",
-    "add_site_v1", "update_site_v1", "delete_site_v1",
-    "sync_sites_v1", "check_site_v1", "check_sites_v1",
-    "reconnect_site_v1", "reconnect_sites_v1",
-    "disconnect_site_v1", "disconnect_sites_v1",
-    "suspend_site_v1", "suspend_sites_v1", "unsuspend_site_v1",
-    "get_site_plugins_v1", "get_site_themes_v1",
-    "activate_site_plugins_v1", "deactivate_site_plugins_v1", "delete_site_plugins_v1",
-    "activate_site_theme_v1", "delete_site_themes_v1",
-    "get_abandoned_plugins_v1", "get_abandoned_themes_v1",
-    "get_site_security_v1", "get_site_client_v1", "get_site_costs_v1", "get_site_changes_v1"
+    "list_sites_v1",
+    "get_site_v1",
+    "count_sites_v1",
+    "get_sites_basic_v1",
+    "add_site_v1",
+    "update_site_v1",
+    "delete_site_v1",
+    "sync_sites_v1",
+    "check_site_v1",
+    "check_sites_v1",
+    "reconnect_site_v1",
+    "reconnect_sites_v1",
+    "disconnect_site_v1",
+    "disconnect_sites_v1",
+    "suspend_site_v1",
+    "suspend_sites_v1",
+    "unsuspend_site_v1",
+    "get_site_plugins_v1",
+    "get_site_themes_v1",
+    "activate_site_plugins_v1",
+    "deactivate_site_plugins_v1",
+    "delete_site_plugins_v1",
+    "activate_site_theme_v1",
+    "delete_site_themes_v1",
+    "get_abandoned_plugins_v1",
+    "get_abandoned_themes_v1",
+    "get_site_security_v1",
+    "get_site_client_v1",
+    "get_site_costs_v1",
+    "get_site_changes_v1"
   ]
 }
 ```
 
 **Updates only** (13 tools, ~80% reduction):
+
 ```json
 {
   "allowedTools": [
-    "list_updates_v1", "run_updates_v1", "update_all_v1", "get_site_updates_v1",
-    "update_site_core_v1", "update_site_plugins_v1", "update_site_themes_v1",
-    "update_site_translations_v1", "list_ignored_updates_v1", "set_ignored_updates_v1",
-    "ignore_site_core_v1", "ignore_site_plugins_v1", "ignore_site_themes_v1"
+    "list_updates_v1",
+    "run_updates_v1",
+    "update_all_v1",
+    "get_site_updates_v1",
+    "update_site_core_v1",
+    "update_site_plugins_v1",
+    "update_site_themes_v1",
+    "update_site_translations_v1",
+    "list_ignored_updates_v1",
+    "set_ignored_updates_v1",
+    "ignore_site_core_v1",
+    "ignore_site_plugins_v1",
+    "ignore_site_themes_v1"
   ]
 }
 ```
 
 **Hide destructive tools** (block deletions while keeping everything else):
+
 ```json
 {
   "blockedTools": [
-    "delete_site_v1", "delete_client_v1", "delete_tag_v1",
-    "delete_site_plugins_v1", "delete_site_themes_v1"
+    "delete_site_v1",
+    "delete_client_v1",
+    "delete_tag_v1",
+    "delete_site_plugins_v1",
+    "delete_site_themes_v1"
   ]
 }
 ```

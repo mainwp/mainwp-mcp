@@ -257,11 +257,14 @@ describe('formatErrorResponse', () => {
     expect(formatted).not.toContain('/Users/test/secret');
   });
 
-  it('should be pretty-printed', () => {
+  it('should be compact JSON (no whitespace)', () => {
     const error = McpErrorFactory.internal('Test');
     const formatted = formatErrorResponse(error);
 
-    // Pretty-printed JSON contains newlines
-    expect(formatted).toContain('\n');
+    // Compact JSON has no newlines or extra whitespace
+    expect(formatted).not.toContain('\n');
+    // Verify it's valid parseable JSON
+    const parsed = JSON.parse(formatted);
+    expect(parsed.error.message).toBe('Test');
   });
 });

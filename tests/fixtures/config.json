@@ -2,5 +2,6 @@
   "dashboardUrl": "https://dashboard.example.com",
   "username": "testuser",
   "appPassword": "test1234",
-  "skipSslVerify": false
+  "skipSslVerify": false,
+  "responseFormat": "compact"
 }

@@ -359,6 +359,60 @@ export function getPromptList(): Prompt[] {
   }));
 }
 
+/** Allowed values for the issue_type prompt argument */
+const VALID_ISSUE_TYPES = new Set(['connectivity', 'performance', 'security', 'updates']);
+
+/** Allowed values for the update_type prompt argument */
+const VALID_UPDATE_TYPES = new Set(['plugins', 'themes', 'core', 'all']);
+
+/**
+ * Validate and sanitize prompt arguments before interpolation.
+ * Prevents prompt injection via template arguments.
+ */
+function validatePromptArgs(
+  args: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!args) return args;
+
+  const sanitized: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value !== 'string') continue;
+
+    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric
+    if (key === 'site_id') {
+      if (value !== 'all' && !/^\d+$/.test(value)) {
+        throw new Error(`Invalid site_id: must be a numeric value or "all"`);
+      }
+      sanitized[key] = value;
+    } else if (key === 'site_ids') {
+      // "all" or comma-separated IDs
+      if (value !== 'all' && !/^(\d+)(,\s*\d+)*$/.test(value)) {
+        throw new Error(`Invalid site_ids: must be "all" or comma-separated numeric IDs`);
+      }
+      sanitized[key] = value;
+    } else if (key === 'issue_type') {
+      if (!VALID_ISSUE_TYPES.has(value)) {
+        throw new Error(`Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`);
+      }
+      sanitized[key] = value;
+    } else if (key === 'update_type') {
+      if (!VALID_UPDATE_TYPES.has(value)) {
+        throw new Error(
+          `Invalid update_type: must be one of ${[...VALID_UPDATE_TYPES].join(', ')}`
+        );
+      }
+      sanitized[key] = value;
+    } else {
+      // Unknown argument: truncate to reasonable length and strip control characters
+      // eslint-disable-next-line no-control-regex
+      sanitized[key] = value.slice(0, 200).replace(/[\x00-\x1f]/g, '');
+    }
+  }
+
+  return sanitized;
+}
+
 /**
  * Get a specific prompt with its messages for MCP GetPrompt request
  */
@@ -369,8 +423,11 @@ export function getPrompt(name: string, args?: Record<string, string>): GetPromp
     throw new Error(`Unknown prompt: ${name}`);
   }
 
+  // Validate and sanitize arguments before interpolation to prevent prompt injection
+  const validatedArgs = validatePromptArgs(args);
+
   return {
-    messages: prompt.getMessages(args),
+    messages: prompt.getMessages(validatedArgs),
   };
 }
 

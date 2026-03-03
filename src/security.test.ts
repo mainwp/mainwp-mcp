@@ -39,7 +39,7 @@ describe('validateInput', () => {
     // MAX_OBJECT_DEPTH is 5, so we need more than 5 levels
     // The nested parameter itself adds 1 level, so we need 6+ levels in deepObject
     const deepObject = { a: { b: { c: { d: { e: { f: { g: 'too deep' } } } } } } };
-    expect(() => validateInput({ nested: deepObject })).toThrow(/too deeply nested/);
+    expect(() => validateInput({ nested: deepObject })).toThrow(/maximum nesting depth/);
   });
 
   it('should accept objects at MAX_OBJECT_DEPTH', () => {
@@ -155,9 +155,7 @@ describe('RateLimiter', () => {
     const limiter = new RateLimiter(60);
 
     // Should allow first request immediately
-    await limiter.acquire();
-    // Should work
-    expect(true).toBe(true);
+    await expect(limiter.acquire()).resolves.toBeUndefined();
   });
 
   it('should be disabled when maxTokens is 0', async () => {
@@ -242,5 +240,66 @@ describe('isValidId', () => {
   it('should handle edge cases', () => {
     expect(isValidId(NaN)).toBe(false);
     expect(isValidId(Infinity)).toBe(false);
+  });
+});
+
+describe('validateInput - recursive nested validation', () => {
+  it('should reject nested string exceeding MAX_STRING_LENGTH', () => {
+    expect(() => validateInput({ nested: { long_string: 'A'.repeat(10001) } })).toThrow(
+      /exceeds maximum length/
+    );
+  });
+
+  it('should reject nested negative ID', () => {
+    expect(() => validateInput({ nested: { site_id: -1 } })).toThrow(/must be a positive integer/);
+  });
+
+  it('should accept valid nested objects with short strings', () => {
+    expect(() => validateInput({ nested: { valid: 'short' } })).not.toThrow();
+  });
+
+  it('should reject nested objects inside arrays with invalid IDs', () => {
+    expect(() => validateInput({ arr: [{ site_id: 0 }] })).toThrow(/must be a positive integer/);
+  });
+});
+
+describe('RateLimiter - AbortSignal support', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should abort immediately when signal is already aborted', async () => {
+    const limiter = new RateLimiter(2);
+
+    // Exhaust tokens so acquire() must wait
+    await limiter.acquire();
+    await limiter.acquire();
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(limiter.acquire(controller.signal)).rejects.toThrow(
+      'Rate limiter acquire aborted'
+    );
+  });
+
+  it('should abort a pending acquire when signal fires during wait', async () => {
+    const limiter = new RateLimiter(2);
+
+    // Exhaust tokens
+    await limiter.acquire();
+    await limiter.acquire();
+
+    const controller = new AbortController();
+    const acquirePromise = limiter.acquire(controller.signal);
+
+    // Abort while waiting for token refill
+    controller.abort();
+
+    await expect(acquirePromise).rejects.toThrow('Rate limiter acquire aborted');
   });
 });

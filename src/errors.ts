@@ -233,8 +233,9 @@ export function toMcpErrorResponse(
 }
 
 /**
- * Format an MCP error response as JSON string for tool responses
+ * Format an MCP error response as JSON string for tool responses.
+ * Uses compact JSON (no whitespace) for consistency with responseFormat='compact' default.
  */
 export function formatErrorResponse(error: unknown, sanitize?: (msg: string) => string): string {
-  return JSON.stringify(toMcpErrorResponse(error, sanitize), null, 2);
+  return JSON.stringify(toMcpErrorResponse(error, sanitize));
 }

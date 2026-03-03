@@ -1,0 +1,5515 @@
+[
+  {
+    "name": "core/get-site-info",
+    "label": "Get Site Information",
+    "description": "Returns site information configured in WordPress. By default returns all fields, or optionally a filtered subset.",
+    "category": "site",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "name",
+              "description",
+              "url",
+              "wpurl",
+              "admin_email",
+              "charset",
+              "language",
+              "version"
+            ]
+          },
+          "description": "Optional: Limit response to specific fields. If omitted, all fields are returned."
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The site title."
+        },
+        "description": {
+          "type": "string",
+          "description": "The site tagline."
+        },
+        "url": {
+          "type": "string",
+          "description": "The site home URL."
+        },
+        "wpurl": {
+          "type": "string",
+          "description": "The WordPress installation URL."
+        },
+        "admin_email": {
+          "type": "string",
+          "description": "The site administrator email address."
+        },
+        "charset": {
+          "type": "string",
+          "description": "The site character encoding."
+        },
+        "language": {
+          "type": "string",
+          "description": "The site language locale code."
+        },
+        "version": {
+          "type": "string",
+          "description": "The WordPress version."
+        }
+      },
+      "additionalProperties": false
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "core/get-environment-info",
+    "label": "Get Environment Info",
+    "description": "Returns core details about the site's runtime context for diagnostics and compatibility (environment, PHP runtime, database server info, WordPress version).",
+    "category": "site",
+    "input_schema": [],
+    "output_schema": {
+      "type": "object",
+      "required": ["environment", "php_version", "db_server_info", "wp_version"],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "description": "The site's runtime environment classification (can be one of these: production, staging, development, local).",
+          "enum": ["production", "staging", "development", "local"]
+        },
+        "php_version": {
+          "type": "string",
+          "description": "The PHP runtime version executing WordPress."
+        },
+        "db_server_info": {
+          "type": "string",
+          "description": "The database server vendor and version string reported by the driver."
+        },
+        "wp_version": {
+          "type": "string",
+          "description": "The WordPress core version running on this site."
+        }
+      },
+      "additionalProperties": false
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/list-sites-v1",
+    "label": "List MainWP Sites",
+    "description": "List MainWP child sites with pagination and filtering. Returns basic site information including ID, URL, name, and connection status.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Page number (1-based).",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page.",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Filter by connection status.",
+          "enum": ["any", "connected", "disconnected", "suspended"],
+          "default": "any"
+        },
+        "search": {
+          "type": "string",
+          "description": "Search term for site name or URL.",
+          "default": ""
+        },
+        "client_id": {
+          "type": "integer",
+          "description": "Filter by client ID.",
+          "minimum": 1
+        },
+        "tag_id": {
+          "type": "integer",
+          "description": "Filter by tag/group ID.",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "List of sites.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "description": "MainWP site ID."
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Site URL."
+              },
+              "name": {
+                "type": "string",
+                "description": "Site name or label."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["connected", "disconnected", "suspended"],
+                "description": "Connection status."
+              },
+              "client_id": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Associated client ID if any."
+              }
+            },
+            "required": ["id", "url", "name", "status"],
+            "additionalProperties": false
+          }
+        },
+        "page": {
+          "type": "integer",
+          "description": "Current page number."
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page."
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of sites matching filters."
+        }
+      },
+      "required": ["items", "page", "per_page", "total"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-v1",
+    "label": "Get MainWP Site",
+    "description": "Get detailed information about a single MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (integer) or domain/URL (string)."
+        },
+        "include_stats": {
+          "type": "boolean",
+          "description": "Include site statistics (updates count, health, etc.).",
+          "default": false
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "MainWP site ID."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "name": {
+          "type": "string",
+          "description": "Site name or label."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected", "suspended"],
+          "description": "Connection status."
+        },
+        "client_id": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Associated client ID."
+        },
+        "wp_version": {
+          "type": "string",
+          "description": "WordPress version."
+        },
+        "php_version": {
+          "type": "string",
+          "description": "PHP version."
+        },
+        "last_sync": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Last successful sync timestamp (ISO 8601)."
+        },
+        "admin_username": {
+          "type": "string",
+          "description": "Admin username for child site."
+        },
+        "child_version": {
+          "type": "string",
+          "description": "MainWP Child plugin version."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Site notes."
+        },
+        "stats": {
+          "type": "object",
+          "description": "Site statistics (only if include_stats=true).",
+          "properties": {
+            "plugin_updates": {
+              "type": "integer"
+            },
+            "theme_updates": {
+              "type": "integer"
+            },
+            "wp_update_available": {
+              "type": "boolean"
+            },
+            "health_score": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "required": ["id", "url", "name", "status"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/sync-sites-v1",
+    "label": "Sync MainWP Sites",
+    "description": "Trigger synchronization for one or more child sites. Operations with >200 sites are automatically queued for background processing.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Site IDs or domains to sync. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "synced": {
+          "type": "array",
+          "description": "Sites successfully synced (immediate mode only).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "url", "name"]
+          }
+        },
+        "errors": {
+          "type": "array",
+          "description": "Sites that failed to sync (immediate mode only).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "identifier": {
+                "oneOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["identifier", "code", "message"]
+          }
+        },
+        "total_synced": {
+          "type": "integer",
+          "description": "Number of sites successfully synced."
+        },
+        "total_errors": {
+          "type": "integer",
+          "description": "Number of sites that failed to sync."
+        },
+        "queued": {
+          "type": "boolean",
+          "description": "Whether the operation was queued for background processing."
+        },
+        "job_id": {
+          "type": "string",
+          "description": "Background job ID for status polling (only when queued=true)."
+        },
+        "status_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL to poll for job status (only when queued=true)."
+        },
+        "sites_queued": {
+          "type": "integer",
+          "description": "Number of sites queued for sync (only when queued=true)."
+        }
+      },
+      "required": []
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-plugins-v1",
+    "label": "Get Site Plugins",
+    "description": "Get list of plugins installed on a child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain/URL."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["all", "active", "inactive"],
+          "default": "all",
+          "description": "Filter by plugin status."
+        },
+        "has_update": {
+          "type": "boolean",
+          "description": "Filter to only plugins with available updates."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer",
+          "description": "MainWP site ID."
+        },
+        "site_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "plugins": {
+          "type": "array",
+          "description": "List of plugins.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "update_version": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["slug", "name", "version", "active"]
+          }
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of plugins."
+        }
+      },
+      "required": ["site_id", "site_url", "plugins", "total"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-themes-v1",
+    "label": "Get Site Themes",
+    "description": "Get list of themes installed on a child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain/URL."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["all", "active", "inactive"],
+          "default": "all",
+          "description": "Filter by theme status."
+        },
+        "has_update": {
+          "type": "boolean",
+          "description": "Filter to only themes with available updates."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer",
+          "description": "MainWP site ID."
+        },
+        "site_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "active_theme": {
+          "type": "string",
+          "description": "Currently active theme slug."
+        },
+        "themes": {
+          "type": "array",
+          "description": "List of themes.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "update_version": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["slug", "name", "version", "active"]
+          }
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of themes."
+        }
+      },
+      "required": ["site_id", "site_url", "active_theme", "themes", "total"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/add-site-v1",
+    "label": "Add MainWP Site",
+    "description": "Add a new MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["url", "name", "admin_username"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Site URL"
+        },
+        "name": {
+          "type": "string",
+          "description": "Site name"
+        },
+        "admin_username": {
+          "type": "string",
+          "description": "Admin username"
+        },
+        "verify_certificate": {
+          "type": "integer",
+          "description": "SSL verification (0=off, 1=on, 2=global)",
+          "default": 1,
+          "enum": [0, 1, 2]
+        },
+        "ssl_version": {
+          "type": "integer",
+          "description": "SSL version",
+          "default": 0
+        },
+        "http_user": {
+          "type": "string",
+          "description": "HTTP auth username"
+        },
+        "http_pass": {
+          "type": "string",
+          "description": "HTTP auth password"
+        },
+        "tag_ids": {
+          "type": "array",
+          "description": "Tag IDs to assign",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_id": {
+          "type": "integer",
+          "description": "Client ID to assign"
+        },
+        "adminpassword": {
+          "type": "string",
+          "description": "WordPress admin password (optional, for sites requiring password authentication)"
+        },
+        "uniqueid": {
+          "type": "string",
+          "description": "Unique Security ID configured in MainWP Child plugin"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "MainWP site ID."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "name": {
+          "type": "string",
+          "description": "Site name or label."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected", "suspended"],
+          "description": "Connection status."
+        },
+        "client_id": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Associated client ID."
+        },
+        "wp_version": {
+          "type": "string",
+          "description": "WordPress version."
+        },
+        "php_version": {
+          "type": "string",
+          "description": "PHP version."
+        },
+        "last_sync": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Last successful sync timestamp (ISO 8601)."
+        },
+        "admin_username": {
+          "type": "string",
+          "description": "Admin username for child site."
+        },
+        "child_version": {
+          "type": "string",
+          "description": "MainWP Child plugin version."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Site notes."
+        },
+        "stats": {
+          "type": "object",
+          "description": "Site statistics (only if include_stats=true).",
+          "properties": {
+            "plugin_updates": {
+              "type": "integer"
+            },
+            "theme_updates": {
+              "type": "integer"
+            },
+            "wp_update_available": {
+              "type": "boolean"
+            },
+            "health_score": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "required": ["id", "url", "name", "status"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-site-v1",
+    "label": "Update MainWP Site",
+    "description": "Update settings for a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false,
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "name": {
+          "type": "string",
+          "description": "New site name"
+        },
+        "url": {
+          "type": "string",
+          "description": "New site URL"
+        },
+        "admin_username": {
+          "type": "string",
+          "description": "New admin username"
+        },
+        "verify_certificate": {
+          "type": "integer",
+          "description": "SSL verification (0=off, 1=on, 2=global)",
+          "enum": [0, 1, 2]
+        },
+        "ssl_version": {
+          "type": "integer",
+          "description": "SSL version"
+        },
+        "http_user": {
+          "type": "string",
+          "description": "HTTP auth username"
+        },
+        "http_pass": {
+          "type": "string",
+          "description": "HTTP auth password"
+        },
+        "tag_ids": {
+          "type": "array",
+          "description": "Tag IDs to assign",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_id": {
+          "type": "integer",
+          "description": "Client ID to assign"
+        },
+        "suspended": {
+          "type": "integer",
+          "description": "Suspended status (0 or 1)",
+          "enum": [0, 1]
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "MainWP site ID."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "name": {
+          "type": "string",
+          "description": "Site name or label."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected", "suspended"],
+          "description": "Connection status."
+        },
+        "client_id": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Associated client ID."
+        },
+        "wp_version": {
+          "type": "string",
+          "description": "WordPress version."
+        },
+        "php_version": {
+          "type": "string",
+          "description": "PHP version."
+        },
+        "last_sync": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Last successful sync timestamp (ISO 8601)."
+        },
+        "admin_username": {
+          "type": "string",
+          "description": "Admin username for child site."
+        },
+        "child_version": {
+          "type": "string",
+          "description": "MainWP Child plugin version."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Site notes."
+        },
+        "stats": {
+          "type": "object",
+          "description": "Site statistics (only if include_stats=true).",
+          "properties": {
+            "plugin_updates": {
+              "type": "integer"
+            },
+            "theme_updates": {
+              "type": "integer"
+            },
+            "wp_update_available": {
+              "type": "boolean"
+            },
+            "health_score": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "required": ["id", "url", "name", "status"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/delete-site-v1",
+    "label": "Delete MainWP Site",
+    "description": "Delete a MainWP child site. Requires confirmation. Supports dry-run mode.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to execute deletion",
+          "default": false
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Preview mode - shows what would be deleted without executing",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "Whether this was a dry-run preview"
+        },
+        "would_affect": {
+          "type": "object",
+          "description": "Site that would be deleted (dry-run only)"
+        },
+        "warnings": {
+          "type": "array",
+          "description": "Warnings about deletion impact (dry-run only)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deleted": {
+          "type": "boolean",
+          "description": "Whether deletion was successful"
+        },
+        "site": {
+          "type": "object",
+          "description": "Deleted site information"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false,
+        "instructions": "Destructive operation - requires confirm:true or dry_run:true. Only call when user explicitly requests deletion."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/reconnect-site-v1",
+    "label": "Reconnect MainWP Site",
+    "description": "Reconnect a disconnected MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "reconnected": {
+          "type": "boolean",
+          "description": "Whether reconnection was successful"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site information with status"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/disconnect-site-v1",
+    "label": "Disconnect MainWP Site",
+    "description": "Disconnect a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "disconnected": {
+          "type": "boolean",
+          "description": "Whether disconnection was successful"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site information"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/suspend-site-v1",
+    "label": "Suspend MainWP Site",
+    "description": "Suspend a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "suspended": {
+          "type": "boolean",
+          "description": "Whether suspension was successful"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site information with updated suspended status"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/unsuspend-site-v1",
+    "label": "Unsuspend MainWP Site",
+    "description": "Unsuspend a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "unsuspended": {
+          "type": "boolean",
+          "description": "Whether unsuspension was successful"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site information with updated suspended status"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/check-site-v1",
+    "label": "Check MainWP Site",
+    "description": "Check connectivity status of a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer",
+          "description": "Site ID"
+        },
+        "response_time": {
+          "type": "number",
+          "description": "Response time in seconds"
+        },
+        "checked": {
+          "type": "boolean",
+          "description": "Whether check was completed"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site information"
+        },
+        "status": {
+          "type": "object",
+          "description": "Connectivity status details",
+          "properties": {
+            "online": {
+              "type": "boolean"
+            },
+            "http_code": {
+              "type": "integer"
+            },
+            "response_time": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/activate-site-plugins-v1",
+    "label": "Activate Site Plugins",
+    "description": "Activate plugins on a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "plugins"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Plugin slugs to activate (e.g., akismet/akismet.php)",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "activated": {
+          "type": "array",
+          "description": "Successfully activated plugins",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "description": "Errors encountered",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/deactivate-site-plugins-v1",
+    "label": "Deactivate Site Plugins",
+    "description": "Deactivate plugins on a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "plugins"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Plugin slugs to deactivate",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "deactivated": {
+          "type": "array",
+          "description": "Successfully deactivated plugins",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "description": "Errors encountered",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/delete-site-plugins-v1",
+    "label": "Delete Site Plugins",
+    "description": "Delete plugins from a MainWP child site. Requires confirmation. Supports dry-run mode.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "plugins"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Plugin slugs to delete",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to execute deletion",
+          "default": false
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Preview mode",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "would_affect": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "count": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deleted": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false,
+        "instructions": "Destructive operation - requires confirm:true or dry_run:true. Only call when user explicitly requests deletion. Permanently removes plugins from the child site."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-abandoned-plugins-v1",
+    "label": "Get Abandoned Plugins",
+    "description": "Get list of abandoned plugins on a child site. Returns plugins detected during last sync. Data freshness depends on sync frequency.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "last_updated": {
+                "type": "string"
+              },
+              "days_since_update": {
+                "type": ["integer", "null"]
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/activate-site-theme-v1",
+    "label": "Activate Site Theme",
+    "description": "Activate a theme on a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "theme"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "theme": {
+          "type": "string",
+          "description": "Theme slug to activate"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "activated": {
+          "type": "boolean"
+        },
+        "theme": {
+          "type": "object"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/delete-site-themes-v1",
+    "label": "Delete Site Themes",
+    "description": "Delete themes from a MainWP child site. Requires confirmation. Supports dry-run mode.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "themes"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "themes": {
+          "type": "array",
+          "description": "Theme slugs to delete",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to execute deletion",
+          "default": false
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Preview mode",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "would_affect": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "count": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deleted": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false,
+        "instructions": "Destructive operation - requires confirm:true or dry_run:true. Only call when user explicitly requests deletion. Permanently removes themes from the child site."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-abandoned-themes-v1",
+    "label": "Get Abandoned Themes",
+    "description": "Get list of abandoned themes on a child site. Returns themes detected during last sync. Data freshness depends on sync frequency.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "themes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "last_updated": {
+                "type": "string"
+              },
+              "days_since_update": {
+                "type": ["integer", "null"]
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-security-v1",
+    "label": "Get Site Security",
+    "description": "Get security status for a MainWP child site including vulnerability counts, security issues, and issue categories detected during last sync.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer"
+        },
+        "security_issues": {
+          "type": "object"
+        },
+        "total_issues": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Returns security data from last sync. Does NOT perform real-time scanning. Requires Security module on child site for full data."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-changes-v1",
+    "label": "Get Site Changes",
+    "description": "Get non-MainWP changes detected on a child site. Requires Logs module.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "type": {
+          "type": "string",
+          "description": "Filter by change type"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "page": {
+          "type": "integer"
+        },
+        "per_page": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Detects changes made outside MainWP (direct edits, other plugins). Requires Logs module enabled. Results paginated (default 20, max 100)."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-client-v1",
+    "label": "Get Site Client",
+    "description": "Get client assigned to a MainWP child site.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "Client assignment result with client data or null.",
+      "properties": {
+        "client": {
+          "type": ["object", "null"],
+          "description": "Client object or null if no client assigned.",
+          "additionalProperties": true
+        },
+        "message": {
+          "type": "string",
+          "description": "Status message explaining the result."
+        }
+      },
+      "required": ["client"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-costs-v1",
+    "label": "Get Site Costs",
+    "description": "Get costs associated with a MainWP child site. Requires Cost Tracker module to be active.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer",
+          "description": "Site ID"
+        },
+        "costs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/count-sites-v1",
+    "label": "Count MainWP Sites",
+    "description": "Count total MainWP child sites with optional filtering.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Filter by status",
+          "enum": ["connected", "disconnected", "suspended"]
+        },
+        "tag_ids": {
+          "type": "array",
+          "description": "Filter by tag IDs",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_id": {
+          "type": "integer",
+          "description": "Filter by client ID"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "description": "Total count of sites"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-sites-basic-v1",
+    "label": "Get Sites Basic",
+    "description": "Get basic site info (id, url, name only) for fast bulk retrieval. Use list_sites_v1 for full details with filtering, or get_site_v1 for complete single-site information.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Page number",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected", "suspended"]
+        },
+        "tag_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_id": {
+          "type": "integer"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "page": {
+          "type": "integer"
+        },
+        "per_page": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/reconnect-sites-v1",
+    "label": "Reconnect MainWP Sites",
+    "description": "Reconnect multiple MainWP child sites. Operations with >200 sites are automatically queued.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Site IDs or domains. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "queued": {
+          "type": "boolean"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "reconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "disconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "checked": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "suspended": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total_reconnected": {
+          "type": "integer"
+        },
+        "total_disconnected": {
+          "type": "integer"
+        },
+        "total_checked": {
+          "type": "integer"
+        },
+        "total_suspended": {
+          "type": "integer"
+        },
+        "total_errors": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/disconnect-sites-v1",
+    "label": "Disconnect MainWP Sites",
+    "description": "Disconnect multiple MainWP child sites. Operations with >200 sites are automatically queued.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Site IDs or domains. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "queued": {
+          "type": "boolean"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "reconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "disconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "checked": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "suspended": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total_reconnected": {
+          "type": "integer"
+        },
+        "total_disconnected": {
+          "type": "integer"
+        },
+        "total_checked": {
+          "type": "integer"
+        },
+        "total_suspended": {
+          "type": "integer"
+        },
+        "total_errors": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/check-sites-v1",
+    "label": "Check MainWP Sites",
+    "description": "Check connectivity status of multiple MainWP child sites. Operations with >200 sites are automatically queued.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Site IDs or domains. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "queued": {
+          "type": "boolean"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "reconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "disconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "checked": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "suspended": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total_reconnected": {
+          "type": "integer"
+        },
+        "total_disconnected": {
+          "type": "integer"
+        },
+        "total_checked": {
+          "type": "integer"
+        },
+        "total_suspended": {
+          "type": "integer"
+        },
+        "total_errors": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/suspend-sites-v1",
+    "label": "Suspend MainWP Sites",
+    "description": "Suspend multiple MainWP child sites. Operations with >200 sites are automatically queued.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Site IDs or domains. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "queued": {
+          "type": "boolean"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "reconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "disconnected": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "checked": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "suspended": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total_reconnected": {
+          "type": "integer"
+        },
+        "total_disconnected": {
+          "type": "integer"
+        },
+        "total_checked": {
+          "type": "integer"
+        },
+        "total_suspended": {
+          "type": "integer"
+        },
+        "total_errors": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/list-updates-v1",
+    "label": "List Available Updates",
+    "description": "List available updates across MainWP child sites with filtering and pagination.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Filter to specific sites. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        },
+        "types": {
+          "type": "array",
+          "description": "Update types to include. Empty array means all types.",
+          "items": {
+            "type": "string",
+            "enum": ["core", "plugins", "themes", "translations"]
+          },
+          "default": []
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number (1-based).",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page.",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "updates": {
+          "type": "array",
+          "description": "List of available updates.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["core", "plugin", "theme", "translation"]
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "current_version": {
+                "type": "string"
+              },
+              "new_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "site_id",
+              "site_url",
+              "site_name",
+              "type",
+              "slug",
+              "name",
+              "current_version",
+              "new_version"
+            ]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "description": "Summary counts by type.",
+          "properties": {
+            "core": {
+              "type": "integer"
+            },
+            "plugins": {
+              "type": "integer"
+            },
+            "themes": {
+              "type": "integer"
+            },
+            "translations": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
+          },
+          "required": ["core", "plugins", "themes", "translations", "total"]
+        },
+        "page": {
+          "type": "integer"
+        },
+        "per_page": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of updates matching filters."
+        },
+        "errors": {
+          "type": "array",
+          "description": "Site resolution or access errors. Check errors.length > 0 to detect partial failures.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "description": "Value is \"site\" for site-level errors (resolution, access)."
+              },
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string",
+                "description": "Error code for programmatic handling (e.g., mainwp_site_not_found, mainwp_access_denied)."
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+          }
+        }
+      },
+      "required": ["updates", "summary", "page", "per_page", "total"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/run-updates-v1",
+    "label": "Run Updates",
+    "description": "Execute updates on one or more MainWP child sites. Operations with >200 sites are automatically queued for background processing.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Sites to update. Empty array means all sites with available updates.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        },
+        "types": {
+          "type": "array",
+          "description": "Update types to apply. Empty array means all types.",
+          "items": {
+            "type": "string",
+            "enum": ["core", "plugins", "themes", "translations"]
+          },
+          "default": []
+        },
+        "specific_items": {
+          "type": "array",
+          "description": "Specific items to update (by slug). If empty, updates all items of selected types.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "Response varies by operation mode. Immediate mode (≤200 sites) returns updated/errors/summary. Queued mode (>200 sites) returns queued/job_id/status_url/updates_queued/errors.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Immediate execution response for operations with ≤200 sites.",
+          "properties": {
+            "updated": {
+              "type": "array",
+              "description": "Successfully updated items.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "old_version": {
+                    "type": "string"
+                  },
+                  "new_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "site_id",
+                  "site_url",
+                  "site_name",
+                  "type",
+                  "slug",
+                  "name",
+                  "old_version",
+                  "new_version"
+                ]
+              }
+            },
+            "errors": {
+              "type": "array",
+              "description": "Failed updates or site-level errors. Present in both immediate and queued modes.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Update type (plugin, theme, core, translation) or \"site\" for site-level errors."
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Error code for programmatic handling (e.g., mainwp_site_offline, mainwp_access_denied)."
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+              }
+            },
+            "summary": {
+              "type": "object",
+              "properties": {
+                "total_updated": {
+                  "type": "integer"
+                },
+                "total_errors": {
+                  "type": "integer"
+                },
+                "sites_updated": {
+                  "type": "integer"
+                }
+              },
+              "required": ["total_updated", "total_errors", "sites_updated"]
+            }
+          },
+          "required": ["updated", "errors", "summary"]
+        },
+        {
+          "type": "object",
+          "description": "Queued execution response for operations with >200 sites.",
+          "properties": {
+            "queued": {
+              "type": "boolean",
+              "description": "Always true for queued responses.",
+              "const": true
+            },
+            "job_id": {
+              "type": "string",
+              "description": "Background job ID for status polling."
+            },
+            "status_url": {
+              "type": "string",
+              "format": "uri",
+              "description": "URL to poll for job status."
+            },
+            "updates_queued": {
+              "type": "integer",
+              "description": "Number of update operations queued."
+            },
+            "errors": {
+              "type": "array",
+              "description": "Failed updates or site-level errors. Present in both immediate and queued modes.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Update type (plugin, theme, core, translation) or \"site\" for site-level errors."
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Error code for programmatic handling (e.g., mainwp_site_offline, mainwp_access_denied)."
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+              }
+            }
+          },
+          "required": ["queued", "job_id", "status_url", "updates_queued", "errors"]
+        }
+      ]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Applies updates to child sites. Operations with >200 sites are automatically queued and return a job_id for status polling. Individual update failures do not fail the entire operation."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/list-ignored-updates-v1",
+    "label": "List Ignored Updates",
+    "description": "List updates that have been marked as ignored.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "description": "Filter to specific sites. Empty array means all sites.",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": []
+        },
+        "types": {
+          "type": "array",
+          "description": "Filter by update type. Empty array means all types.",
+          "items": {
+            "type": "string",
+            "enum": ["core", "plugins", "themes"]
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "ignored": {
+          "type": "array",
+          "description": "List of ignored updates. Each item includes its type (core, plugin, theme) for client-side filtering/grouping.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["core", "plugin", "theme"],
+                "description": "Update type. Use for filtering or grouping results."
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "ignored_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "site_id",
+              "site_url",
+              "site_name",
+              "type",
+              "slug",
+              "name",
+              "ignored_version"
+            ]
+          }
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of ignored updates (flat count, no per-type breakdown)."
+        },
+        "errors": {
+          "type": "array",
+          "description": "Site resolution or access errors. Check errors.length > 0 to detect partial failures.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "description": "Value is \"site\" for site-level errors (resolution, access)."
+              },
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string",
+                "description": "Error code for programmatic handling (e.g., mainwp_site_not_found, mainwp_access_denied)."
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+          }
+        }
+      },
+      "required": ["ignored", "total"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/set-ignored-updates-v1",
+    "label": "Set Ignored Updates",
+    "description": "Add or remove items from the ignored updates list for a site.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["ignore", "unignore"],
+          "description": "Action to perform."
+        },
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain/URL."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["core", "plugin", "theme"],
+          "description": "Type of update to ignore/unignore."
+        },
+        "slug": {
+          "type": "string",
+          "description": "Slug of the item to ignore/unignore. Use \"wordpress\" for core updates."
+        }
+      },
+      "required": ["action", "site_id_or_domain", "type", "slug"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the action was successful."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["ignore", "unignore"],
+          "description": "Action that was performed."
+        },
+        "site_id": {
+          "type": "integer",
+          "description": "Site ID."
+        },
+        "type": {
+          "type": "string",
+          "description": "Update type."
+        },
+        "slug": {
+          "type": "string",
+          "description": "Item slug."
+        }
+      },
+      "required": ["success", "action", "site_id", "type", "slug"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-site-updates-v1",
+    "label": "Get Site Updates",
+    "description": "Get available updates for a single site with optional filtering by update type.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["core", "plugins", "themes", "translations"]
+          },
+          "default": ["core", "plugins", "themes", "translations"],
+          "description": "Update types to retrieve."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "site_id": {
+          "type": "integer",
+          "description": "Site ID."
+        },
+        "site_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Site URL."
+        },
+        "site_name": {
+          "type": "string",
+          "description": "Site name."
+        },
+        "updates": {
+          "type": "array",
+          "description": "Available updates.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["core", "plugin", "theme", "translation"]
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "current_version": {
+                "type": "string"
+              },
+              "new_version": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "rollback_items": {
+          "type": "object",
+          "description": "Available rollback versions.",
+          "properties": {
+            "plugins": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "themes": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "description": "Update count summary.",
+          "properties": {
+            "core": {
+              "type": "integer"
+            },
+            "plugins": {
+              "type": "integer"
+            },
+            "themes": {
+              "type": "integer"
+            },
+            "translations": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "required": ["site_id", "site_url", "site_name", "updates", "rollback_items", "summary"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-site-core-v1",
+    "label": "Update Site Core",
+    "description": "Update WordPress core for a single site.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "updated": {
+          "type": "object",
+          "properties": {
+            "site_id": {
+              "type": "integer"
+            },
+            "site_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "site_name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "core"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "old_version": {
+              "type": "string"
+            },
+            "new_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "site_id",
+            "site_url",
+            "site_name",
+            "type",
+            "slug",
+            "name",
+            "old_version",
+            "new_version"
+          ]
+        }
+      },
+      "required": ["updated"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Updates WordPress core on a single site. For batch operations across multiple sites, use run_updates_v1 with types=['core']."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-site-plugins-v1",
+    "label": "Update Site Plugins",
+    "description": "Update plugins for a single site. Optionally specify slugs to update only specific plugins.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "slugs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Specific plugin slugs to update. Empty = all available."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "plugin"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "old_version": {
+                "type": "string"
+              },
+              "new_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "site_id",
+              "site_url",
+              "site_name",
+              "type",
+              "slug",
+              "name",
+              "old_version",
+              "new_version"
+            ]
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "plugin"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_updated": {
+              "type": "integer"
+            },
+            "total_errors": {
+              "type": "integer"
+            }
+          },
+          "required": ["total_updated", "total_errors"]
+        }
+      },
+      "required": ["updated", "errors", "summary"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Updates plugins on a single site. For batch operations across multiple sites, use run_updates_v1 with types=['plugins']."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-site-themes-v1",
+    "label": "Update Site Themes",
+    "description": "Update themes for a single site. Optionally specify slugs to update only specific themes.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "slugs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Specific theme slugs to update. Empty = all available."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "theme"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "old_version": {
+                "type": "string"
+              },
+              "new_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "site_id",
+              "site_url",
+              "site_name",
+              "type",
+              "slug",
+              "name",
+              "old_version",
+              "new_version"
+            ]
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "theme"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_updated": {
+              "type": "integer"
+            },
+            "total_errors": {
+              "type": "integer"
+            }
+          },
+          "required": ["total_updated", "total_errors"]
+        }
+      },
+      "required": ["updated", "errors", "summary"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Updates themes on a single site. For batch operations across multiple sites, use run_updates_v1 with types=['themes']."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-site-translations-v1",
+    "label": "Update Site Translations",
+    "description": "Update translations for a single site. Optionally specify slugs to update only specific translations.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "slugs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Specific translation slugs to update. Empty = all available."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "translation"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "old_version": {
+                "type": "string"
+              },
+              "new_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "site_id",
+              "site_url",
+              "site_name",
+              "type",
+              "slug",
+              "name",
+              "old_version",
+              "new_version"
+            ]
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "site_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "site_name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "translation"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "site_url", "site_name", "type", "slug", "code", "message"]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_updated": {
+              "type": "integer"
+            },
+            "total_errors": {
+              "type": "integer"
+            }
+          },
+          "required": ["total_updated", "total_errors"]
+        }
+      },
+      "required": ["updated", "errors", "summary"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Updates translations on a single site. For batch operations across multiple sites, use run_updates_v1 with types=['translations']."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/ignore-site-core-v1",
+    "label": "Ignore Site Core",
+    "description": "Add or remove WordPress core from the ignored updates list for a single site.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["add", "remove"],
+          "default": "add",
+          "description": "Add to or remove from ignored list."
+        }
+      },
+      "required": ["site_id_or_domain"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the action was successful."
+        },
+        "message": {
+          "type": "string",
+          "description": "Success or error message."
+        },
+        "ignored_count": {
+          "type": "integer",
+          "description": "Number of items affected."
+        }
+      },
+      "required": ["success", "message", "ignored_count"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Manages core update ignore status. Use action=add to ignore core updates, action=remove to unignore."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/ignore-site-plugins-v1",
+    "label": "Ignore Site Plugins",
+    "description": "Add or remove plugins from the ignored updates list for a single site.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "slugs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Plugin slugs to ignore."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["add", "remove"],
+          "default": "add",
+          "description": "Add to or remove from ignored list."
+        }
+      },
+      "required": ["site_id_or_domain", "slugs"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the action was successful."
+        },
+        "message": {
+          "type": "string",
+          "description": "Success or error message."
+        },
+        "ignored_count": {
+          "type": "integer",
+          "description": "Number of items affected."
+        }
+      },
+      "required": ["success", "message", "ignored_count"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Manages plugin ignore status. Provide slugs array of plugins to ignore/unignore."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/ignore-site-themes-v1",
+    "label": "Ignore Site Themes",
+    "description": "Add or remove themes from the ignored updates list for a single site.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID (numeric) or domain."
+        },
+        "slugs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Theme slugs to ignore."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["add", "remove"],
+          "default": "add",
+          "description": "Add to or remove from ignored list."
+        }
+      },
+      "required": ["site_id_or_domain", "slugs"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the action was successful."
+        },
+        "message": {
+          "type": "string",
+          "description": "Success or error message."
+        },
+        "ignored_count": {
+          "type": "integer",
+          "description": "Number of items affected."
+        }
+      },
+      "required": ["success", "message", "ignored_count"]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Manages theme ignore status. Provide slugs array of themes to ignore/unignore."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-all-v1",
+    "label": "Update All",
+    "description": "Execute ALL available updates (core, plugins, themes, translations) across all sites or specified sites. WARNING: This is a broad operation. For targeted updates, use run_updates_v1 with specific types[] and site_ids_or_domains[]. Operations with >200 sites are queued.",
+    "category": "mainwp-updates",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "site_ids_or_domains": {
+          "type": "array",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "default": [],
+          "description": "Sites to update. Empty array means all sites."
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["core", "plugins", "themes", "translations"]
+          },
+          "default": ["core", "plugins", "themes", "translations"],
+          "description": "Update types to execute."
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "Response varies by operation mode. Immediate mode (≤200 sites) returns updated/errors/summary. Queued mode (>200 sites) returns queued/job_id/status_url/updates_queued/errors.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Immediate execution response for operations with ≤200 sites.",
+          "properties": {
+            "updated": {
+              "type": "array",
+              "description": "Successfully updated items.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "old_version": {
+                    "type": "string"
+                  },
+                  "new_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "site_id",
+                  "site_url",
+                  "site_name",
+                  "type",
+                  "slug",
+                  "name",
+                  "old_version",
+                  "new_version"
+                ]
+              }
+            },
+            "errors": {
+              "type": "array",
+              "description": "Failed updates or site-level errors.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Update type or \"site\" for site-level errors."
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Error code."
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+              }
+            },
+            "summary": {
+              "type": "object",
+              "properties": {
+                "total_updated": {
+                  "type": "integer"
+                },
+                "total_errors": {
+                  "type": "integer"
+                },
+                "sites_updated": {
+                  "type": "integer"
+                }
+              },
+              "required": ["total_updated", "total_errors", "sites_updated"]
+            }
+          },
+          "required": ["updated", "errors", "summary"]
+        },
+        {
+          "type": "object",
+          "description": "Queued execution response for operations with >200 sites.",
+          "properties": {
+            "queued": {
+              "type": "boolean",
+              "description": "Always true for queued responses.",
+              "const": true
+            },
+            "job_id": {
+              "type": "string",
+              "description": "Background job ID for status polling."
+            },
+            "status_url": {
+              "type": "string",
+              "format": "uri",
+              "description": "URL to poll for job status."
+            },
+            "updates_queued": {
+              "type": "integer",
+              "description": "Number of update operations queued."
+            },
+            "errors": {
+              "type": "array",
+              "description": "Failed updates or site-level errors.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "site_id": {
+                    "type": "integer"
+                  },
+                  "site_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "site_name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Update type or \"site\" for site-level errors."
+                  },
+                  "slug": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Error code."
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["site_id", "site_url", "type", "slug", "code", "message"]
+              }
+            }
+          },
+          "required": ["queued", "job_id", "status_url", "updates_queued", "errors"]
+        }
+      ]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": "Applies all available updates (core, plugins, themes, translations) to specified sites or all sites. Operations with >200 sites are automatically queued and return a job_id for status polling."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/list-clients-v1",
+    "label": "List MainWP Clients",
+    "description": "List MainWP clients with pagination and filtering. Possible errors: mainwp_invalid_input, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "default": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "status": {
+          "type": "string",
+          "enum": ["any", "active", "suspended"],
+          "default": "any"
+        },
+        "search": {
+          "type": "string",
+          "default": ""
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        }
+      },
+      "default": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              },
+              "address_1": {
+                "type": "string"
+              },
+              "address_2": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "suspended": {
+                "type": "integer"
+              },
+              "created": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              },
+              "facebook": {
+                "type": "string"
+              },
+              "twitter": {
+                "type": "string"
+              },
+              "instagram": {
+                "type": "string"
+              },
+              "linkedin": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "page": {
+          "type": "integer"
+        },
+        "per_page": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/count-clients-v1",
+    "label": "Count MainWP Clients",
+    "description": "Count total number of MainWP clients. Possible errors: ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": ["object", "null"],
+      "default": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-client-v1",
+    "label": "Get MainWP Client",
+    "description": "Get detailed information about a single MainWP client. Possible errors: mainwp_client_not_found, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "suspended": {
+          "type": "integer"
+        },
+        "created": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "facebook": {
+          "type": "string"
+        },
+        "twitter": {
+          "type": "string"
+        },
+        "instagram": {
+          "type": "string"
+        },
+        "linkedin": {
+          "type": "string"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/add-client-v1",
+    "label": "Add MainWP Client",
+    "description": "Create a new MainWP client. Possible errors: mainwp_invalid_input, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "client_email": {
+          "type": "string",
+          "format": "email"
+        },
+        "client_phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "selected_sites": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_facebook": {
+          "type": "string"
+        },
+        "client_twitter": {
+          "type": "string"
+        },
+        "client_instagram": {
+          "type": "string"
+        },
+        "client_linkedin": {
+          "type": "string"
+        }
+      },
+      "required": ["name"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "suspended": {
+          "type": "integer"
+        },
+        "created": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "facebook": {
+          "type": "string"
+        },
+        "twitter": {
+          "type": "string"
+        },
+        "instagram": {
+          "type": "string"
+        },
+        "linkedin": {
+          "type": "string"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-client-v1",
+    "label": "Update MainWP Client",
+    "description": "Update an existing MainWP client. Possible errors: mainwp_client_not_found, mainwp_invalid_input, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "client_email": {
+          "type": "string",
+          "format": "email"
+        },
+        "client_phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "selected_sites": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "client_facebook": {
+          "type": "string"
+        },
+        "client_twitter": {
+          "type": "string"
+        },
+        "client_instagram": {
+          "type": "string"
+        },
+        "client_linkedin": {
+          "type": "string"
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "suspended": {
+          "type": "integer"
+        },
+        "created": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "facebook": {
+          "type": "string"
+        },
+        "twitter": {
+          "type": "string"
+        },
+        "instagram": {
+          "type": "string"
+        },
+        "linkedin": {
+          "type": "string"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/delete-client-v1",
+    "label": "Delete MainWP Client",
+    "description": "Delete a MainWP client. Requires confirm: true or dry_run: true. Possible errors: mainwp_client_not_found, mainwp_confirmation_required, mainwp_invalid_input, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        },
+        "confirm": {
+          "type": "boolean",
+          "default": false
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "phone": {
+              "type": "string"
+            },
+            "address_1": {
+              "type": "string"
+            },
+            "address_2": {
+              "type": "string"
+            },
+            "city": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "zip": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            },
+            "suspended": {
+              "type": "integer"
+            },
+            "created": {
+              "type": ["string", "null"],
+              "format": "date-time"
+            },
+            "facebook": {
+              "type": "string"
+            },
+            "twitter": {
+              "type": "string"
+            },
+            "instagram": {
+              "type": "string"
+            },
+            "linkedin": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "name"]
+        },
+        {
+          "type": "object",
+          "required": ["dry_run", "would_affect"],
+          "properties": {
+            "dry_run": {
+              "type": "boolean"
+            },
+            "would_affect": {
+              "type": "object",
+              "properties": {
+                "client": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "phone": {
+                      "type": "string"
+                    },
+                    "address_1": {
+                      "type": "string"
+                    },
+                    "address_2": {
+                      "type": "string"
+                    },
+                    "city": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "zip": {
+                      "type": "string"
+                    },
+                    "country": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "suspended": {
+                      "type": "integer"
+                    },
+                    "created": {
+                      "type": ["string", "null"],
+                      "format": "date-time"
+                    },
+                    "facebook": {
+                      "type": "string"
+                    },
+                    "twitter": {
+                      "type": "string"
+                    },
+                    "instagram": {
+                      "type": "string"
+                    },
+                    "linkedin": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "associated_sites_count": {
+                  "type": "integer"
+                }
+              }
+            },
+            "count": {
+              "type": "integer"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false,
+        "instructions": "Destructive operation requires confirm: true. Only call when user explicitly requests deletion."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-client-sites-v1",
+    "label": "Get Client Sites",
+    "description": "Get sites associated with a MainWP client. Possible errors: mainwp_client_not_found, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "client_id": {
+                "type": ["integer", "null"]
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/count-client-sites-v1",
+    "label": "Count Client Sites",
+    "description": "Count sites associated with a MainWP client. Possible errors: mainwp_client_not_found, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-client-costs-v1",
+    "label": "Get Client Costs",
+    "description": "Get cost tracker entries for a MainWP client. Requires Cost Tracker module. Possible errors: mainwp_client_not_found, mainwp_module_not_available, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "price": {
+                "type": "number"
+              },
+              "renewal_type": {
+                "type": "string"
+              },
+              "payment_method": {
+                "type": "string"
+              },
+              "product_type": {
+                "type": "string"
+              },
+              "last_renewal": {
+                "type": ["string", "null"]
+              },
+              "next_renewal": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": "Requires Cost Tracker module"
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/suspend-client-v1",
+    "label": "Suspend MainWP Client",
+    "description": "Suspend a MainWP client. Possible errors: mainwp_client_not_found, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "suspended": {
+          "type": "integer"
+        },
+        "created": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "facebook": {
+          "type": "string"
+        },
+        "twitter": {
+          "type": "string"
+        },
+        "instagram": {
+          "type": "string"
+        },
+        "linkedin": {
+          "type": "string"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/unsuspend-client-v1",
+    "label": "Unsuspend MainWP Client",
+    "description": "Unsuspend a MainWP client. Possible errors: mainwp_client_not_found, ability_invalid_permissions",
+    "category": "mainwp-clients",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id_or_email": {
+          "type": ["integer", "string"]
+        }
+      },
+      "required": ["client_id_or_email"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address_1": {
+          "type": "string"
+        },
+        "address_2": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "suspended": {
+          "type": "integer"
+        },
+        "created": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "facebook": {
+          "type": "string"
+        },
+        "twitter": {
+          "type": "string"
+        },
+        "instagram": {
+          "type": "string"
+        },
+        "linkedin": {
+          "type": "string"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/list-tags-v1",
+    "label": "List MainWP Tags",
+    "description": "List MainWP tags with pagination and filtering. Returns tag information including ID, name, color, and sites count.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": ["object", "null"],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Page number (1-based).",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page.",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "search": {
+          "type": "string",
+          "description": "Search term for tag name or ID.",
+          "default": ""
+        },
+        "include": {
+          "type": "array",
+          "description": "Array of tag IDs to include.",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Array of tag IDs to exclude.",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "List of tags.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "description": "Tag ID."
+              },
+              "name": {
+                "type": "string",
+                "description": "Tag name."
+              },
+              "color": {
+                "type": ["string", "null"],
+                "description": "Tag color (hex format)."
+              },
+              "sites_count": {
+                "type": "integer",
+                "description": "Number of sites with this tag."
+              },
+              "sites_ids": {
+                "type": "array",
+                "description": "Array of site IDs with this tag.",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "page": {
+          "type": "integer",
+          "description": "Current page number."
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page."
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of tags matching the query."
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-tag-v1",
+    "label": "Get MainWP Tag",
+    "description": "Get detailed information about a single MainWP tag.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tag_id": {
+          "type": "integer",
+          "description": "Tag ID.",
+          "minimum": 1
+        }
+      },
+      "required": ["tag_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Tag ID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Tag name."
+        },
+        "color": {
+          "type": ["string", "null"],
+          "description": "Tag color (hex format)."
+        },
+        "sites_count": {
+          "type": "integer",
+          "description": "Number of sites with this tag."
+        },
+        "sites_ids": {
+          "type": "array",
+          "description": "Array of site IDs with this tag.",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/add-tag-v1",
+    "label": "Add MainWP Tag",
+    "description": "Create a new MainWP tag.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tag name.",
+          "minLength": 1
+        },
+        "color": {
+          "type": "string",
+          "description": "Tag color (hex format, e.g., #3498db).",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Tag ID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Tag name."
+        },
+        "color": {
+          "type": ["string", "null"],
+          "description": "Tag color (hex format)."
+        },
+        "sites_count": {
+          "type": "integer",
+          "description": "Number of sites with this tag."
+        },
+        "sites_ids": {
+          "type": "array",
+          "description": "Array of site IDs with this tag.",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": false,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/update-tag-v1",
+    "label": "Update MainWP Tag",
+    "description": "Update an existing MainWP tag.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tag_id": {
+          "type": "integer",
+          "description": "Tag ID.",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "description": "Tag name.",
+          "minLength": 1
+        },
+        "color": {
+          "type": "string",
+          "description": "Tag color (hex format, e.g., #3498db).",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      "required": ["tag_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Tag ID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Tag name."
+        },
+        "color": {
+          "type": ["string", "null"],
+          "description": "Tag color (hex format)."
+        },
+        "sites_count": {
+          "type": "integer",
+          "description": "Number of sites with this tag."
+        },
+        "sites_ids": {
+          "type": "array",
+          "description": "Array of site IDs with this tag.",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/delete-tag-v1",
+    "label": "Delete MainWP Tag",
+    "description": "Delete a MainWP tag. Requires confirmation or supports dry-run mode.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tag_id": {
+          "type": "integer",
+          "description": "Tag ID.",
+          "minimum": 1
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Confirm deletion (required unless dry_run is true).",
+          "default": false
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Preview deletion without executing.",
+          "default": false
+        }
+      },
+      "required": ["tag_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Successful deletion response.",
+          "required": ["deleted", "tag"],
+          "properties": {
+            "deleted": {
+              "type": "boolean",
+              "description": "Whether the tag was deleted."
+            },
+            "tag": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Dry run response.",
+          "required": ["dry_run", "would_affect"],
+          "properties": {
+            "dry_run": {
+              "type": "boolean",
+              "description": "Indicates this is a dry run."
+            },
+            "would_affect": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "sites_count": {
+                  "type": "integer"
+                },
+                "clients_count": {
+                  "type": "integer"
+                }
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": true,
+        "instructions": "Destructive operation - requires confirm:true or dry_run:true. Only call when user explicitly requests deletion."
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-tag-sites-v1",
+    "label": "Get Tag Sites",
+    "description": "Get list of sites associated with a tag.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tag_id": {
+          "type": "integer",
+          "description": "Tag ID.",
+          "minimum": 1
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number (1-based).",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page.",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": ["tag_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "List of sites.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "description": "Site ID."
+              },
+              "url": {
+                "type": "string",
+                "description": "Site URL."
+              },
+              "name": {
+                "type": "string",
+                "description": "Site name."
+              },
+              "status": {
+                "type": "string",
+                "description": "Connection status."
+              },
+              "client_id": {
+                "type": ["integer", "null"],
+                "description": "Assigned client ID."
+              }
+            }
+          }
+        },
+        "page": {
+          "type": "integer",
+          "description": "Current page number."
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page."
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of sites with this tag."
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-tag-clients-v1",
+    "label": "Get Tag Clients",
+    "description": "Get list of clients associated with a tag.",
+    "category": "mainwp-tags",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tag_id": {
+          "type": "integer",
+          "description": "Tag ID.",
+          "minimum": 1
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number (1-based).",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page.",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": ["tag_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "List of clients.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "client_id": {
+                "type": "integer",
+                "description": "Client ID."
+              },
+              "name": {
+                "type": "string",
+                "description": "Client name."
+              },
+              "email": {
+                "type": "string",
+                "description": "Client email address."
+              },
+              "suspended": {
+                "type": "integer",
+                "description": "Suspension status (0=active, 1=suspended)."
+              }
+            }
+          }
+        },
+        "page": {
+          "type": "integer",
+          "description": "Current page number."
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Items per page."
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of clients with this tag."
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  },
+  {
+    "name": "mainwp/get-batch-job-status-v1",
+    "label": "Get Batch Job Status",
+    "description": "Retrieve status of a queued batch operation (sync, update, reconnect, disconnect, check, suspend). Returns progress, results, and errors. Possible errors: mainwp_job_not_found.",
+    "category": "mainwp-batch",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "description": "Batch job ID returned from queued operation (e.g., sync_abc123, update_xyz789)"
+        }
+      },
+      "required": ["job_id"],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["sync", "update", "reconnect", "disconnect", "check", "suspend"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["queued", "processing", "completed", "failed"]
+        },
+        "progress": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "processed": {
+          "type": "integer",
+          "description": "Number of sites processed so far"
+        },
+        "total": {
+          "type": "integer",
+          "description": "Total number of sites to process"
+        },
+        "succeeded": {
+          "type": "integer",
+          "description": "Number of successful operations"
+        },
+        "failed": {
+          "type": "integer",
+          "description": "Number of failed operations"
+        },
+        "started_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "site_id": {
+                "type": "integer"
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["site_id", "code", "message"]
+          }
+        },
+        "job_timed_out": {
+          "type": "boolean",
+          "description": "Whether the job exceeded the maximum processing time window (4 hours)."
+        },
+        "job_error_code": {
+          "type": "string",
+          "description": "Top-level error code when job failed due to timeout or other job-level issue. Present when job_timed_out is true."
+        },
+        "job_error_message": {
+          "type": "string",
+          "description": "Human-readable description of the job-level error. Present when job_timed_out is true."
+        }
+      },
+      "required": [
+        "job_id",
+        "type",
+        "status",
+        "progress",
+        "processed",
+        "total",
+        "succeeded",
+        "failed"
+      ]
+    },
+    "meta": {
+      "annotations": {
+        "readonly": true,
+        "destructive": false,
+        "idempotent": true,
+        "instructions": ""
+      },
+      "show_in_rest": true
+    }
+  }
+]

@@ -93,6 +93,12 @@
       "default": "standard",
       "description": "Schema verbosity level. 'compact' reduces token usage by ~30% with shorter descriptions. 'standard' provides full descriptions with examples and safety information. Default is 'standard'."
     },
+    "responseFormat": {
+      "type": "string",
+      "enum": ["compact", "pretty"],
+      "default": "compact",
+      "description": "Response JSON format. 'compact' omits whitespace to reduce token usage. 'pretty' uses 2-space indentation for human-readable output. Default is 'compact'."
+    },
     "retryEnabled": {
       "type": "boolean",
       "default": true,
