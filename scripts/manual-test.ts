@@ -121,8 +121,8 @@ function parseArgs(): CliOptions {
         break;
       case '--site-id':
         opts.siteId = parseInt(args[++i], 10);
-        if (isNaN(opts.siteId)) {
-          console.error('Invalid --site-id: must be a number');
+        if (isNaN(opts.siteId) || opts.siteId <= 0) {
+          console.error('Invalid --site-id: must be a positive number');
           process.exit(1);
         }
         break;

@@ -649,7 +649,7 @@ export function generateToolHelp(ability: Ability): ToolHelp {
     annotations: {
       readonly: ability.meta?.annotations?.readonly ?? false,
       destructive: ability.meta?.annotations?.destructive ?? true,
-      idempotent: ability.meta?.annotations?.idempotent ?? true,
+      idempotent: ability.meta?.annotations?.idempotent ?? false,
       instructions: ability.meta?.annotations?.instructions,
     },
     safetyFeatures: {
