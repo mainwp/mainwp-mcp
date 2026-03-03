@@ -35,7 +35,7 @@ Built for WordPress agencies and site managers who want AI assistance with their
 No installation needed. Run the server directly:
 
 ```bash
-npx @mainwp/mcp
+npx -y @mainwp/mcp
 ```
 
 Credentials are loaded from a `settings.json` file in either the current working directory or `~/.config/mainwp-mcp/settings.json`. See [Credential Configuration](#credential-configuration) for the file format.
