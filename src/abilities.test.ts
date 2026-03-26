@@ -11,11 +11,10 @@ import {
   clearCache,
   onCacheRefresh,
   initRateLimiter,
-  generateToolHelp,
-  generateHelpDocument,
-  readLimitedBody,
   type Ability,
 } from './abilities.js';
+import { readLimitedBody } from './http-client.js';
+import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
 import { type Logger } from './logging.js';
@@ -383,7 +382,9 @@ describe('fetchAbilities', () => {
     );
   });
 
-  it('should set NODE_TLS_REJECT_UNAUTHORIZED when skipSslVerify is true', async () => {
+  it('should NOT set NODE_TLS_REJECT_UNAUTHORIZED when skipSslVerify is true (uses per-request dispatcher)', async () => {
+    const original = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => sampleAbilities,
@@ -392,8 +393,8 @@ describe('fetchAbilities', () => {
 
     await fetchAbilities(baseConfig, true);
 
-    // skipSslVerify: true in baseConfig should set the env var
-    expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
+    // Per-request undici dispatcher handles TLS — process env must remain unchanged
+    expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe(original);
   });
 });
 

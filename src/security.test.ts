@@ -62,6 +62,28 @@ describe('validateInput', () => {
     expect(() => validateInput({ site_id: 1.5 })).toThrow(/must be a positive integer/);
   });
 
+  it('should accept valid plural ID arrays', () => {
+    expect(() => validateInput({ site_ids: [1, 2, 3] })).not.toThrow();
+    expect(() => validateInput({ site_ids: ['1', '2', '3'] })).not.toThrow();
+  });
+
+  it('should reject non-positive elements in plural ID arrays', () => {
+    expect(() => validateInput({ site_ids: [0] })).toThrow(/must be a positive integer/);
+    expect(() => validateInput({ site_ids: [-1] })).toThrow(/must be a positive integer/);
+    expect(() => validateInput({ site_ids: [1.5] })).toThrow(/must be a positive integer/);
+  });
+
+  it('should reject non-string/non-number elements in plural ID arrays', () => {
+    expect(() => validateInput({ site_ids: [null] })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_ids: [undefined] })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_ids: [true] })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_ids: [{ id: 1 }] })).toThrow(/must be a string or number/);
+  });
+
+  it('should reject non-numeric strings in plural ID arrays', () => {
+    expect(() => validateInput({ site_ids: ['abc'] })).toThrow(/must be a positive integer/);
+  });
+
   it('should accept valid nested objects', () => {
     expect(() =>
       validateInput({

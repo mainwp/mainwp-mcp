@@ -3,19 +3,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  getTools,
-  executeTool,
-  getSessionDataUsage,
-  resetSessionData,
-  toolNameToAbilityName,
-  abilityNameToToolName,
-  clearPendingPreviews,
-  clearToolsCache,
-  generateInstructions,
-  buildSafetyTags,
-  isNoOpError,
-} from './tools.js';
+import { getTools, executeTool, clearToolsCache } from './tools.js';
+import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
+import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
+import { clearPendingPreviews } from './confirmation.js';
+import { generateInstructions, buildSafetyTags } from './tool-schema.js';
 import { type Config } from './config.js';
 import { type Logger } from './logging.js';
 import { type Ability, clearCache, initRateLimiter } from './abilities.js';

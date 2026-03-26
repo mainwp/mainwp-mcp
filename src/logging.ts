@@ -27,34 +27,10 @@ export interface Logger {
   critical(message: string, data?: Record<string, unknown>): void;
 }
 
-/**
- * Create a logger that sends structured messages to MCP clients.
- *
- * @param server - The MCP server instance (requires logging capability)
- * @param loggerName - Name to identify the logging source (default: 'mainwp-mcp')
- */
-export function createLogger(server: Server, loggerName = 'mainwp-mcp'): Logger {
-  const log = (level: LogLevel, message: string, data?: Record<string, unknown>): void => {
-    // Build the log data payload
-    const logData = data ? { message, ...data } : message;
+type LogFn = (level: LogLevel, message: string, data?: Record<string, unknown>) => void;
 
-    // Try to send via MCP protocol
-    server
-      .sendLoggingMessage({
-        level,
-        logger: loggerName,
-        data: logData,
-      })
-      .catch(() => {
-        // Fall back to stderr if server not connected or logging not enabled
-        const timestamp = new Date().toISOString();
-        const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-        console.error(
-          `[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`
-        );
-      });
-  };
-
+/** Build the 6-method Logger dispatch from a single log function. */
+function buildLoggerMethods(log: LogFn): Logger {
   return {
     debug: (message, data) => log('debug', message, data),
     info: (message, data) => log('info', message, data),
@@ -63,6 +39,40 @@ export function createLogger(server: Server, loggerName = 'mainwp-mcp'): Logger 
     error: (message, data) => log('error', message, data),
     critical: (message, data) => log('critical', message, data),
   };
+}
+
+/** Format and write a log line to stderr. */
+function logToStderr(
+  level: LogLevel,
+  loggerName: string,
+  message: string,
+  data?: Record<string, unknown>
+): void {
+  const timestamp = new Date().toISOString();
+  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+  console.error(`[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`);
+}
+
+/**
+ * Create a logger that sends structured messages to MCP clients.
+ *
+ * @param server - The MCP server instance (requires logging capability)
+ * @param loggerName - Name to identify the logging source (default: 'mainwp-mcp')
+ */
+export function createLogger(server: Server, loggerName = 'mainwp-mcp'): Logger {
+  return buildLoggerMethods((level, message, data) => {
+    const logData = data ? { message, ...data } : message;
+
+    server
+      .sendLoggingMessage({
+        level,
+        logger: loggerName,
+        data: logData,
+      })
+      .catch(() => {
+        logToStderr(level, loggerName, message, data);
+      });
+  });
 }
 
 /**
@@ -89,18 +99,7 @@ export function withRequestId(logger: Logger, requestId: string): Logger {
  * Does not require a server instance.
  */
 export function createStderrLogger(loggerName = 'mainwp-mcp'): Logger {
-  const log = (level: LogLevel, message: string, data?: Record<string, unknown>): void => {
-    const timestamp = new Date().toISOString();
-    const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-    console.error(`[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`);
-  };
-
-  return {
-    debug: (message, data) => log('debug', message, data),
-    info: (message, data) => log('info', message, data),
-    notice: (message, data) => log('notice', message, data),
-    warning: (message, data) => log('warning', message, data),
-    error: (message, data) => log('error', message, data),
-    critical: (message, data) => log('critical', message, data),
-  };
+  return buildLoggerMethods((level, message, data) =>
+    logToStderr(level, loggerName, message, data)
+  );
 }

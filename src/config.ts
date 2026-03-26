@@ -265,7 +265,20 @@ export function loadSettingsFile(): SettingsFile | null {
       }
 
       validateSettingsFile(parsed, filePath);
-      console.error('[mainwp-mcp] Loaded settings from file');
+
+      // Warn when settings are loaded from CWD — a malicious settings.json in a shared
+      // or attacker-writable directory could redirect API calls to capture credentials.
+      const cwdPath = searchPaths[0];
+      const homePath = searchPaths[1];
+      if (filePath === cwdPath && cwdPath !== homePath) {
+        console.error(
+          `[mainwp-mcp] WARNING: Loading settings from working directory (${filePath}). ` +
+            `Ensure this file is trusted. Prefer ~/.config/mainwp-mcp/settings.json for production.`
+        );
+      } else {
+        console.error('[mainwp-mcp] Loaded settings from file');
+      }
+
       return parsed as SettingsFile;
     }
   }
@@ -522,7 +535,6 @@ export function loadConfig(): Config {
     throw new Error('MAINWP_URL is required (set via environment variable or settings.json)');
   }
 
-  // Determine auth type
   const hasBasicAuth = username && appPassword;
   const hasBearerAuth = apiToken;
 
@@ -532,7 +544,6 @@ export function loadConfig(): Config {
     );
   }
 
-  // Normalize URL (remove trailing slash)
   const normalizedUrl = dashboardUrl.replace(/\/+$/, '');
 
   // Validate URL format
@@ -556,37 +567,8 @@ export function loadConfig(): Config {
     );
   }
 
-  // Prefer basic auth (Application Password) as it works with Abilities API
-  if (hasBasicAuth) {
-    return {
-      dashboardUrl: normalizedUrl,
-      authType: 'basic',
-      username,
-      appPassword,
-      skipSslVerify,
-      allowHttp,
-      rateLimit,
-      requestTimeout,
-      maxResponseSize,
-      safeMode,
-      requireUserConfirmation,
-      maxSessionData,
-      schemaVerbosity,
-      responseFormat,
-      retryEnabled,
-      maxRetries,
-      retryBaseDelay,
-      retryMaxDelay,
-      configSource,
-      ...(allowedTools.length > 0 ? { allowedTools } : {}),
-      ...(blockedTools.length > 0 ? { blockedTools } : {}),
-    };
-  }
-
-  return {
+  const shared = {
     dashboardUrl: normalizedUrl,
-    authType: 'bearer',
-    apiToken,
     skipSslVerify,
     allowHttp,
     rateLimit,
@@ -605,6 +587,13 @@ export function loadConfig(): Config {
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(blockedTools.length > 0 ? { blockedTools } : {}),
   };
+
+  // Prefer basic auth (Application Password) as it works with Abilities API
+  if (hasBasicAuth) {
+    return { ...shared, authType: 'basic' as const, username, appPassword };
+  }
+
+  return { ...shared, authType: 'bearer' as const, apiToken };
 }
 
 /**
@@ -623,20 +612,29 @@ export function getAbilitiesApiUrl(config: Config): string {
 }
 
 /**
- * Get authorization headers for API requests
+ * Get authorization headers for API requests.
+ * Computed once per config object and cached — credentials don't change during a server's lifetime.
  */
+let cachedHeaders: Record<string, string> | undefined;
+let cachedAuthConfig: Config | undefined;
+
 export function getAuthHeaders(config: Config): Record<string, string> {
+  if (config === cachedAuthConfig && cachedHeaders) {
+    return cachedHeaders;
+  }
+
+  cachedAuthConfig = config;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
   if (config.authType === 'basic' && config.username && config.appPassword) {
-    // WordPress Application Password uses Basic Auth
-    const credentials = Buffer.from(`${config.username}:${config.appPassword}`).toString('base64');
-    headers['Authorization'] = `Basic ${credentials}`;
+    headers['Authorization'] =
+      `Basic ${Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')}`;
   } else if (config.authType === 'bearer' && config.apiToken) {
     headers['Authorization'] = `Bearer ${config.apiToken}`;
   }
 
+  cachedHeaders = headers;
   return headers;
 }
