@@ -10,7 +10,7 @@
 
 # MainWP MCP Server
 
-[MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client. 
+[MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
 
 **Looking for the MainWP Control CLI instead?** [MainWP Control](https://github.com/mainwp/mainwp-control) is A CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. MainWP Control is for automation: AI automation, cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
 
