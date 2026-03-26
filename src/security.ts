@@ -47,6 +47,20 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
       }
     }
 
+    // Plural ID fields (e.g., site_ids): validate each element is a valid positive integer
+    if (key.endsWith('_ids') && Array.isArray(value)) {
+      for (const item of value) {
+        const numItem = typeof item === 'string' ? parseInt(item, 10) : item;
+        if (typeof numItem === 'number') {
+          if (!Number.isInteger(numItem) || numItem < 1 || numItem > Number.MAX_SAFE_INTEGER) {
+            throw McpErrorFactory.invalidParams(`Element in "${key}" must be a positive integer`, {
+              parameter: key,
+            });
+          }
+        }
+      }
+    }
+
     // Array validation
     if (Array.isArray(value)) {
       if (value.length > MAX_ARRAY_ELEMENTS) {
@@ -136,8 +150,10 @@ export class RateLimiter {
    * Acquire a token, waiting if necessary.
    * Returns immediately if rate limiting is disabled (maxTokens = 0).
    * @param signal - Optional AbortSignal to cancel the wait
+   * @param maxWaitMs - Maximum time to wait for a token (default: 30000ms).
+   *   Prevents indefinite blocking when the rate limit is very low.
    */
-  async acquire(signal?: AbortSignal): Promise<void> {
+  async acquire(signal?: AbortSignal, maxWaitMs = 30000): Promise<void> {
     if (this.maxTokens === 0) return; // Disabled
     this.refill();
     if (this.tokens < 1) {
@@ -145,6 +161,9 @@ export class RateLimiter {
         throw new Error('Rate limiter acquire aborted');
       }
       const waitTime = Math.ceil((1 - this.tokens) / this.refillRate);
+      if (waitTime > maxWaitMs) {
+        throw new Error(`Rate limit wait time (${waitTime}ms) exceeds maximum (${maxWaitMs}ms)`);
+      }
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           cleanup();
