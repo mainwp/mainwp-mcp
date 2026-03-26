@@ -50,13 +50,22 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
     // Plural ID fields (e.g., site_ids): validate each element is a valid positive integer
     if (key.endsWith('_ids') && Array.isArray(value)) {
       for (const item of value) {
+        if (typeof item !== 'string' && typeof item !== 'number') {
+          throw McpErrorFactory.invalidParams(
+            `Element in "${key}" must be a string or number, got ${typeof item}`,
+            { parameter: key }
+          );
+        }
         const numItem = typeof item === 'string' ? parseInt(item, 10) : item;
-        if (typeof numItem === 'number') {
-          if (!Number.isInteger(numItem) || numItem < 1 || numItem > Number.MAX_SAFE_INTEGER) {
-            throw McpErrorFactory.invalidParams(`Element in "${key}" must be a positive integer`, {
-              parameter: key,
-            });
-          }
+        if (
+          !Number.isFinite(numItem) ||
+          !Number.isInteger(numItem) ||
+          numItem < 1 ||
+          numItem > Number.MAX_SAFE_INTEGER
+        ) {
+          throw McpErrorFactory.invalidParams(`Element in "${key}" must be a positive integer`, {
+            parameter: key,
+          });
         }
       }
     }

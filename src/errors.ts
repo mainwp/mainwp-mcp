@@ -45,6 +45,13 @@ export interface McpErrorResponse {
 }
 
 /**
+ * Extract a human-readable message from an unknown thrown value.
+ */
+export function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Custom error class for MCP errors with code support
  */
 export class McpError extends Error {
@@ -198,7 +205,7 @@ export function toMcpErrorResponse(
     return error.toResponse();
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const sanitizedMessage = sanitize ? sanitize(message) : message;
 
   // Try to infer error code from message

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getTools, executeTool, clearPendingPreviews } from '../../src/tools.js';
+import { getTools, executeTool } from '../../src/tools.js';
+import { clearPendingPreviews } from '../../src/confirmation.js';
 import { clearCache, initRateLimiter } from '../../src/abilities.js';
 import { type Config } from '../../src/config.js';
 import { type Logger } from '../../src/logging.js';

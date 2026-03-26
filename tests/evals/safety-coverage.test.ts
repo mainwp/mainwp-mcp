@@ -12,12 +12,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  getTools,
-  clearToolsCache,
-  generateInstructions,
-  buildSafetyTags,
-} from '../../src/tools.js';
+import { getTools, clearToolsCache } from '../../src/tools.js';
+import { generateInstructions, buildSafetyTags } from '../../src/tool-schema.js';
 import { clearCache, initRateLimiter } from '../../src/abilities.js';
 import { type Config } from '../../src/config.js';
 import type { Ability } from '../../src/abilities.js';

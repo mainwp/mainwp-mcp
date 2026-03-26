@@ -27,7 +27,9 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
-import { getTools, executeTool, toolNameToAbilityName, getSessionDataUsage } from './tools.js';
+import { getTools, executeTool } from './tools.js';
+import { toolNameToAbilityName } from './naming.js';
+import { getSessionDataUsage } from './session.js';
 import {
   fetchAbilities,
   fetchCategories,
@@ -36,18 +38,17 @@ import {
   executeAbility,
   initRateLimiter,
   getAbility,
-  generateHelpDocument,
-  generateToolHelp,
   type Ability,
 } from './abilities.js';
+import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId, validateInput } from './security.js';
-import { formatErrorResponse, McpErrorFactory, McpError } from './errors.js';
+import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-beta.1';
+const SERVER_VERSION = '1.0.0-beta.2';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -69,7 +70,7 @@ function validateResourceUri(uri: string): {
     // Handle malformed URIs (invalid percent-encoding)
     throw McpErrorFactory.invalidParams('Malformed URI: invalid percent-encoding', {
       uri,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 
@@ -135,7 +136,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       return { tools };
     } catch (error) {
       logger.error('Error listing tools', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return { tools: [] };
     }
@@ -211,36 +212,21 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
   server.setRequestHandler(ReadResourceRequestSchema, async request => {
     const { uri } = request.params;
 
+    const jsonResource = (data: unknown) => ({
+      contents: [{ uri, mimeType: 'application/json', text: formatJson(config, data) }],
+    });
+
     try {
       // Static URI handlers (no validation needed - exact match)
       if (uri === 'mainwp://abilities') {
-        const abilities = await fetchAbilities(config, false, logger);
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: formatJson(config, abilities),
-            },
-          ],
-        };
+        return jsonResource(await fetchAbilities(config, false, logger));
       }
 
       if (uri === 'mainwp://categories') {
-        const categories = await fetchCategories(config, false, logger);
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: formatJson(config, categories),
-            },
-          ],
-        };
+        return jsonResource(await fetchCategories(config, false, logger));
       }
 
       if (uri === 'mainwp://status') {
-        // Test connection by fetching abilities
         // Redact dashboardUrl to host-only to avoid leaking full URL path to untrusted MCP clients
         let redactedHost: string;
         try {
@@ -251,57 +237,29 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
         try {
           const abilities = await fetchAbilities(config, true, logger); // Force refresh
-          return {
-            contents: [
-              {
-                uri,
-                mimeType: 'application/json',
-                text: formatJson(config, {
-                  connected: true,
-                  dashboardHost: redactedHost,
-                  abilitiesCount: abilities.length,
-                  sessionData: getSessionDataUsage(config),
-                }),
-              },
-            ],
-          };
+          return jsonResource({
+            connected: true,
+            dashboardHost: redactedHost,
+            abilitiesCount: abilities.length,
+            sessionData: getSessionDataUsage(config),
+          });
         } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            contents: [
-              {
-                uri,
-                mimeType: 'application/json',
-                text: formatJson(config, {
-                  connected: false,
-                  dashboardHost: redactedHost,
-                  error: sanitizeError(errorMsg),
-                }),
-              },
-            ],
-          };
+          return jsonResource({
+            connected: false,
+            dashboardHost: redactedHost,
+            error: sanitizeError(getErrorMessage(error)),
+          });
         }
       }
 
-      // Handle help resource: comprehensive documentation
       if (uri === 'mainwp://help') {
         const abilities = await fetchAbilities(config, false, logger);
-        const helpDoc = generateHelpDocument(abilities);
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: formatJson(config, helpDoc),
-            },
-          ],
-        };
+        return jsonResource(generateHelpDocument(abilities));
       }
 
       // Validate and parse the resource URI (throws on invalid URIs)
       const parsed = validateResourceUri(uri);
 
-      // Handle site resource template: mainwp://site/{id}
       if (parsed.type === 'site' && parsed.params?.site_id) {
         const result = await executeAbility(
           config,
@@ -309,21 +267,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
           { site_id: parsed.params.site_id },
           logger
         );
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: formatJson(config, result),
-            },
-          ],
-        };
+        return jsonResource(result);
       }
 
-      // Handle tool help resource template: mainwp://help/tool/{tool_name}
       if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
         const toolName = parsed.params.tool_name as string;
-        // Hardcoded 'mainwp' namespace - this server only supports MainWP abilities
         const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
         const ability = await getAbility(config, abilityName, logger);
@@ -331,27 +279,14 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
           throw McpErrorFactory.resourceNotFound(uri);
         }
 
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: formatJson(config, generateToolHelp(ability)),
-            },
-          ],
-        };
+        return jsonResource(generateToolHelp(ability));
       }
 
-      // If we get here, the URI was valid but not handled by the code above
       throw new Error(`Unhandled resource type: ${parsed.type}`);
     } catch (error) {
       return {
         contents: [
-          {
-            uri,
-            mimeType: 'application/json',
-            text: formatErrorResponse(error, sanitizeError),
-          },
+          { uri, mimeType: 'application/json', text: formatErrorResponse(error, sanitizeError) },
         ],
       };
     }
@@ -377,7 +312,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
         throw error;
       }
       // Sanitize unexpected errors
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       throw new Error(sanitizeError(errorMessage), { cause: error });
     }
   });
@@ -484,7 +419,7 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
     logger.info('Credential validation successful: Connected to MainWP Dashboard');
     return abilities;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     const lowerMessage = message.toLowerCase();
 
     // Authentication failures (401/403) - provide auth-type specific guidance
@@ -605,7 +540,7 @@ async function main(): Promise<void> {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
-    startupLogger.error(`Fatal error: ${error instanceof Error ? error.message : error}`);
+    startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
     process.exit(1);
   }
 }

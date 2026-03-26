@@ -438,11 +438,11 @@ export function getPrompt(name: string, args?: Record<string, string>): GetPromp
  */
 export function getPromptArgumentCompletions(_promptName: string, argumentName: string): string[] {
   if (argumentName === 'update_type') {
-    return ['plugins', 'themes', 'core', 'all'];
+    return [...VALID_UPDATE_TYPES];
   }
 
   if (argumentName === 'issue_type') {
-    return ['connectivity', 'performance', 'security', 'updates'];
+    return [...VALID_ISSUE_TYPES];
   }
 
   // site_id and site_ids require dynamic data - return empty for static completions
