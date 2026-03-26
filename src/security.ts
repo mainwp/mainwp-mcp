@@ -47,8 +47,11 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
       }
     }
 
-    // Plural ID fields (e.g., site_ids): validate each element is a valid positive integer
-    if (key.endsWith('_ids') && Array.isArray(value)) {
+    // Plural ID fields (e.g., site_ids): must be an array of valid positive integers
+    if (key.endsWith('_ids')) {
+      if (!Array.isArray(value)) {
+        throw McpErrorFactory.invalidParams(`"${key}" must be an array`, { parameter: key });
+      }
       for (const item of value) {
         if (typeof item !== 'string' && typeof item !== 'number') {
           throw McpErrorFactory.invalidParams(
@@ -56,7 +59,7 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
             { parameter: key }
           );
         }
-        const numItem = typeof item === 'string' ? parseInt(item, 10) : item;
+        const numItem = typeof item === 'string' ? Number(item) : item;
         if (
           !Number.isFinite(numItem) ||
           !Number.isInteger(numItem) ||
