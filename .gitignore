@@ -14,6 +14,7 @@ dist/
 # Environment
 .env
 .env.local
+.npmrc
 
 # Local settings (may contain credentials)
 settings.json
