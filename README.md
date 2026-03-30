@@ -10,7 +10,7 @@
 
 # MainWP MCP Server
 
-*A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP*
+_A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
 [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
 
