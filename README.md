@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/mainwp-mcp-logo.png" alt="MainWP MCP" width="400">
+  <img src="docs/images/mainwp-mcp-logo-2026.png" alt="MainWP MCP" width="400">
 </p>
 
 <p align="center">
