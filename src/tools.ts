@@ -12,7 +12,7 @@ import {
   AbilityAnnotations,
   fetchAbilities,
   executeAbility,
-  getAbility,
+  getAbilityByToolName,
 } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
@@ -24,7 +24,6 @@ import {
   isNoOpError,
   NOOP_DESCRIPTIONS,
 } from './session.js';
-import { toolNameToAbilityName } from './naming.js';
 import { abilityToTool } from './tool-schema.js';
 import { handleConfirmationFlow } from './confirmation.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
@@ -71,7 +70,7 @@ export function clearToolsCache(): void {
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config, false, logger);
-  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}`;
+  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}|${config.abilityNamespaces.join(',')}`;
 
   if (
     cachedTools &&
@@ -81,7 +80,10 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
     return cachedTools;
   }
 
-  let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
+  const primaryNamespace = config.abilityNamespaces[0];
+  let tools = abilities.map(ability =>
+    abilityToTool(ability, primaryNamespace, config.schemaVerbosity)
+  );
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
@@ -156,13 +158,14 @@ export async function executeTool(
     // Validate input before forwarding to API
     validateInput(args);
 
-    abilityName = toolNameToAbilityName(toolName, 'mainwp');
-
-    // Fetch ability metadata to check if destructive
-    const ability = await getAbility(config, abilityName, reqLogger);
+    // Resolve tool name → ability via the cache reverse index built during
+    // fetchAbilities. This handles both primary-namespace (unprefixed) tools
+    // and prefixed `{ns}__tool` names from non-primary namespaces.
+    const ability = await getAbilityByToolName(config, toolName, reqLogger);
     if (!ability) {
-      throw new Error(`Ability not found: ${abilityName}`);
+      throw new Error(`Ability not found for tool: ${toolName}`);
     }
+    abilityName = ability.name;
 
     const ctx = { tool: toolName, ability: abilityName };
 

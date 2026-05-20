@@ -28,7 +28,6 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
 import { getTools, executeTool } from './tools.js';
-import { toolNameToAbilityName } from './naming.js';
 import { getSessionDataUsage } from './session.js';
 import {
   fetchAbilities,
@@ -37,7 +36,7 @@ import {
   onCacheRefresh,
   executeAbility,
   initRateLimiter,
-  getAbility,
+  getAbilityByToolName,
   type Ability,
 } from './abilities.js';
 import { generateHelpDocument, generateToolHelp } from './help.js';
@@ -48,7 +47,7 @@ import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from 
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-beta.2';
+const SERVER_VERSION = '1.0.0-beta.3';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -254,7 +253,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (uri === 'mainwp://help') {
         const abilities = await fetchAbilities(config, false, logger);
-        return jsonResource(generateHelpDocument(abilities));
+        return jsonResource(generateHelpDocument(abilities, config.abilityNamespaces[0]));
       }
 
       // Validate and parse the resource URI (throws on invalid URIs)
@@ -272,14 +271,13 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
         const toolName = parsed.params.tool_name as string;
-        const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
-        const ability = await getAbility(config, abilityName, logger);
+        const ability = await getAbilityByToolName(config, toolName, logger);
         if (!ability) {
           throw McpErrorFactory.resourceNotFound(uri);
         }
 
-        return jsonResource(generateToolHelp(ability));
+        return jsonResource(generateToolHelp(ability, config.abilityNamespaces[0]));
       }
 
       throw new Error(`Unhandled resource type: ${parsed.type}`);

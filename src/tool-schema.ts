@@ -257,10 +257,14 @@ export function buildSafetyTags(
  * @param ability - The MainWP ability to convert
  * @param verbosity - Schema verbosity level ('compact' or 'standard')
  */
-export function abilityToTool(ability: Ability, verbosity: SchemaVerbosity = 'standard'): Tool {
-  // Create a tool name from the ability name
-  // e.g., "mainwp/list-sites-v1" -> "mainwp_list_sites_v1"
-  const toolName = abilityNameToToolName(ability.name);
+export function abilityToTool(
+  ability: Ability,
+  primaryNamespace: string,
+  verbosity: SchemaVerbosity = 'standard'
+): Tool {
+  // e.g., 'mainwp/list-sites-v1' + primary='mainwp' -> 'list_sites_v1'
+  //       'acme/do-thing-v1'   + primary='mainwp' -> 'acme__do_thing_v1'
+  const toolName = abilityNameToToolName(ability.name, primaryNamespace);
   const meta = ability.meta?.annotations;
   let inputSchema = convertInputSchema(ability);
 

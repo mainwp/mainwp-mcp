@@ -22,6 +22,7 @@
   "blockedTools": ["delete_site_v1"],
   "schemaVerbosity": "standard",
   "responseFormat": "compact",
+  "abilityNamespaces": ["mainwp"],
 
   "retryEnabled": true,
   "maxRetries": 2,

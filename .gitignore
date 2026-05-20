@@ -25,5 +25,8 @@ coverage/
 # Manual test results (generated)
 test-results/
 
+# Local agent/review artifacts (generated)
+.context/
+
 # Override global gitignore for CI/CD
 !.github/

@@ -55,8 +55,8 @@ export interface HelpDocument {
 /**
  * Generate help documentation for a single ability
  */
-export function generateToolHelp(ability: Ability): ToolHelp {
-  const toolName = abilityNameToToolName(ability.name);
+export function generateToolHelp(ability: Ability, primaryNamespace: string): ToolHelp {
+  const toolName = abilityNameToToolName(ability.name, primaryNamespace);
   const props = (ability.input_schema?.properties || {}) as Record<string, Record<string, unknown>>;
   const required = (ability.input_schema?.required as string[]) || [];
 
@@ -90,8 +90,8 @@ export function generateToolHelp(ability: Ability): ToolHelp {
 /**
  * Generate complete help document from all abilities
  */
-export function generateHelpDocument(abilities: Ability[]): HelpDocument {
-  const toolHelps = abilities.map(generateToolHelp);
+export function generateHelpDocument(abilities: Ability[], primaryNamespace: string): HelpDocument {
+  const toolHelps = abilities.map(a => generateToolHelp(a, primaryNamespace));
   const normalizeCategory = (c: string | undefined) => c?.trim() || 'uncategorized';
 
   const categories = [...new Set(toolHelps.map(h => normalizeCategory(h.category)))].sort();

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getTools, executeTool, clearToolsCache } from './tools.js';
-import { abilityNameToToolName, toolNameToAbilityName } from './naming.js';
+import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
@@ -146,6 +146,7 @@ const baseConfig: Config = {
   maxRetries: 2,
   retryBaseDelay: 1000,
   retryMaxDelay: 2000,
+  abilityNamespaces: ['mainwp'],
   configSource: 'environment',
 };
 
@@ -1422,12 +1423,7 @@ describe('isNoOpError', () => {
 describe('name conversion re-exports', () => {
   it('should export abilityNameToToolName', () => {
     expect(typeof abilityNameToToolName).toBe('function');
-    expect(abilityNameToToolName('mainwp/test-v1')).toBe('test_v1');
-  });
-
-  it('should export toolNameToAbilityName', () => {
-    expect(typeof toolNameToAbilityName).toBe('function');
-    expect(toolNameToAbilityName('test_v1', 'mainwp')).toBe('mainwp/test-v1');
+    expect(abilityNameToToolName('mainwp/test-v1', 'mainwp')).toBe('test_v1');
   });
 });
 

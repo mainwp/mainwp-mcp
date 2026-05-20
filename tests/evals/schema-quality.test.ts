@@ -34,6 +34,7 @@ const baseConfig: Config = {
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
   responseFormat: 'compact',
+  abilityNamespaces: ['mainwp'],
   configSource: 'environment',
   retryEnabled: false,
   maxRetries: 2,

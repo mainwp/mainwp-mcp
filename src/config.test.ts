@@ -361,6 +361,81 @@ describe('loadConfig', () => {
 
     expect(config.dashboardUrl).toBe('https://from-env.com');
   });
+
+  describe('abilityNamespaces', () => {
+    function envOnlyConfig() {
+      process.env.MAINWP_URL = 'https://test.com';
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+    }
+
+    it('defaults to ["mainwp"] when nothing is set', () => {
+      envOnlyConfig();
+      const config = loadConfig();
+      expect(config.abilityNamespaces).toEqual(['mainwp']);
+    });
+
+    it('parses comma-separated env var', () => {
+      envOnlyConfig();
+      process.env.MAINWP_ABILITY_NAMESPACES = 'mainwp,acme,beta-test';
+
+      const config = loadConfig();
+      expect(config.abilityNamespaces).toEqual(['mainwp', 'acme', 'beta-test']);
+    });
+
+    it('uses settings.json value when env var is unset', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        JSON.stringify({
+          dashboardUrl: 'https://test.com',
+          username: 'admin',
+          appPassword: 'xxxx',
+          abilityNamespaces: ['mainwp', 'acme'],
+        })
+      );
+
+      const config = loadConfig();
+      expect(config.abilityNamespaces).toEqual(['mainwp', 'acme']);
+    });
+
+    it('env var beats settings file', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        JSON.stringify({
+          dashboardUrl: 'https://from-file.com',
+          username: 'admin',
+          appPassword: 'xxxx',
+          abilityNamespaces: ['from-file'],
+        })
+      );
+      process.env.MAINWP_URL = 'https://test.com';
+      process.env.MAINWP_ABILITY_NAMESPACES = 'from-env';
+
+      const config = loadConfig();
+      expect(config.abilityNamespaces).toEqual(['from-env']);
+    });
+
+    it('rejects invalid namespace charset', () => {
+      envOnlyConfig();
+      process.env.MAINWP_ABILITY_NAMESPACES = 'mainwp,BadCase';
+
+      expect(() => loadConfig()).toThrow(/abilityNamespaces.*BadCase/);
+    });
+
+    it('rejects empty array in settings.json', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        JSON.stringify({
+          dashboardUrl: 'https://test.com',
+          username: 'admin',
+          appPassword: 'xxxx',
+          abilityNamespaces: [],
+        })
+      );
+
+      expect(() => loadConfig()).toThrow(/abilityNamespaces.*not be empty/);
+    });
+  });
 });
 
 describe('getAbilitiesApiUrl', () => {
@@ -382,6 +457,7 @@ describe('getAbilitiesApiUrl', () => {
       maxRetries: 2,
       retryBaseDelay: 1000,
       retryMaxDelay: 2000,
+      abilityNamespaces: ['mainwp'],
       configSource: 'environment',
     };
 
@@ -412,6 +488,7 @@ describe('getAuthHeaders', () => {
       maxRetries: 2,
       retryBaseDelay: 1000,
       retryMaxDelay: 2000,
+      abilityNamespaces: ['mainwp'],
       configSource: 'environment',
     };
 
@@ -440,6 +517,7 @@ describe('getAuthHeaders', () => {
       maxRetries: 2,
       retryBaseDelay: 1000,
       retryMaxDelay: 2000,
+      abilityNamespaces: ['mainwp'],
       configSource: 'environment',
     };
 
@@ -466,6 +544,7 @@ describe('getAuthHeaders', () => {
       maxRetries: 2,
       retryBaseDelay: 1000,
       retryMaxDelay: 2000,
+      abilityNamespaces: ['mainwp'],
       configSource: 'environment',
     };
 
@@ -494,6 +573,7 @@ describe('getAuthHeaders', () => {
       maxRetries: 2,
       retryBaseDelay: 1000,
       retryMaxDelay: 2000,
+      abilityNamespaces: ['mainwp'],
       configSource: 'environment',
     };
 
