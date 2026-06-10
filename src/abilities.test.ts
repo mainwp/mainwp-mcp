@@ -326,6 +326,26 @@ describe('fetchAbilities', () => {
     );
   });
 
+  it('warns with a distinct message when the upstream returns no abilities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities).toHaveLength(0);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Dashboard returned no abilities',
+      expect.objectContaining({ namespaces: ['mainwp'] })
+    );
+    expect(mockLogger.warning).not.toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.anything()
+    );
+  });
+
   it('does not warn about empty namespace match when abilities are found', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

@@ -204,8 +204,11 @@ export async function fetchAbilities(
 
     // A misconfigured namespace allowlist boots a server that advertises
     // zero tools with no other symptom — warn loudly so the cause is in the
-    // logs instead of leaving a silently empty server.
-    if (newAbilities.length === 0) {
+    // logs instead of leaving a silently empty server. An empty upstream is
+    // a different problem, so it gets its own message.
+    if (allAbilities.length === 0) {
+      logger?.warning('Dashboard returned no abilities', { namespaces });
+    } else if (newAbilities.length === 0) {
       logger?.warning('No abilities matched the configured namespaces', {
         namespaces,
         fetchedCount: allAbilities.length,
