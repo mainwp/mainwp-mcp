@@ -78,7 +78,7 @@ A JSON schema is available at `settings.schema.json` for IDE autocompletion.
 
 Control which tools are exposed to AI assistants. Useful for limiting access to read-only operations, hiding destructive tools in production, or reducing context size for the AI.
 
-The server exposes 64 tools by default, consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
+The server exposes around 60 tools by default (the exact count varies by Dashboard version), consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
 
 ### Whitelist Mode
 
