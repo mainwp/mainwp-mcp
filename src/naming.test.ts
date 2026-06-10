@@ -26,6 +26,9 @@ describe('abilityNameToToolName', () => {
     });
 
     it('treats only the first slash as the namespace separator', () => {
+      // Raw function contract only: multi-slash names fail ABILITY_NAME_RE
+      // and are filtered out during fetchAbilities, so they never reach this
+      // function in practice.
       expect(abilityNameToToolName('mainwp/sub/path-name', 'mainwp')).toBe('sub/path_name');
     });
   });

@@ -98,6 +98,8 @@ Examples with `abilityNamespaces: ["mainwp", "acme"]`:
 
 When combining with `allowedTools` / `blockedTools`, use the prefixed form for non-primary namespaces (e.g. `"allowedTools": ["list_sites_v1", "acme__do_thing_v1"]`).
 
+**Keep `mainwp` in the list.** The `mainwp://site/{id}` resource calls the `mainwp/get-site-v1` ability directly, and prompt argument completions for site IDs call `mainwp/list-sites-v1`. Removing `mainwp` from `abilityNamespaces` filters those abilities out: `mainwp://site/{id}` returns an error payload, site ID completions come back empty, and `mainwp://help` lists no MainWP tools. If you want to expose third-party namespaces, add them alongside `mainwp` rather than replacing it.
+
 ---
 
 ## Tool Filtering

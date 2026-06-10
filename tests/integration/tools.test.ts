@@ -446,4 +446,75 @@ describe('Tools Integration', () => {
       );
     });
   });
+
+  describe('non-primary namespace tools', () => {
+    it('resolves an {ns}__ tool name to the right ability URL', async () => {
+      const abilitiesPayload = [
+        {
+          name: 'acme/do-thing-v1',
+          label: 'Acme Do Thing',
+          description: 'Third-party readonly ability',
+          category: 'acme-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => abilitiesPayload,
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ result: 'pong' }),
+        headers: new Headers(),
+      });
+
+      const config: Config = {
+        ...baseConfig,
+        abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+      };
+
+      const result = await executeTool(config, 'acme__do_thing_v1', { input: 'ping' }, mockLogger);
+
+      const executeCall = mockFetch.mock.calls[1];
+      const url = executeCall[0] as string;
+      expect(url).toContain('/abilities/acme/do-thing-v1/run');
+      expect(JSON.parse(result[0].text)).toEqual({ result: 'pong' });
+    });
+
+    it('round-trips a hyphenated namespace through execute', async () => {
+      const abilitiesPayload = [
+        {
+          name: 'acme-corp/do-thing-v1',
+          label: 'Acme Corp Do Thing',
+          description: 'Hyphenated-namespace ability',
+          category: 'acme-corp-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => abilitiesPayload,
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true }),
+        headers: new Headers(),
+      });
+
+      const config: Config = {
+        ...baseConfig,
+        abilityNamespaces: ['mainwp', 'acme-corp'] as [string, ...string[]],
+      };
+
+      await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
+
+      const executeCall = mockFetch.mock.calls[1];
+      const url = executeCall[0] as string;
+      expect(url).toContain('/abilities/acme-corp/do-thing-v1/run');
+    });
+  });
 });

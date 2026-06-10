@@ -670,7 +670,7 @@ See the [Security Guide](docs/security.md#confirmation-guardrails) for more deta
 
 Over 60 tools organized by category. Each tool shows parameters with type, requirement, and description.
 
-> **Note:** Tool names omit the primary namespace (default `mainwp`), so `mainwp/list-sites-v1` becomes `list_sites_v1`. If you add other namespaces via `abilityNamespaces`, abilities in those namespaces are exposed as `{namespace}__{tool}` (e.g. `acme/do-thing-v1` → `acme__do_thing_v1`).
+> **Note:** Tool names omit the primary namespace (default `mainwp`), so `mainwp/list-sites-v1` becomes `list_sites_v1`. If you add other namespaces via `abilityNamespaces`, abilities in those namespaces are exposed as `{namespace}__{tool}` (e.g. `acme/do-thing-v1` → `acme__do_thing_v1`). Keep `mainwp` in `abilityNamespaces` — the `mainwp://site/{id}` resource and the site ID prompt completions call `mainwp/get-site-v1` and `mainwp/list-sites-v1` directly and start returning errors or empty results if those abilities are filtered out.
 
 <details>
 <summary>Sites</summary>

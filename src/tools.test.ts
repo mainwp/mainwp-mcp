@@ -423,6 +423,63 @@ describe('getTools', () => {
     // Short descriptions should pass through unchanged (no category prefix in compact)
     expect(listTool?.description).toBe('Get all managed sites');
   });
+
+  it('surfaces tools from every configured namespace at once', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        ...sampleAbilities,
+        {
+          name: 'acme/do-thing-v1',
+          label: 'Acme Do Thing',
+          description: 'Third-party ability',
+          category: 'acme-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const config = {
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+    };
+    const tools = await getTools(config);
+
+    const names = tools.map(t => t.name);
+    expect(names).toContain('list_sites_v1');
+    expect(names).toContain('acme__do_thing_v1');
+  });
+
+  it('invalidates the tools cache when abilityNamespaces changes', async () => {
+    const payload = [
+      ...sampleAbilities,
+      {
+        name: 'acme/do-thing-v1',
+        label: 'Acme Do Thing',
+        description: 'Third-party ability',
+        category: 'acme-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => payload,
+      headers: new Headers(),
+    });
+
+    const firstTools = await getTools(baseConfig);
+    expect(firstTools.map(t => t.name)).not.toContain('acme__do_thing_v1');
+
+    // Same diff-config-shape except for the namespace allowlist — the tools
+    // cache fingerprint must include abilityNamespaces, or this call would
+    // return the stale first result.
+    const secondTools = await getTools({
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+    });
+    expect(secondTools.map(t => t.name)).toContain('acme__do_thing_v1');
+  });
 });
 
 describe('executeTool', () => {

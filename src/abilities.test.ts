@@ -324,6 +324,60 @@ describe('fetchAbilities', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('drops abilities with malformed names before they reach the tool index', async () => {
+    const payload = [
+      ...sampleAbilities,
+      {
+        name: 'mainwp/sub/path-name',
+        label: 'Malformed',
+        description: 'Extra slash should be filtered out',
+        category: 'mainwp-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => payload,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, true, mockLogger);
+
+    expect(abilities.map(a => a.name)).not.toContain('mainwp/sub/path-name');
+    expect(abilities.length).toBe(sampleAbilities.length);
+    expect(await getAbilityByToolName(baseConfig, 'sub/path_name')).toBeUndefined();
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability with malformed name',
+      expect.objectContaining({ name: expect.stringContaining('sub/path-name') })
+    );
+  });
+
+  it('keeps the existing index intact when a refresh hits the collision throw', async () => {
+    // Warm cache with a clean ability set.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    // Force a refresh that returns malformed data — two abilities with the
+    // same name produce the same tool name and trip the collision check.
+    // The new atomic-assignment code must leave the existing toolNameIndex
+    // intact, so a tool-name lookup for any ability from the first fetch
+    // still resolves.
+    const dupedPayload = [sampleAbilities[0], sampleAbilities[0]];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => dupedPayload,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true, mockLogger);
+
+    const delAbility = await getAbilityByToolName(baseConfig, 'delete_site_v1');
+    expect(delAbility?.name).toBe('mainwp/delete-site-v1');
+  });
+
   it('discards cache and re-throws when signature mismatches and refresh fails', async () => {
     // Populate cache for ['mainwp'] successfully.
     mockFetch.mockResolvedValueOnce({
@@ -526,6 +580,52 @@ describe('fetchCategories', () => {
     const categories = await fetchCategories(config);
 
     expect(categories.map(c => c.slug).sort()).toEqual(['acme-things', 'mainwp-sites']);
+  });
+
+  it('surfaces categories for prefix-related namespaces (acme vs acme-corp)', async () => {
+    const mixedCategories = [
+      { slug: 'acme-foo', label: 'Acme Foo', description: 'Acme category' },
+      { slug: 'acme-corp-bar', label: 'Acme Corp Bar', description: 'Acme Corp category' },
+      { slug: 'other-skip', label: 'Other', description: 'Should be skipped' },
+    ];
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => mixedCategories,
+      headers: new Headers(),
+    });
+
+    // Both prefix-related namespaces configured: both categories surface.
+    const both: Config = { ...baseConfig, abilityNamespaces: ['acme', 'acme-corp'] };
+    const categories = await fetchCategories(both);
+    expect(categories.map(c => c.slug).sort()).toEqual(['acme-corp-bar', 'acme-foo']);
+
+    // Known limitation (see isAllowedCategory): with only 'acme' configured,
+    // 'acme-corp-bar' still passes the prefix filter because category slugs
+    // carry no explicit namespace field. Pinned here so a future change to
+    // this behavior is a conscious one.
+    const acmeOnly: Config = { ...baseConfig, abilityNamespaces: ['acme'] };
+    const acmeCategories = await fetchCategories(acmeOnly);
+    expect(acmeCategories.map(c => c.slug).sort()).toEqual(['acme-corp-bar', 'acme-foo']);
+  });
+
+  it('refreshes cache when abilityNamespaces changes between calls', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        ...sampleCategories,
+        { slug: 'acme-things', label: 'Acme', description: 'Acme stuff' },
+      ],
+      headers: new Headers(),
+    });
+
+    await fetchCategories(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Different namespace allowlist must invalidate the cache despite fresh
+    // TTL, matching the equivalent fetchAbilities behavior.
+    await fetchCategories({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('should paginate when X-WP-TotalPages > 1', async () => {

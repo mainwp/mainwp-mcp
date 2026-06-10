@@ -134,10 +134,12 @@ export interface SettingsFile {
 const SETTINGS_FILENAME = 'settings.json';
 
 /**
- * Valid WP Abilities namespace charset. Matches the WordPress core
- * registry regex for the namespace portion of an ability name.
+ * Valid WP Abilities namespace: lowercase alphanumeric with internal hyphens,
+ * no leading/trailing hyphen. Must stay in sync with the namespace portion of
+ * ABILITY_NAME_RE in abilities.ts — a namespace accepted here but rejected
+ * there would silently filter out every ability it matches.
  */
-const ABILITY_NAMESPACE_RE = /^[a-z0-9-]+$/;
+const ABILITY_NAMESPACE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 /** Default namespace allowlist. */
 const DEFAULT_ABILITY_NAMESPACES: readonly string[] = ['mainwp'] as const;
@@ -241,7 +243,7 @@ function validateSettingsFile(settings: any, filePath: string): void {
       if (typeof ns !== 'string') continue; // arrayFields check reported this already
       if (!ABILITY_NAMESPACE_RE.test(ns)) {
         errors.push(
-          `"abilityNamespaces" entry "${ns}" must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and hyphens)`
+          `"abilityNamespaces" entry "${ns}" must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and internal hyphens)`
         );
       }
     }
@@ -548,7 +550,7 @@ export function loadConfig(): Config {
   for (const ns of abilityNamespaces) {
     if (!ABILITY_NAMESPACE_RE.test(ns)) {
       throw new Error(
-        `Invalid abilityNamespaces entry "${ns}": must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and hyphens)`
+        `Invalid abilityNamespaces entry "${ns}": must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and internal hyphens)`
       );
     }
   }

@@ -422,6 +422,15 @@ describe('loadConfig', () => {
       expect(() => loadConfig()).toThrow(/abilityNamespaces.*BadCase/);
     });
 
+    it('rejects namespaces with leading or trailing hyphens', () => {
+      envOnlyConfig();
+      process.env.MAINWP_ABILITY_NAMESPACES = 'mainwp,-acme';
+      expect(() => loadConfig()).toThrow(/abilityNamespaces.*-acme/);
+
+      process.env.MAINWP_ABILITY_NAMESPACES = 'mainwp,acme-';
+      expect(() => loadConfig()).toThrow(/abilityNamespaces.*acme-/);
+    });
+
     it('rejects empty array in settings.json', () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       vi.mocked(fs.readFileSync).mockReturnValue(
@@ -434,6 +443,21 @@ describe('loadConfig', () => {
       );
 
       expect(() => loadConfig()).toThrow(/abilityNamespaces.*not be empty/);
+    });
+
+    it('deduplicates repeated env-var entries while preserving order', () => {
+      envOnlyConfig();
+      process.env.MAINWP_ABILITY_NAMESPACES = 'mainwp,mainwp,acme,mainwp';
+
+      const config = loadConfig();
+      expect(config.abilityNamespaces).toEqual(['mainwp', 'acme']);
+    });
+
+    it('attributes the empty-list error to the env var when the env var was all-blank', () => {
+      envOnlyConfig();
+      process.env.MAINWP_ABILITY_NAMESPACES = ',,';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_ABILITY_NAMESPACES/);
     });
   });
 });

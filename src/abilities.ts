@@ -22,8 +22,15 @@ import { abilityNameToToolName } from './naming.js';
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
 
-/** Strict format for ability names — prevents path traversal in URL construction */
-const ABILITY_NAME_RE = /^[a-z0-9]+\/[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/**
+ * Strict format for ability names — prevents path traversal in URL construction.
+ * The namespace portion allows internal hyphens so hyphenated namespaces like
+ * `acme-corp` round-trip cleanly between config and execute, but forbids
+ * leading/trailing hyphens (same shape as the slug portion). Both portions
+ * forbid `_` so the `__` namespace/slug separator stays unambiguous in tool
+ * names. Must stay in sync with ABILITY_NAMESPACE_RE in config.ts.
+ */
+const ABILITY_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?\/[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 /**
  * Rate limiter instance (initialized via initRateLimiter)
@@ -108,6 +115,15 @@ function isAllowedNamespace(abilityName: string, namespaces: string[]): boolean 
 /**
  * Returns true if the category slug starts with any configured namespace's
  * `{ns}-` prefix.
+ *
+ * Known limitation: category metadata from the WP Abilities API does not
+ * carry an explicit namespace field, so when the upstream server registers
+ * both `acme` and `acme-corp` and the user configures only `['acme']`, a
+ * slug like `acme-corp-things` (which belongs to `acme-corp`) still passes
+ * this filter and shows up in the `mainwp://categories` resource as an
+ * empty category — none of its abilities pass `isAllowedNamespace`, so no
+ * ability misrouting occurs. The effect is cosmetic. If both prefix-related
+ * namespaces are listed in the allowlist, all categories surface correctly.
  */
 function isAllowedCategory(slug: string, namespaces: string[]): boolean {
   return namespaces.some(ns => slug.startsWith(`${ns}-`));
@@ -173,7 +189,18 @@ export async function fetchAbilities(
       logger
     );
 
-    const newAbilities = allAbilities.filter(a => isAllowedNamespace(a.name, namespaces));
+    const newAbilities = allAbilities.filter(a => {
+      if (!isAllowedNamespace(a.name, namespaces)) return false;
+      // Defense in depth: drop abilities whose names fail the strict format
+      // check before they reach the tool index. A malformed name (extra
+      // slash, bad charset) would otherwise surface as an invalid MCP tool
+      // name in ListTools and only fail at execute time.
+      if (!ABILITY_NAME_RE.test(a.name)) {
+        logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
+        return false;
+      }
+      return true;
+    });
 
     // Check if abilities have changed (compare names)
     const oldNames =
@@ -187,28 +214,37 @@ export async function fetchAbilities(
       .join(',');
     const hasChanged = oldNames !== newNames;
 
-    cachedAbilities = newAbilities;
-    abilitiesIndex = new Map<string, Ability>();
-    toolNameIndex = new Map<string, Ability>();
+    // Build indices into local variables first, then assign all module-level
+    // cache state together once the loop has completed cleanly. If the
+    // collision throw fires mid-loop we leave the existing cache untouched
+    // rather than serving a partially built tool-name index that would make
+    // some tools silently unresolvable.
+    const newAbilitiesIndex = new Map<string, Ability>();
+    const newToolNameIndex = new Map<string, Ability>();
     const primary = namespaces[0];
     for (const ability of newAbilities) {
-      abilitiesIndex.set(ability.name, ability);
+      newAbilitiesIndex.set(ability.name, ability);
 
       const toolName = abilityNameToToolName(ability.name, primary);
-      // Tool name collisions are structurally impossible: ABILITY_NAME_RE
-      // forbids `_` in ability slugs, `__` is used only as the namespace/slug
-      // separator for non-primary namespaces, and ability names are unique
-      // upstream. Fail loud if the invariant ever breaks — a silent override
-      // would shadow a real ability under the wrong name.
-      const existing = toolNameIndex.get(toolName);
+      // Tool name collisions are rare but possible: ABILITY_NAME_RE forbids
+      // `_` in names and `__` is the namespace/slug separator for non-primary
+      // namespaces, but a double hyphen in a slug also maps to `__` (e.g.
+      // primary `mainwp/foo--bar` and non-primary `foo/bar` both produce
+      // `foo__bar`), and upstream could return duplicate names. Fail loud
+      // rather than silently shadowing one ability under the other's tool
+      // name.
+      const existing = newToolNameIndex.get(toolName);
       if (existing) {
         throw new Error(
           `Tool name collision: "${toolName}" produced by both "${existing.name}" and "${ability.name}". ` +
             `This indicates a violation of the namespace/slug invariants in abilities.ts.`
         );
       }
-      toolNameIndex.set(toolName, ability);
+      newToolNameIndex.set(toolName, ability);
     }
+    cachedAbilities = newAbilities;
+    abilitiesIndex = newAbilitiesIndex;
+    toolNameIndex = newToolNameIndex;
     abilitiesCacheTimestamp = Date.now();
     abilitiesNamespaceSignature = signature;
 
@@ -361,9 +397,11 @@ export async function getAbility(
 
 /**
  * Resolve an MCP tool name to its underlying ability via the cache index.
- * Tool names are not uniquely decodable back to ability names (multi-namespace
- * collisions get numeric suffixes), so reverse lookup must go through the map
- * built during `fetchAbilities`.
+ * Tool names are not uniquely decodable back to ability names — hyphens in
+ * the ability slug map to underscores, and the same shape can in principle
+ * collide across namespaces — so reverse lookup goes through the map built
+ * during `fetchAbilities`. The build loop throws on any collision rather
+ * than guessing; see `fetchAbilities` for the invariant rationale.
  */
 export async function getAbilityByToolName(
   config: Config,
