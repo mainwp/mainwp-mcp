@@ -37,6 +37,18 @@ export interface ExecuteToolOptions {
 }
 
 /**
+ * Result of a tool call, matching the MCP CallToolResult shape.
+ * `isError: true` marks failed calls (unknown tool, validation failure,
+ * execution failure, confirmation rejection) so clients can branch on it.
+ * A type alias (not interface) so it gets an implicit index signature and
+ * stays assignable to the SDK's CallToolResult handler return type.
+ */
+export type ToolCallResult = {
+  content: TextContent[];
+  isError?: boolean;
+};
+
+/**
  * Cached tool list to avoid re-converting abilities on every ListTools call.
  * Invalidated by abilities array reference change or config fingerprint change.
  */
@@ -133,7 +145,7 @@ export async function executeTool(
   args: Record<string, unknown>,
   logger: Logger,
   options?: ExecuteToolOptions
-): Promise<TextContent[]> {
+): Promise<ToolCallResult> {
   const startTime = performance.now();
   const hasArguments = Object.keys(args).length > 0;
   const requestId = crypto.randomUUID();
@@ -211,12 +223,15 @@ export async function executeTool(
       // runaway API responses, not small fixed-size local error messages.
       if (isDestructive) {
         reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
-        return [
-          {
-            type: 'text',
-            text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
-          },
-        ];
+        return {
+          content: [
+            {
+              type: 'text',
+              text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
+            },
+          ],
+          isError: true,
+        };
       }
     }
 
@@ -235,7 +250,9 @@ export async function executeTool(
       });
 
       if (confirmResult.action === 'respond') {
-        return confirmResult.response;
+        return confirmResult.isError
+          ? { content: confirmResult.response, isError: true }
+          : { content: confirmResult.response };
       }
       if (confirmResult.action === 'execute') {
         effectiveArgs = confirmResult.effectiveArgs;
@@ -271,12 +288,14 @@ export async function executeTool(
       sessionDataBytes: getSessionDataUsage(config).used,
     });
 
-    return [
-      {
-        type: 'text',
-        text: formattedResult,
-      },
-    ];
+    return {
+      content: [
+        {
+          type: 'text',
+          text: formattedResult,
+        },
+      ],
+    };
   } catch (error) {
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
@@ -297,7 +316,7 @@ export async function executeTool(
         responseBytes,
         sessionDataBytes: getSessionDataUsage(config).used,
       });
-      return [{ type: 'text', text: noChangeText }];
+      return { content: [{ type: 'text', text: noChangeText }] };
     }
 
     const durationMs = Math.round(performance.now() - startTime);
@@ -309,12 +328,16 @@ export async function executeTool(
       error: errorMessage,
     });
 
-    // Use standardized error format with code
-    return [
-      {
-        type: 'text',
-        text: formatErrorResponse(error, sanitizeError),
-      },
-    ];
+    // Use standardized error format with code; isError marks the call as
+    // failed per the MCP spec while keeping the JSON error body in content
+    return {
+      content: [
+        {
+          type: 'text',
+          text: formatErrorResponse(error, sanitizeError),
+        },
+      ],
+      isError: true,
+    };
   }
 }

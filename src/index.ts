@@ -146,15 +146,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
     const { name, arguments: args } = request.params;
 
     try {
-      // Pass abort signal for cancellation support
-      const content = await executeTool(
-        config,
-        name,
-        (args as Record<string, unknown>) ?? {},
-        logger,
-        { signal: extra.signal }
-      );
-      return { content };
+      // Pass abort signal for cancellation support; executeTool returns the
+      // full CallToolResult shape including isError on failed calls
+      return await executeTool(config, name, (args as Record<string, unknown>) ?? {}, logger, {
+        signal: extra.signal,
+      });
     } catch (error) {
       return {
         content: [
