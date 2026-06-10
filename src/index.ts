@@ -512,6 +512,20 @@ async function main(): Promise<void> {
       startupLogger.error('╚══════════════════════════════════════════════════════════════╝');
     }
 
+    // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
+    // site ID prompt completions call mainwp/list-sites-v1. Without 'mainwp'
+    // in the allowlist those abilities are filtered out, so warn up front
+    // (see docs/configuration.md, "Keep mainwp in the list").
+    if (!config.abilityNamespaces.includes('mainwp')) {
+      startupLogger.warning(
+        "Namespace allowlist does not include 'mainwp'. The mainwp://site/{id} resource calls " +
+          'mainwp/get-site-v1 and site ID prompt completions call mainwp/list-sites-v1; with ' +
+          "'mainwp' filtered out, the resource returns an error payload and completions come " +
+          "back empty. Add 'mainwp' alongside other namespaces rather than replacing it.",
+        { abilityNamespaces: config.abilityNamespaces }
+      );
+    }
+
     // Validate credentials with fail-fast behavior
     startupLogger.info('Validating credentials...');
     const abilities = await validateCredentials(config, startupLogger);

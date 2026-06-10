@@ -306,6 +306,42 @@ describe('fetchAbilities', () => {
     expect(abilities.map(a => a.name)).not.toContain('other/skip-me-v1');
   });
 
+  it('warns when the namespace filter leaves zero abilities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const acmeOnlyConfig: Config = { ...baseConfig, abilityNamespaces: ['acme'] };
+    const abilities = await fetchAbilities(acmeOnlyConfig, false, mockLogger);
+
+    expect(abilities).toHaveLength(0);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.objectContaining({
+        namespaces: ['acme'],
+        fetchedCount: sampleAbilities.length,
+      })
+    );
+  });
+
+  it('does not warn about empty namespace match when abilities are found', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities.length).toBeGreaterThan(0);
+    expect(mockLogger.warning).not.toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.anything()
+    );
+  });
+
   it('refreshes cache when abilityNamespaces changes between calls', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

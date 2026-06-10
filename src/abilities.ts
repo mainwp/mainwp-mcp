@@ -202,6 +202,16 @@ export async function fetchAbilities(
       return true;
     });
 
+    // A misconfigured namespace allowlist boots a server that advertises
+    // zero tools with no other symptom — warn loudly so the cause is in the
+    // logs instead of leaving a silently empty server.
+    if (newAbilities.length === 0) {
+      logger?.warning('No abilities matched the configured namespaces', {
+        namespaces,
+        fetchedCount: allAbilities.length,
+      });
+    }
+
     // Check if abilities have changed (compare names)
     const oldNames =
       cachedAbilities
