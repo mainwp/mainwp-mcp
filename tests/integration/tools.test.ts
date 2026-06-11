@@ -490,6 +490,7 @@ describe('Tools Integration', () => {
       const url = executeCall[0] as string;
       expect(url).toContain('/abilities/acme/do-thing-v1/run');
       expect(JSON.parse(result.content[0].text)).toEqual({ result: 'pong' });
+      expect(result.isError).toBeUndefined();
     });
 
     it('round-trips a hyphenated namespace through execute', async () => {
@@ -519,11 +520,13 @@ describe('Tools Integration', () => {
         abilityNamespaces: ['mainwp', 'acme-corp'] as [string, ...string[]],
       };
 
-      await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
+      const result = await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
 
       const executeCall = mockFetch.mock.calls[1];
       const url = executeCall[0] as string;
       expect(url).toContain('/abilities/acme-corp/do-thing-v1/run');
+      expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
+      expect(result.isError).toBeUndefined();
     });
   });
 });
