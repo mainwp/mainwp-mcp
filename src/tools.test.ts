@@ -511,10 +511,11 @@ describe('executeTool', () => {
 
     const result = await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
 
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('text');
-    const parsed = JSON.parse(result[0].text);
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0].type).toBe('text');
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed).toContainEqual({ id: 1, name: 'Site 1' });
+    expect(result.isError).toBeUndefined();
   });
 
   it('should validate input before execution', async () => {
@@ -527,7 +528,22 @@ describe('executeTool', () => {
     // Invalid ID should be caught by validation
     const result = await executeTool(baseConfig, 'list_sites_v1', { site_id: -1 }, mockLogger);
 
-    expect(result[0].text).toContain('error');
+    expect(result.content[0].text).toContain('error');
+    expect(result.isError).toBe(true);
+  });
+
+  it('should return isError for unknown tool', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'no_such_tool_v1', {}, mockLogger);
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error.message).toContain('Ability not found for tool: no_such_tool_v1');
   });
 
   it('should block destructive operations in safe mode', async () => {
@@ -545,7 +561,8 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(result[0].text).toContain('SAFE_MODE_BLOCKED');
+    expect(result.content[0].text).toContain('SAFE_MODE_BLOCKED');
+    expect(result.isError).toBe(true);
   });
 
   it('should strip confirm parameter in safe mode', async () => {
@@ -586,14 +603,17 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(result[0].text).toContain('CONFIRMATION_REQUIRED');
-    expect(result[0].text).toContain('preview');
+    expect(result.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    expect(result.content[0].text).toContain('preview');
 
     // Should include a confirmation token at top level
-    const parsed = JSON.parse(result[0].text);
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed.confirmation_token).toBeDefined();
     expect(typeof parsed.confirmation_token).toBe('string');
     expect(parsed.confirmation_token.length).toBeGreaterThan(0);
+
+    // Preview is a successful workflow step, not a failed call
+    expect(result.isError).toBeUndefined();
   });
 
   it('should reject user_confirmed without prior preview', async () => {
@@ -610,7 +630,8 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(result[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.isError).toBe(true);
   });
 
   it('should reject conflicting dry_run and user_confirmed', async () => {
@@ -627,7 +648,8 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(result[0].text).toContain('CONFLICTING_PARAMETERS');
+    expect(result.content[0].text).toContain('CONFLICTING_PARAMETERS');
+    expect(result.isError).toBe(true);
   });
 
   it('should accept confirmation_token to resolve preview', async () => {
@@ -649,7 +671,7 @@ describe('executeTool', () => {
       { site_id: 1, confirm: true },
       mockLogger
     );
-    const parsed = JSON.parse(previewResult[0].text);
+    const parsed = JSON.parse(previewResult.content[0].text);
     const token = parsed.confirmation_token;
 
     // Step 2: Confirm with token
@@ -666,7 +688,7 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(confirmResult[0].text).toContain('success');
+    expect(confirmResult.content[0].text).toContain('success');
   });
 
   it('should reject invalid confirmation_token', async () => {
@@ -683,7 +705,8 @@ describe('executeTool', () => {
       mockLogger
     );
 
-    expect(result[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.isError).toBe(true);
   });
 
   it('should not include confirmation_token in preview key', async () => {
@@ -716,7 +739,7 @@ describe('executeTool', () => {
     );
 
     // Second call should still succeed (overwrites same key)
-    expect(result2[0].text).toContain('CONFIRMATION_REQUIRED');
+    expect(result2.content[0].text).toContain('CONFIRMATION_REQUIRED');
   });
 
   it('should handle user_confirmed on tool without confirm parameter', async () => {
@@ -741,9 +764,9 @@ describe('executeTool', () => {
     );
 
     // Non-destructive tool should execute normally — no error, no rejection
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('text');
-    expect(result[0].text).not.toContain('error');
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0].type).toBe('text');
+    expect(result.content[0].text).not.toContain('error');
     expect(mockFetch).toHaveBeenCalledTimes(2); // Abilities fetch + execution
   });
 
@@ -761,7 +784,8 @@ describe('executeTool', () => {
       signal: controller.signal,
     });
 
-    expect(result[0].text).toContain('cancelled');
+    expect(result.content[0].text).toContain('cancelled');
+    expect(result.isError).toBe(true);
   });
 
   it('should log tool execution with timing', async () => {
@@ -796,7 +820,8 @@ describe('executeTool', () => {
 
     const result = await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
 
-    expect(result[0].text).toContain('error');
+    expect(result.content[0].text).toContain('error');
+    expect(result.isError).toBe(true);
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
@@ -814,10 +839,10 @@ describe('executeTool', () => {
     });
 
     const result = await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
-    const parsed = JSON.parse(result[0].text);
+    const parsed = JSON.parse(result.content[0].text);
 
     // Compact format should equal JSON.stringify without indentation
-    expect(result[0].text).toBe(JSON.stringify(parsed));
+    expect(result.content[0].text).toBe(JSON.stringify(parsed));
   });
 
   it('should return pretty JSON when responseFormat is pretty', async () => {
@@ -837,9 +862,9 @@ describe('executeTool', () => {
     const result = await executeTool(prettyConfig, 'list_sites_v1', {}, mockLogger);
 
     // Pretty format should contain newlines (indented)
-    expect(result[0].text).toContain('\n');
-    const parsed = JSON.parse(result[0].text);
-    expect(result[0].text).toBe(JSON.stringify(parsed, null, 2));
+    expect(result.content[0].text).toContain('\n');
+    const parsed = JSON.parse(result.content[0].text);
+    expect(result.content[0].text).toBe(JSON.stringify(parsed, null, 2));
   });
 });
 
@@ -882,7 +907,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(previewResult[0].text).toContain('CONFIRMATION_REQUIRED');
+    expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
 
     // Step 2: Advance time beyond PREVIEW_EXPIRY_MS (5 minutes + 1ms)
     vi.setSystemTime(startTime + 5 * 60 * 1000 + 1);
@@ -895,7 +920,8 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(expiredResult[0].text).toContain('PREVIEW_EXPIRED');
+    expect(expiredResult.content[0].text).toContain('PREVIEW_EXPIRED');
+    expect(expiredResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - preview expired',
       expect.objectContaining({ toolName: 'delete_site_v1' })
@@ -909,7 +935,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(subsequentResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(subsequentResult.content[0].text).toContain('PREVIEW_REQUIRED');
   });
 
   it('should reject reuse of consumed confirmation_token', async () => {
@@ -931,7 +957,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, confirm: true },
       mockLogger
     );
-    const parsed = JSON.parse(previewResult[0].text);
+    const parsed = JSON.parse(previewResult.content[0].text);
     const token = parsed.confirmation_token;
 
     // Step 2: Confirm with token (consumes it)
@@ -947,7 +973,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, user_confirmed: true, confirmation_token: token },
       mockLogger
     );
-    expect(confirmResult[0].text).toContain('success');
+    expect(confirmResult.content[0].text).toContain('success');
 
     // Step 3: Attempt to reuse the same token
     const reuseResult = await executeTool(
@@ -956,7 +982,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, user_confirmed: true, confirmation_token: token },
       mockLogger
     );
-    expect(reuseResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(reuseResult.content[0].text).toContain('PREVIEW_REQUIRED');
   });
 
   it('should reject cross-tool confirmation token reuse', async () => {
@@ -978,7 +1004,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, confirm: true },
       mockLogger
     );
-    const parsed = JSON.parse(previewResult[0].text);
+    const parsed = JSON.parse(previewResult.content[0].text);
     const token = parsed.confirmation_token;
 
     // Step 2: Attempt to use that token on a different destructive tool
@@ -990,7 +1016,8 @@ describe('confirmation flow - full cycle', () => {
     );
 
     // Should be rejected — token was scoped to delete_site_v1
-    expect(crossToolResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(crossToolResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(crossToolResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - token belongs to different tool',
       expect.objectContaining({ toolName: 'delete_plugins_v1' })
@@ -1003,7 +1030,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, user_confirmed: true, confirmation_token: token },
       mockLogger
     );
-    expect(reuseResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(reuseResult.content[0].text).toContain('PREVIEW_REQUIRED');
   });
 
   it('should reject confirmation when arguments differ from preview (arg-swap)', async () => {
@@ -1025,7 +1052,7 @@ describe('confirmation flow - full cycle', () => {
       { site_id: 1, confirm: true },
       mockLogger
     );
-    const parsed = JSON.parse(previewResult[0].text);
+    const parsed = JSON.parse(previewResult.content[0].text);
     const token = parsed.confirmation_token;
     expect(token).toBeDefined();
 
@@ -1038,7 +1065,8 @@ describe('confirmation flow - full cycle', () => {
     );
 
     // Should be rejected — args don't match the preview
-    expect(swapResult[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - arguments do not match preview',
       expect.objectContaining({ toolName: 'delete_site_v1' })
@@ -1066,7 +1094,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(previewResult[0].text).toContain('CONFIRMATION_REQUIRED');
+    expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
 
     // Step 2: Confirm execution
     // Note: abilities are already cached from step 1, so no need to mock abilities fetch again
@@ -1083,7 +1111,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(confirmResult[0].text).toContain('success');
+    expect(confirmResult.content[0].text).toContain('success');
   });
 });
 
@@ -1147,8 +1175,10 @@ describe('no-op error handling for idempotent tools', () => {
       mockLogger
     );
 
-    expect(result).toHaveLength(1);
-    const parsed = JSON.parse(result[0].text);
+    expect(result.content).toHaveLength(1);
+    // No-op is a successful outcome, not a failed call
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('NO_CHANGE');
     expect(parsed.message).toContain('activate_site_plugins_v1');
     expect(parsed.details.code).toBe('already_active');
@@ -1237,7 +1267,7 @@ describe('no-op error handling for idempotent tools', () => {
     const result = await executeTool(baseConfig, 'simple_action_v1', { id: 1 }, mockLogger);
 
     // Should surface as a normal error, not NO_CHANGE
-    const parsed = JSON.parse(result[0].text);
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBeUndefined();
     expect(parsed.error).toBeDefined();
   });
@@ -1266,7 +1296,7 @@ describe('no-op error handling for idempotent tools', () => {
     );
 
     // Should surface as a normal error, not NO_CHANGE
-    const parsed = JSON.parse(result[0].text);
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBeUndefined();
     expect(parsed.error).toBeDefined();
     expect(mockLogger.error).toHaveBeenCalledWith('Tool execution failed', expect.anything());
@@ -1295,7 +1325,7 @@ describe('no-op error handling for idempotent tools', () => {
       mockLogger
     );
 
-    const parsed = JSON.parse(result[0].text);
+    const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBeUndefined();
     expect(parsed.error).toBeDefined();
   });
@@ -1324,7 +1354,7 @@ describe('no-op error handling for idempotent tools', () => {
       mockLogger
     );
 
-    const responseBytes = Buffer.byteLength(result[0].text, 'utf8');
+    const responseBytes = Buffer.byteLength(result.content[0].text, 'utf8');
     const usage = getSessionDataUsage(baseConfig);
     expect(usage.used).toBeGreaterThanOrEqual(responseBytes);
   });
@@ -1521,7 +1551,8 @@ describe('default-deny annotations', () => {
     const config = { ...baseConfig, safeMode: true };
     const result = await executeTool(config, 'mystery_action_v1', { target: 'test' }, mockLogger);
 
-    expect(result[0].text).toContain('SAFE_MODE_BLOCKED');
+    expect(result.content[0].text).toContain('SAFE_MODE_BLOCKED');
+    expect(result.isError).toBe(true);
   });
 
   it('should log warning about missing annotations', async () => {

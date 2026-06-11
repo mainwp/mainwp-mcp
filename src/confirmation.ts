@@ -52,11 +52,14 @@ export function clearPendingPreviews(): void {
  * Result of the confirmation flow evaluation.
  *
  * - `respond`: return the response directly to the client (preview, error, etc.)
+ *   `isError: true` marks rejections (invalid/conflicting parameters, missing
+ *   or expired preview) so the tool result carries the MCP `isError` flag;
+ *   preview responses (CONFIRMATION_REQUIRED) are successful workflow steps.
  * - `execute`: proceed with execution using the (possibly modified) effectiveArgs
  * - `skip`: confirmation flow does not apply — proceed with original args
  */
 export type ConfirmationResult =
-  | { action: 'respond'; response: TextContent[] }
+  | { action: 'respond'; response: TextContent[]; isError?: boolean }
   | { action: 'execute'; effectiveArgs: Record<string, unknown> }
   | { action: 'skip' };
 
@@ -149,6 +152,7 @@ export async function handleConfirmationFlow(
     return {
       action: 'respond',
       response: [{ type: 'text', text: formatJson(config, buildInvalidParameterResponse(ctx)) }],
+      isError: true,
     };
   }
 
@@ -169,6 +173,7 @@ export async function handleConfirmationFlow(
       response: [
         { type: 'text', text: formatJson(config, buildConflictingParametersResponse(ctx)) },
       ],
+      isError: true,
     };
   }
 
@@ -244,6 +249,7 @@ export async function handleConfirmationFlow(
         return {
           action: 'respond',
           response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+          isError: true,
         };
       }
       // Verify token belongs to this tool (prevent cross-tool reuse)
@@ -253,6 +259,7 @@ export async function handleConfirmationFlow(
         return {
           action: 'respond',
           response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+          isError: true,
         };
       }
       // Verify token matches current arguments (prevent arg-swap)
@@ -263,6 +270,7 @@ export async function handleConfirmationFlow(
         return {
           action: 'respond',
           response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+          isError: true,
         };
       }
       previewKey = tokenPreviewKey;
@@ -278,6 +286,7 @@ export async function handleConfirmationFlow(
       return {
         action: 'respond',
         response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
       };
     }
 
@@ -288,6 +297,7 @@ export async function handleConfirmationFlow(
       return {
         action: 'respond',
         response: [{ type: 'text', text: formatJson(config, buildPreviewExpiredResponse(ctx)) }],
+        isError: true,
       };
     }
 
