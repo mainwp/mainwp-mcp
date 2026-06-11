@@ -455,7 +455,7 @@ Configuration loads from `./settings.json` or `~/.config/mainwp-mcp/settings.jso
 
 ## Optimizing Token Usage
 
-You have access to 64 tools, which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
+You have access to around 60 tools (the exact count varies by Dashboard version), which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
 
 ### Compact Schema Mode
 
@@ -668,7 +668,7 @@ See the [Security Guide](docs/security.md#confirmation-guardrails) for more deta
 
 ## Tools
 
-Over 60 tools organized by category. Each tool shows parameters with type, requirement, and description.
+Around 60 tools organized by category (the exact count varies by Dashboard version). Each tool shows parameters with type, requirement, and description.
 
 > **Note:** Tool names omit the primary namespace (default `mainwp`), so `mainwp/list-sites-v1` becomes `list_sites_v1`. If you add other namespaces via `abilityNamespaces`, abilities in those namespaces are exposed as `{namespace}__{tool}` (e.g. `acme/do-thing-v1` → `acme__do_thing_v1`). Keep `mainwp` in `abilityNamespaces` — the `mainwp://site/{id}` resource and the site ID prompt completions call `mainwp/get-site-v1` and `mainwp/list-sites-v1` directly and start returning errors or empty results if those abilities are filtered out.
 
