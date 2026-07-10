@@ -62,9 +62,31 @@ describe('validateInput', () => {
     expect(() => validateInput({ site_id: 1.5 })).toThrow(/must be a positive integer/);
   });
 
+  it('should reject non-string/non-number _id values', () => {
+    expect(() => validateInput({ site_id: null })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_id: true })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_id: {} })).toThrow(/must be a string or number/);
+    expect(() => validateInput({ site_id: [1] })).toThrow(/must be a string or number/);
+  });
+
+  it('should reject _id strings with trailing non-numeric characters', () => {
+    expect(() => validateInput({ site_id: '12abc' })).toThrow(/must be a positive integer/);
+  });
+
+  it('should reject _id strings with non-decimal numeric syntax', () => {
+    expect(() => validateInput({ site_id: '1e3' })).toThrow(/must be a positive integer/);
+    expect(() => validateInput({ site_id: '0x10' })).toThrow(/must be a positive integer/);
+  });
+
   it('should accept valid plural ID arrays', () => {
     expect(() => validateInput({ site_ids: [1, 2, 3] })).not.toThrow();
     expect(() => validateInput({ site_ids: ['1', '2', '3'] })).not.toThrow();
+  });
+
+  it('should reject non-array values for plural ID fields', () => {
+    expect(() => validateInput({ site_ids: '123' })).toThrow(/must be an array/);
+    expect(() => validateInput({ site_ids: 123 })).toThrow(/must be an array/);
+    expect(() => validateInput({ site_ids: { id: 1 } })).toThrow(/must be an array/);
   });
 
   it('should reject non-positive elements in plural ID arrays', () => {
@@ -82,6 +104,7 @@ describe('validateInput', () => {
 
   it('should reject non-numeric strings in plural ID arrays', () => {
     expect(() => validateInput({ site_ids: ['abc'] })).toThrow(/must be a positive integer/);
+    expect(() => validateInput({ site_ids: ['1abc'] })).toThrow(/must be a positive integer/);
   });
 
   it('should accept valid nested objects', () => {
@@ -253,6 +276,19 @@ describe('isValidId', () => {
     expect(isValidId(undefined)).toBe(false);
     expect(isValidId({})).toBe(false);
     expect(isValidId([])).toBe(false);
+  });
+
+  it('should return false for strings with trailing non-numeric characters', () => {
+    expect(isValidId('12abc')).toBe(false);
+    expect(isValidId('1 2')).toBe(false);
+  });
+
+  it('should return false for non-decimal numeric syntax', () => {
+    expect(isValidId('1e3')).toBe(false);
+    expect(isValidId('0x10')).toBe(false);
+    expect(isValidId('0b10')).toBe(false);
+    expect(isValidId('+7')).toBe(false);
+    expect(isValidId(' 8 ')).toBe(false);
   });
 
   it('should return false for floats', () => {

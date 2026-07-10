@@ -43,7 +43,13 @@ import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId, validateInput } from './security.js';
-import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
+import {
+  formatErrorResponse,
+  getErrorMessage,
+  getHttpStatus,
+  McpErrorFactory,
+  McpError,
+} from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
@@ -337,8 +343,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
                 .map((site: { id: number }) => String(site.id));
             }
           }
-        } catch {
-          // Ignore errors, return empty completions
+        } catch (error) {
+          // Fail soft — completions are best-effort — but leave a trace so
+          // config/auth problems here aren't invisible in production
+          logger.debug('Site-id completion lookup failed', {
+            error: sanitizeError(getErrorMessage(error)),
+          });
         }
       }
 
@@ -416,13 +426,13 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
     const message = getErrorMessage(error);
     const lowerMessage = message.toLowerCase();
 
+    // HTTP failures carry a structured status (createHttpError in http-client.ts);
+    // classify on that. Message sniffing below is only for non-HTTP failures
+    // (DNS, SSL, timeout) which have no status to inspect.
+    const status = getHttpStatus(error);
+
     // Authentication failures (401/403) - provide auth-type specific guidance
-    if (
-      lowerMessage.includes('401') ||
-      lowerMessage.includes('403') ||
-      lowerMessage.includes('unauthorized') ||
-      lowerMessage.includes('forbidden')
-    ) {
+    if (status === 401 || status === 403) {
       const authHint =
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
@@ -433,7 +443,7 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
     }
 
     // Endpoint not found (404) - likely missing Abilities API plugin
-    if (lowerMessage.includes('404') || lowerMessage.includes('not found')) {
+    if (status === 404) {
       throw new Error(
         'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.',
         { cause: error }

@@ -13,38 +13,17 @@ import {
   clearCache,
   initRateLimiter,
 } from '../../src/abilities.js';
-import { type Config } from '../../src/config.js';
+import { makeBaseConfig } from '../helpers/config.js';
 
 // Import fixtures
-import abilitiesFixture from '../fixtures/abilities.json';
-import categoriesFixture from '../fixtures/categories.json';
+import abilitiesFixture from '../fixtures/abilities.json' with { type: 'json' };
+import categoriesFixture from '../fixtures/categories.json' with { type: 'json' };
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-const baseConfig: Config = {
-  dashboardUrl: 'https://test.local',
-  authType: 'basic',
-  username: 'admin',
-  appPassword: 'xxxx',
-  skipSslVerify: true,
-  allowHttp: false,
-  rateLimit: 0,
-  requestTimeout: 5000,
-  maxResponseSize: 10485760,
-  safeMode: false,
-  requireUserConfirmation: true,
-  maxSessionData: 52428800,
-  schemaVerbosity: 'standard',
-  responseFormat: 'compact',
-  abilityNamespaces: ['mainwp'],
-  configSource: 'environment',
-  retryEnabled: false,
-  maxRetries: 2,
-  retryBaseDelay: 1000,
-  retryMaxDelay: 2000,
-};
+const baseConfig = makeBaseConfig();
 
 describe('Abilities Integration', () => {
   beforeEach(() => {

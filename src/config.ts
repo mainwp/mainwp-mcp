@@ -10,6 +10,7 @@
  */
 
 import fs from 'fs';
+import { getErrorMessage } from './errors.js';
 import path from 'path';
 import os from 'os';
 
@@ -145,89 +146,82 @@ const ABILITY_NAMESPACE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 const DEFAULT_ABILITY_NAMESPACES: readonly string[] = ['mainwp'] as const;
 
 /**
+ * Field → type map for settings.json validation. Each SettingsFile property
+ * is declared exactly once here; the type checks and unknown-field detection
+ * in validateSettingsFile both derive from this map. Adding a settings field
+ * means adding one entry here (plus the SettingsFile interface and its
+ * loadConfig getter call).
+ */
+const SETTINGS_FIELD_TYPES: Record<string, 'string' | 'boolean' | 'number' | 'string[]'> = {
+  dashboardUrl: 'string',
+  username: 'string',
+  appPassword: 'string',
+  apiToken: 'string',
+  schemaVerbosity: 'string',
+  responseFormat: 'string',
+  skipSslVerify: 'boolean',
+  allowHttp: 'boolean',
+  safeMode: 'boolean',
+  requireUserConfirmation: 'boolean',
+  retryEnabled: 'boolean',
+  rateLimit: 'number',
+  requestTimeout: 'number',
+  maxResponseSize: 'number',
+  maxSessionData: 'number',
+  maxRetries: 'number',
+  retryBaseDelay: 'number',
+  retryMaxDelay: 'number',
+  allowedTools: 'string[]',
+  blockedTools: 'string[]',
+  abilityNamespaces: 'string[]',
+};
+
+/**
  * Validate settings file structure and types
  * Throws on validation errors with descriptive messages
  */
-function validateSettingsFile(settings: any, filePath: string): void {
+function validateSettingsFile(settings: unknown, filePath: string): void {
   // Guard: root value must be a non-null plain object
   if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
     throw new Error(`Invalid settings file: ${filePath}\n  - root value must be a JSON object`);
   }
+  const record = settings as Record<string, unknown>;
 
   const errors: string[] = [];
 
-  // Define expected field types
-  const stringFields = [
-    'dashboardUrl',
-    'username',
-    'appPassword',
-    'apiToken',
-    'schemaVerbosity',
-    'responseFormat',
-  ];
-  const booleanFields = [
-    'skipSslVerify',
-    'allowHttp',
-    'safeMode',
-    'requireUserConfirmation',
-    'retryEnabled',
-  ];
-  const numberFields = [
-    'rateLimit',
-    'requestTimeout',
-    'maxResponseSize',
-    'maxSessionData',
-    'maxRetries',
-    'retryBaseDelay',
-    'retryMaxDelay',
-  ];
-  const arrayFields = ['allowedTools', 'blockedTools', 'abilityNamespaces'];
-
-  // Validate string fields
-  for (const field of stringFields) {
-    if (settings[field] !== undefined && typeof settings[field] !== 'string') {
-      errors.push(`"${field}" must be a string`);
-    }
-  }
-
-  // Validate boolean fields
-  for (const field of booleanFields) {
-    if (settings[field] !== undefined && typeof settings[field] !== 'boolean') {
-      errors.push(`"${field}" must be a boolean`);
-    }
-  }
-
-  // Validate number fields
-  for (const field of numberFields) {
-    if (settings[field] !== undefined && typeof settings[field] !== 'number') {
-      errors.push(`"${field}" must be a number`);
-    }
-  }
-
-  // Validate array fields (must be arrays of strings)
-  for (const field of arrayFields) {
-    const value = settings[field];
-    if (value !== undefined) {
-      if (!Array.isArray(value) || !value.every((x: any) => typeof x === 'string')) {
+  // Validate every declared field against its type; string[] gets the
+  // array-of-strings check, the rest a typeof check
+  for (const [field, type] of Object.entries(SETTINGS_FIELD_TYPES)) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (type === 'string[]') {
+      if (!Array.isArray(value) || !value.every((x: unknown) => typeof x === 'string')) {
         errors.push(`"${field}" must be an array of strings`);
       }
+    } else if (typeof value !== type) {
+      errors.push(`"${field}" must be a ${type}`);
+    } else if (type === 'number' && !Number.isSafeInteger(value)) {
+      // Same contract as getNumber's env-var parsing: integers only, within
+      // the safe range. JSON also permits decimals and 1e999 (Infinity with
+      // typeof 'number'), both of which would pass downstream isNaN checks
+      errors.push(`"${field}" must be an integer within the safe range`);
     }
   }
 
   // Validate schemaVerbosity enum
-  if (settings.schemaVerbosity !== undefined) {
-    if (!SCHEMA_VERBOSITY_VALUES.includes(settings.schemaVerbosity)) {
+  if (record.schemaVerbosity !== undefined) {
+    if (!(SCHEMA_VERBOSITY_VALUES as readonly unknown[]).includes(record.schemaVerbosity)) {
       errors.push(
-        `"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${settings.schemaVerbosity}"`
+        `"schemaVerbosity" must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${record.schemaVerbosity}"`
       );
     }
   }
 
   // Validate responseFormat enum
-  if (settings.responseFormat !== undefined) {
-    if (!RESPONSE_FORMAT_VALUES.includes(settings.responseFormat)) {
+  if (record.responseFormat !== undefined) {
+    if (!(RESPONSE_FORMAT_VALUES as readonly unknown[]).includes(record.responseFormat)) {
       errors.push(
-        `"responseFormat" must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${settings.responseFormat}"`
+        `"responseFormat" must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${record.responseFormat}"`
       );
     }
   }
@@ -235,11 +229,11 @@ function validateSettingsFile(settings: any, filePath: string): void {
   // Validate abilityNamespaces entries (charset + non-empty list). The
   // generic arrayFields check above already verified every entry is a string,
   // so only the charset check runs here.
-  if (Array.isArray(settings.abilityNamespaces)) {
-    if (settings.abilityNamespaces.length === 0) {
+  if (Array.isArray(record.abilityNamespaces)) {
+    if (record.abilityNamespaces.length === 0) {
       errors.push('"abilityNamespaces" must not be empty');
     }
-    for (const ns of settings.abilityNamespaces) {
+    for (const ns of record.abilityNamespaces) {
       if (typeof ns !== 'string') continue; // arrayFields check reported this already
       if (!ABILITY_NAMESPACE_RE.test(ns)) {
         errors.push(
@@ -251,14 +245,8 @@ function validateSettingsFile(settings: any, filePath: string): void {
 
   // Detect unknown fields
   // Valid fields: all SettingsFile properties plus _comment (for inline documentation per schema)
-  const validFields = new Set([
-    ...stringFields,
-    ...booleanFields,
-    ...numberFields,
-    ...arrayFields,
-    '_comment',
-  ]);
-  for (const key of Object.keys(settings)) {
+  const validFields = new Set([...Object.keys(SETTINGS_FIELD_TYPES), '_comment']);
+  for (const key of Object.keys(record)) {
     if (!validFields.has(key)) {
       errors.push(`Unknown field "${key}"`);
     }
@@ -287,20 +275,20 @@ export function loadSettingsFile(): SettingsFile | null {
   for (const filePath of searchPaths) {
     if (fs.existsSync(filePath)) {
       let content: string;
-      let parsed: any;
+      let parsed: unknown;
 
       try {
         content = fs.readFileSync(filePath, 'utf-8');
-      } catch (error: any) {
-        throw new Error(`Failed to read settings file: ${filePath}\n${error.message}`, {
+      } catch (error) {
+        throw new Error(`Failed to read settings file: ${filePath}\n${getErrorMessage(error)}`, {
           cause: error,
         });
       }
 
       try {
         parsed = JSON.parse(content);
-      } catch (error: any) {
-        throw new Error(`Invalid JSON in settings file: ${filePath}\n${error.message}`, {
+      } catch (error) {
+        throw new Error(`Invalid JSON in settings file: ${filePath}\n${getErrorMessage(error)}`, {
           cause: error,
         });
       }
@@ -344,16 +332,35 @@ function getString(
   return defaultValue;
 }
 
+/** Accepted boolean env var spellings (case-insensitive) */
+const TRUTHY_VALUES = new Set(['true', '1', 'yes', 'on']);
+const FALSY_VALUES = new Set(['false', '0', 'no', 'off']);
+
 /**
- * Get boolean value with precedence: env var > settings file > default
+ * Get boolean value with precedence: env var > settings file > default.
+ * Unrecognized non-empty env values are ignored with a stderr warning rather
+ * than silently coerced — several of these flags are security-relevant, and
+ * "TRUE" or "1" quietly becoming false gave operators the opposite of what
+ * they configured.
  */
 function getBoolean(
+  name: string,
   envVar: string | undefined,
   fileValue: boolean | undefined,
   defaultValue: boolean
 ): boolean {
   if (envVar !== undefined && envVar !== '') {
-    return envVar === 'true';
+    const normalized = envVar.trim().toLowerCase();
+    if (TRUTHY_VALUES.has(normalized)) {
+      return true;
+    }
+    if (FALSY_VALUES.has(normalized)) {
+      return false;
+    }
+    console.error(
+      `[mainwp-mcp] WARNING: ${name}="${envVar}" is not a recognized boolean ` +
+        `(expected true/1/yes/on or false/0/no/off) — ignoring it.`
+    );
   }
   if (fileValue !== undefined) {
     return fileValue;
@@ -362,15 +369,29 @@ function getBoolean(
 }
 
 /**
- * Get number value with precedence: env var > settings file > default
+ * Get number value with precedence: env var > settings file > default.
+ * Non-integer env values fail startup — a silently truncated "60abc" → 60
+ * is worse than a clear config error for limits and timeouts.
  */
 function getNumber(
+  name: string,
   envVar: string | undefined,
   fileValue: number | undefined,
   defaultValue: number
 ): number {
   if (envVar !== undefined && envVar !== '') {
-    return parseInt(envVar, 10);
+    const trimmed = envVar.trim();
+    if (!/^-?\d+$/.test(trimmed)) {
+      throw new Error(`${name} must be an integer, got "${envVar}"`);
+    }
+    const value = parseInt(trimmed, 10);
+    // Digit-only strings can still overflow to Infinity (e.g. 400 digits),
+    // which passes isNaN/positive checks downstream and disables every
+    // limit that compares against it
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`${name} must be within the safe integer range, got "${envVar}"`);
+    }
+    return value;
   }
   if (fileValue !== undefined) {
     return fileValue;
@@ -399,6 +420,34 @@ function getStringArray(
 }
 
 /**
+ * Every MAINWP_* env var read by loadConfig. Used to compute configSource —
+ * keep in sync with the getter calls below when adding a config option.
+ */
+const MAINWP_ENV_VARS = [
+  'MAINWP_URL',
+  'MAINWP_USER',
+  'MAINWP_APP_PASSWORD',
+  'MAINWP_TOKEN',
+  'MAINWP_SKIP_SSL_VERIFY',
+  'MAINWP_ALLOW_HTTP',
+  'MAINWP_SAFE_MODE',
+  'MAINWP_REQUIRE_USER_CONFIRMATION',
+  'MAINWP_RATE_LIMIT',
+  'MAINWP_REQUEST_TIMEOUT',
+  'MAINWP_MAX_RESPONSE_SIZE',
+  'MAINWP_MAX_SESSION_DATA',
+  'MAINWP_ALLOWED_TOOLS',
+  'MAINWP_BLOCKED_TOOLS',
+  'MAINWP_SCHEMA_VERBOSITY',
+  'MAINWP_RESPONSE_FORMAT',
+  'MAINWP_RETRY_ENABLED',
+  'MAINWP_MAX_RETRIES',
+  'MAINWP_RETRY_BASE_DELAY',
+  'MAINWP_RETRY_MAX_DELAY',
+  'MAINWP_ABILITY_NAMESPACES',
+] as const;
+
+/**
  * Load configuration from environment variables and settings file
  * Precedence: environment variables > settings file > defaults
  */
@@ -407,29 +456,7 @@ export function loadConfig(): Config {
   const settings = loadSettingsFile();
 
   // Determine config source based on what's available
-  const hasEnvVars = !!(
-    process.env.MAINWP_URL ||
-    process.env.MAINWP_USER ||
-    process.env.MAINWP_APP_PASSWORD ||
-    process.env.MAINWP_TOKEN ||
-    process.env.MAINWP_SKIP_SSL_VERIFY ||
-    process.env.MAINWP_ALLOW_HTTP ||
-    process.env.MAINWP_SAFE_MODE ||
-    process.env.MAINWP_REQUIRE_USER_CONFIRMATION ||
-    process.env.MAINWP_RATE_LIMIT ||
-    process.env.MAINWP_REQUEST_TIMEOUT ||
-    process.env.MAINWP_MAX_RESPONSE_SIZE ||
-    process.env.MAINWP_MAX_SESSION_DATA ||
-    process.env.MAINWP_ALLOWED_TOOLS ||
-    process.env.MAINWP_BLOCKED_TOOLS ||
-    process.env.MAINWP_SCHEMA_VERBOSITY ||
-    process.env.MAINWP_RESPONSE_FORMAT ||
-    process.env.MAINWP_RETRY_ENABLED ||
-    process.env.MAINWP_MAX_RETRIES ||
-    process.env.MAINWP_RETRY_BASE_DELAY ||
-    process.env.MAINWP_RETRY_MAX_DELAY ||
-    process.env.MAINWP_ABILITY_NAMESPACES
-  );
+  const hasEnvVars = MAINWP_ENV_VARS.some(name => !!process.env[name]);
 
   const configSource: 'environment' | 'settings file' | 'mixed' =
     settings === null ? 'environment' : !hasEnvVars ? 'settings file' : 'mixed';
@@ -440,21 +467,38 @@ export function loadConfig(): Config {
   const appPassword = getString(process.env.MAINWP_APP_PASSWORD, settings?.appPassword, '');
   const apiToken = getString(process.env.MAINWP_TOKEN, settings?.apiToken, '');
   const skipSslVerify = getBoolean(
+    'MAINWP_SKIP_SSL_VERIFY',
     process.env.MAINWP_SKIP_SSL_VERIFY,
     settings?.skipSslVerify,
     false
   );
-  const allowHttp = getBoolean(process.env.MAINWP_ALLOW_HTTP, settings?.allowHttp, false);
-  const safeMode = getBoolean(process.env.MAINWP_SAFE_MODE, settings?.safeMode, false);
+  const allowHttp = getBoolean(
+    'MAINWP_ALLOW_HTTP',
+    process.env.MAINWP_ALLOW_HTTP,
+    settings?.allowHttp,
+    false
+  );
+  const safeMode = getBoolean(
+    'MAINWP_SAFE_MODE',
+    process.env.MAINWP_SAFE_MODE,
+    settings?.safeMode,
+    false
+  );
   const requireUserConfirmation = getBoolean(
+    'MAINWP_REQUIRE_USER_CONFIRMATION',
     process.env.MAINWP_REQUIRE_USER_CONFIRMATION,
     settings?.requireUserConfirmation,
     true
   );
 
   // Parse rate limit (default: 60 requests/minute)
-  const rateLimit = getNumber(process.env.MAINWP_RATE_LIMIT, settings?.rateLimit, 60);
-  if (isNaN(rateLimit) || rateLimit < 0) {
+  const rateLimit = getNumber(
+    'MAINWP_RATE_LIMIT',
+    process.env.MAINWP_RATE_LIMIT,
+    settings?.rateLimit,
+    60
+  );
+  if (rateLimit < 0) {
     throw new Error(
       'MAINWP_RATE_LIMIT must be a non-negative integer (set via environment variable or settings.json)'
     );
@@ -462,11 +506,12 @@ export function loadConfig(): Config {
 
   // Parse request timeout (default: 30000ms = 30 seconds)
   const requestTimeout = getNumber(
+    'MAINWP_REQUEST_TIMEOUT',
     process.env.MAINWP_REQUEST_TIMEOUT,
     settings?.requestTimeout,
     30000
   );
-  if (isNaN(requestTimeout) || requestTimeout <= 0) {
+  if (requestTimeout <= 0) {
     throw new Error(
       'MAINWP_REQUEST_TIMEOUT must be a positive integer (set via environment variable or settings.json)'
     );
@@ -474,11 +519,12 @@ export function loadConfig(): Config {
 
   // Parse max response size (default: 10485760 bytes = 10MB)
   const maxResponseSize = getNumber(
+    'MAINWP_MAX_RESPONSE_SIZE',
     process.env.MAINWP_MAX_RESPONSE_SIZE,
     settings?.maxResponseSize,
     10485760
   );
-  if (isNaN(maxResponseSize) || maxResponseSize <= 0) {
+  if (maxResponseSize <= 0) {
     throw new Error(
       'MAINWP_MAX_RESPONSE_SIZE must be a positive integer (set via environment variable or settings.json)'
     );
@@ -486,11 +532,12 @@ export function loadConfig(): Config {
 
   // Parse max session data (default: 52428800 bytes = 50MB)
   const maxSessionData = getNumber(
+    'MAINWP_MAX_SESSION_DATA',
     process.env.MAINWP_MAX_SESSION_DATA,
     settings?.maxSessionData,
     52428800
   );
-  if (isNaN(maxSessionData) || maxSessionData <= 0) {
+  if (maxSessionData <= 0) {
     throw new Error(
       'MAINWP_MAX_SESSION_DATA must be a positive integer (set via environment variable or settings.json)'
     );
@@ -501,34 +548,36 @@ export function loadConfig(): Config {
   const blockedTools = getStringArray(process.env.MAINWP_BLOCKED_TOOLS, settings?.blockedTools, []);
 
   // Parse schema verbosity (default: 'standard' for backwards compatibility)
-  const schemaVerbosity = getString(
+  const schemaVerbosityRaw = getString(
     process.env.MAINWP_SCHEMA_VERBOSITY,
     settings?.schemaVerbosity,
     'standard'
-  ) as SchemaVerbosity;
+  );
 
-  // Validate enum value
-  if (!SCHEMA_VERBOSITY_VALUES.includes(schemaVerbosity as any)) {
+  // Validate enum value before narrowing the type
+  if (!(SCHEMA_VERBOSITY_VALUES as readonly string[]).includes(schemaVerbosityRaw)) {
     throw new Error(
-      `MAINWP_SCHEMA_VERBOSITY must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${schemaVerbosity}" ` +
+      `MAINWP_SCHEMA_VERBOSITY must be one of: ${SCHEMA_VERBOSITY_VALUES.join(', ')}; got: "${schemaVerbosityRaw}" ` +
         `(set via environment variable or settings.json)`
     );
   }
+  const schemaVerbosity = schemaVerbosityRaw as SchemaVerbosity;
 
   // Parse response format (default: 'compact' to reduce token usage)
-  const responseFormat = getString(
+  const responseFormatRaw = getString(
     process.env.MAINWP_RESPONSE_FORMAT,
     settings?.responseFormat,
     'compact'
-  ) as ResponseFormat;
+  );
 
-  // Validate enum value
-  if (!RESPONSE_FORMAT_VALUES.includes(responseFormat as any)) {
+  // Validate enum value before narrowing the type
+  if (!(RESPONSE_FORMAT_VALUES as readonly string[]).includes(responseFormatRaw)) {
     throw new Error(
-      `MAINWP_RESPONSE_FORMAT must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${responseFormat}" ` +
+      `MAINWP_RESPONSE_FORMAT must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${responseFormatRaw}" ` +
         `(set via environment variable or settings.json)`
     );
   }
+  const responseFormat = responseFormatRaw as ResponseFormat;
 
   // Parse ability namespace allowlist (default: ['mainwp']). Deduplicate so
   // the env-var path (no schema-level uniqueItems) and the settings.json path
@@ -558,32 +607,44 @@ export function loadConfig(): Config {
   const abilityNamespacesTuple = abilityNamespaces as [string, ...string[]];
 
   // Parse retry configuration
-  const retryEnabled = getBoolean(process.env.MAINWP_RETRY_ENABLED, settings?.retryEnabled, true);
+  const retryEnabled = getBoolean(
+    'MAINWP_RETRY_ENABLED',
+    process.env.MAINWP_RETRY_ENABLED,
+    settings?.retryEnabled,
+    true
+  );
 
-  const maxRetries = getNumber(process.env.MAINWP_MAX_RETRIES, settings?.maxRetries, 2);
-  if (isNaN(maxRetries) || maxRetries < 1 || maxRetries > 5) {
+  const maxRetries = getNumber(
+    'MAINWP_MAX_RETRIES',
+    process.env.MAINWP_MAX_RETRIES,
+    settings?.maxRetries,
+    2
+  );
+  if (maxRetries < 1 || maxRetries > 5) {
     throw new Error(
       'MAINWP_MAX_RETRIES must be between 1 and 5 (set via environment variable or settings.json)'
     );
   }
 
   const retryBaseDelay = getNumber(
+    'MAINWP_RETRY_BASE_DELAY',
     process.env.MAINWP_RETRY_BASE_DELAY,
     settings?.retryBaseDelay,
     1000
   );
-  if (isNaN(retryBaseDelay) || retryBaseDelay < 500 || retryBaseDelay > 10000) {
+  if (retryBaseDelay < 500 || retryBaseDelay > 10000) {
     throw new Error(
       'MAINWP_RETRY_BASE_DELAY must be between 500ms and 10000ms (set via environment variable or settings.json)'
     );
   }
 
   const retryMaxDelay = getNumber(
+    'MAINWP_RETRY_MAX_DELAY',
     process.env.MAINWP_RETRY_MAX_DELAY,
     settings?.retryMaxDelay,
     2000
   );
-  if (isNaN(retryMaxDelay) || retryMaxDelay < retryBaseDelay || retryMaxDelay > 30000) {
+  if (retryMaxDelay < retryBaseDelay || retryMaxDelay > 30000) {
     throw new Error(
       `MAINWP_RETRY_MAX_DELAY must be between ${retryBaseDelay}ms and 30000ms (set via environment variable or settings.json)`
     );
@@ -683,17 +744,8 @@ export function getAbilitiesApiUrl(config: Config): string {
 
 /**
  * Get authorization headers for API requests.
- * Computed once per config object and cached — credentials don't change during a server's lifetime.
  */
-let cachedHeaders: Record<string, string> | undefined;
-let cachedAuthConfig: Config | undefined;
-
 export function getAuthHeaders(config: Config): Record<string, string> {
-  if (config === cachedAuthConfig && cachedHeaders) {
-    return cachedHeaders;
-  }
-
-  cachedAuthConfig = config;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -705,6 +757,5 @@ export function getAuthHeaders(config: Config): Record<string, string> {
     headers['Authorization'] = `Bearer ${config.apiToken}`;
   }
 
-  cachedHeaders = headers;
   return headers;
 }

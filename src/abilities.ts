@@ -6,7 +6,7 @@
  */
 
 import { Config, getAbilitiesApiUrl } from './config.js';
-import { McpErrorFactory } from './errors.js';
+import { McpErrorFactory, createHttpError } from './errors.js';
 import { RateLimiter, sanitizeError } from './security.js';
 import { withRetry, type RetryContext } from './retry.js';
 import {
@@ -81,25 +81,55 @@ export interface Category {
 }
 
 /**
- * Cached abilities data
+ * Cache slot: one TTL/signature-guarded cache with in-flight de-duplication.
+ * Shared by the abilities and categories caches via getCachedOrRefresh.
  */
-let cachedAbilities: Ability[] | null = null;
-let abilitiesIndex: Map<string, Ability> | null = null;
-let toolNameIndex: Map<string, Ability> | null = null;
-let cachedCategories: Category[] | null = null;
-let abilitiesCacheTimestamp: number = 0;
-let categoriesCacheTimestamp: number = 0;
-let abilitiesNamespaceSignature: string = '';
-let categoriesNamespaceSignature: string = '';
+interface CacheSlot<T> {
+  data: T | null;
+  timestamp: number;
+  /** Cache signature (dashboard + namespaces) the cached data was built for */
+  signature: string;
+  /**
+   * Bumped on every successful commit. Lets a failing refresh detect that a
+   * concurrent refresh committed newer data, so the failure path never
+   * discards a write it did not observe at its own start.
+   */
+  generation: number;
+  /** In-flight refresh, shared by concurrent same-signature callers */
+  inFlight: { promise: Promise<T>; signature: string } | null;
+}
+
+function emptySlot<T>(): CacheSlot<T> {
+  return { data: null, timestamp: 0, signature: '', generation: 0, inFlight: null };
+}
+
+const abilitiesCache: CacheSlot<Ability[]> = emptySlot();
+const categoriesCache: CacheSlot<Category[]> = emptySlot();
+
+/**
+ * Derived lookup indexes, keyed by the exact abilities array they were built
+ * from. WeakMap (not module-level variables) so a caller that awaited one
+ * fetch can never read indexes committed by a concurrent fetch for a
+ * different config — the array reference it holds always resolves to its own
+ * matching indexes. Entries are garbage-collected with their arrays.
+ */
+interface AbilityIndexes {
+  byName: Map<string, Ability>;
+  byToolName: Map<string, Ability>;
+}
+const abilityIndexes = new WeakMap<Ability[], AbilityIndexes>();
+
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Build a stable signature of the configured namespaces so a config change
- * (e.g. adding a third-party namespace) forces a cache refresh instead of
- * serving stale, namespace-filtered data.
+ * Build a stable signature of the response-affecting config (dashboard URL +
+ * namespace allowlist) so a config change forces a cache refresh instead of
+ * serving data fetched from another dashboard or filtered for other
+ * namespaces. Also keys in-flight de-duplication: callers may only join a
+ * running fetch that targets the same dashboard with the same allowlist.
  */
-function namespaceSignature(namespaces: string[]): string {
-  return namespaces.join('|');
+function cacheSignature(config: Config): string {
+  return JSON.stringify([config.dashboardUrl, config.abilityNamespaces]);
 }
 
 /**
@@ -145,12 +175,134 @@ export function onCacheRefresh(callback: CacheRefreshCallback): void {
 /**
  * Notify all registered callbacks that the cache was refreshed
  */
-function notifyCacheRefresh(): void {
+function notifyCacheRefresh(logger?: Logger): void {
   for (const callback of cacheRefreshCallbacks) {
     try {
       callback();
-    } catch {
-      // Ignore callback errors
+    } catch (error) {
+      // Fail soft — a broken listener must not poison the cache refresh —
+      // but leave a trace instead of swallowing silently
+      logger?.debug('Cache refresh callback failed', {
+        error: sanitizeError(String(error)),
+      });
+    }
+  }
+}
+
+/**
+ * Return cached data or refresh it — the shared engine behind the abilities
+ * and categories caches. Owns, in order:
+ *
+ * 1. Fresh-cache check: serve only if the TTL hasn't expired AND the
+ *    namespace allowlist hasn't changed since the cache was populated.
+ * 2. In-flight de-duplication: concurrent same-signature callers await the
+ *    running refresh instead of issuing duplicate upstream fetches.
+ * 3. Refresh: fetch, process, then commit data + timestamp + signature (and
+ *    any derived state via `commit`) together.
+ * 4. Failure fallback: serve stale cache on transient failures up to
+ *    MAX_STALE_AGE_MS, but only when the cached data was built for the same
+ *    namespace allowlist — a signature mismatch means the user changed
+ *    config, and falling back would silently return the wrong data set.
+ *
+ * A `process` throw (e.g. tool-name collision) is treated exactly like a
+ * fetch failure: the existing cache is preserved and the stale-serving
+ * decision tree applies.
+ *
+ * @param slot - The cache slot to read/write
+ * @param signature - Namespace signature for the requesting config
+ * @param label - Data label for log messages ('abilities', 'categories')
+ * @param process - Convert raw fetch results into cacheable data; may return
+ *   a `commit` callback that is invoked synchronously with the cache write
+ *   to update derived state atomically (w.r.t. the event loop)
+ */
+async function getCachedOrRefresh<R, T>(opts: {
+  slot: CacheSlot<T>;
+  signature: string;
+  label: string;
+  forceRefresh: boolean;
+  logger?: Logger;
+  fetchFn: () => Promise<R>;
+  process: (raw: R) => { data: T; commit?: () => void };
+}): Promise<T> {
+  const { slot, signature, label, forceRefresh, logger } = opts;
+
+  if (
+    !forceRefresh &&
+    slot.data !== null &&
+    slot.signature === signature &&
+    Date.now() - slot.timestamp < CACHE_TTL_MS
+  ) {
+    return slot.data;
+  }
+
+  // A same-signature refresh is already running; its result is by definition
+  // fresher than the TTL, so even forceRefresh callers can join it.
+  if (slot.inFlight && slot.inFlight.signature === signature) {
+    return slot.inFlight.promise;
+  }
+
+  const refresh = (async (): Promise<T> => {
+    // Snapshot the generation BEFORE fetching. If a concurrent refresh (for a
+    // different signature — same-signature callers join us) commits while we
+    // are in flight, the generation moves past this snapshot and our failure
+    // path below knows the slot no longer holds the data we started with.
+    const startGeneration = slot.generation;
+    try {
+      const raw = await opts.fetchFn();
+      const { data, commit } = opts.process(raw);
+      slot.data = data;
+      slot.timestamp = Date.now();
+      slot.signature = signature;
+      slot.generation++;
+      commit?.();
+      return data;
+    } catch (error) {
+      // Serve stale same-signature cache on transient failures, up to
+      // MAX_STALE_AGE_MS.
+      if (slot.data !== null && slot.signature === signature) {
+        const cacheAgeMs = Date.now() - slot.timestamp;
+        const cacheAgeMinutes = Math.round(cacheAgeMs / 60000);
+        if (cacheAgeMs > MAX_STALE_AGE_MS) {
+          logger?.error(`Stale ${label} cache exceeded max age, discarding`, {
+            cacheAgeMinutes,
+            maxStaleMinutes: MAX_STALE_AGE_MS / 60000,
+          });
+          slot.data = null;
+          throw error;
+        }
+        logger?.warning(`Failed to refresh ${label}, using cached data`, {
+          error: sanitizeError(String(error)),
+          cacheAgeMinutes,
+        });
+        return slot.data;
+      }
+
+      // The slot holds data for a DIFFERENT signature (or nothing). Discard
+      // it only if it's the same snapshot we observed when this refresh
+      // started — data committed by a concurrent refresh AFTER our start
+      // (generation moved) is newer than us and must survive our failure.
+      // Either way, surface the error: we can't return wrong-config data,
+      // and we won't lie about a fetch that failed.
+      if (slot.data !== null && slot.generation === startGeneration) {
+        logger?.warning(`Discarding ${label} cache: config changed and refresh failed`, {
+          cachedSignature: slot.signature,
+          requestedSignature: signature,
+          error: sanitizeError(String(error)),
+        });
+        slot.data = null;
+      }
+      throw error;
+    }
+  })();
+
+  slot.inFlight = { promise: refresh, signature };
+  try {
+    return await refresh;
+  } finally {
+    // Only clear our own registration — a different-signature refresh may
+    // have replaced it while we were awaiting.
+    if (slot.inFlight?.promise === refresh) {
+      slot.inFlight = null;
     }
   }
 }
@@ -164,157 +316,106 @@ export async function fetchAbilities(
   logger?: Logger
 ): Promise<Ability[]> {
   const namespaces = config.abilityNamespaces;
-  const signature = namespaceSignature(namespaces);
-
-  // Return cached data only if still fresh AND the namespace allowlist hasn't
-  // changed since the cache was populated.
-  if (
-    !forceRefresh &&
-    cachedAbilities &&
-    abilitiesNamespaceSignature === signature &&
-    Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS
-  ) {
-    return cachedAbilities;
-  }
-
   const baseUrl = getAbilitiesApiUrl(config);
-  const customFetch = createFetch(config);
 
-  try {
-    const allAbilities = await paginateApi<Ability>(
-      customFetch,
-      `${baseUrl}/abilities`,
-      'abilities',
-      config.maxResponseSize,
-      logger
-    );
-
-    const newAbilities = allAbilities.filter(a => {
-      if (!isAllowedNamespace(a.name, namespaces)) return false;
-      // Defense in depth: drop abilities whose names fail the strict format
-      // check before they reach the tool index. A malformed name (extra
-      // slash, bad charset) would otherwise surface as an invalid MCP tool
-      // name in ListTools and only fail at execute time.
-      if (!ABILITY_NAME_RE.test(a.name)) {
-        logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
-        return false;
-      }
-      return true;
-    });
-
-    // A misconfigured namespace allowlist boots a server that advertises
-    // zero tools with no other symptom — warn loudly so the cause is in the
-    // logs instead of leaving a silently empty server. An empty upstream is
-    // a different problem, so it gets its own message.
-    if (allAbilities.length === 0) {
-      logger?.warning('Dashboard returned no abilities', { namespaces });
-    } else if (newAbilities.length === 0) {
-      logger?.warning('No abilities matched the configured namespaces', {
-        namespaces,
-        fetchedCount: allAbilities.length,
+  return getCachedOrRefresh({
+    slot: abilitiesCache,
+    signature: cacheSignature(config),
+    label: 'abilities',
+    forceRefresh,
+    logger,
+    fetchFn: () =>
+      paginateApi<Ability>(
+        createFetch(config),
+        `${baseUrl}/abilities`,
+        'abilities',
+        config.maxResponseSize,
+        logger
+      ),
+    process: allAbilities => {
+      const newAbilities = allAbilities.filter(a => {
+        if (!isAllowedNamespace(a.name, namespaces)) return false;
+        // Defense in depth: drop abilities whose names fail the strict format
+        // check before they reach the tool index. A malformed name (extra
+        // slash, bad charset) would otherwise surface as an invalid MCP tool
+        // name in ListTools and only fail at execute time.
+        if (!ABILITY_NAME_RE.test(a.name)) {
+          logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
+          return false;
+        }
+        return true;
       });
-    }
 
-    // Check if abilities have changed (compare names)
-    const oldNames =
-      cachedAbilities
-        ?.map(a => a.name)
-        .sort()
-        .join(',') ?? '';
-    const newNames = newAbilities
-      .map(a => a.name)
-      .sort()
-      .join(',');
-    const hasChanged = oldNames !== newNames;
-
-    // Build indices into local variables first, then assign all module-level
-    // cache state together once the loop has completed cleanly. If the
-    // collision throw fires mid-loop we leave the existing cache untouched
-    // rather than serving a partially built tool-name index that would make
-    // some tools silently unresolvable.
-    const newAbilitiesIndex = new Map<string, Ability>();
-    const newToolNameIndex = new Map<string, Ability>();
-    const primary = namespaces[0];
-    for (const ability of newAbilities) {
-      newAbilitiesIndex.set(ability.name, ability);
-
-      const toolName = abilityNameToToolName(ability.name, primary);
-      // Tool name collisions are rare but possible: ABILITY_NAME_RE forbids
-      // `_` in names and `__` is the namespace/slug separator for non-primary
-      // namespaces, but a double hyphen in a slug also maps to `__` (e.g.
-      // primary `mainwp/foo--bar` and non-primary `foo/bar` both produce
-      // `foo__bar`), and upstream could return duplicate names. Fail loud
-      // rather than silently shadowing one ability under the other's tool
-      // name.
-      const existing = newToolNameIndex.get(toolName);
-      if (existing) {
-        throw new Error(
-          `Tool name collision: "${toolName}" produced by both "${existing.name}" and "${ability.name}". ` +
-            `This indicates a violation of the namespace/slug invariants in abilities.ts.`
-        );
-      }
-      newToolNameIndex.set(toolName, ability);
-    }
-    cachedAbilities = newAbilities;
-    abilitiesIndex = newAbilitiesIndex;
-    toolNameIndex = newToolNameIndex;
-    abilitiesCacheTimestamp = Date.now();
-    abilitiesNamespaceSignature = signature;
-
-    // Notify callbacks if abilities changed
-    if (hasChanged && oldNames !== '') {
-      notifyCacheRefresh();
-    }
-
-    return cachedAbilities;
-  } catch (error) {
-    // Snapshot the cache's current signature so a concurrent fetch that
-    // succeeds and writes new cache state can't be silently discarded by
-    // this catch block when we re-check below.
-    const cachedSignature = abilitiesNamespaceSignature;
-
-    // Serve stale cache on transient failures, but only up to MAX_STALE_AGE_MS,
-    // and only when the cached data was built for the same namespace allowlist.
-    // A signature mismatch means the user changed config — falling back to the
-    // old cache would silently return the wrong set of abilities.
-    if (cachedAbilities && cachedSignature === signature) {
-      const cacheAgeMs = Date.now() - abilitiesCacheTimestamp;
-      const cacheAgeMinutes = Math.round(cacheAgeMs / 60000);
-      if (cacheAgeMs > MAX_STALE_AGE_MS) {
-        logger?.error('Stale cache exceeded max age, discarding', {
-          cacheAgeMinutes,
-          maxStaleMinutes: MAX_STALE_AGE_MS / 60000,
+      // A misconfigured namespace allowlist boots a server that advertises
+      // zero tools with no other symptom — warn loudly so the cause is in the
+      // logs instead of leaving a silently empty server. An empty upstream is
+      // a different problem, so it gets its own message.
+      if (allAbilities.length === 0) {
+        logger?.warning('Dashboard returned no abilities', { namespaces });
+      } else if (newAbilities.length === 0) {
+        logger?.warning('No abilities matched the configured namespaces', {
+          namespaces,
+          fetchedCount: allAbilities.length,
         });
-        cachedAbilities = null;
-        abilitiesIndex = null;
-        toolNameIndex = null;
-        throw error;
       }
-      logger?.warning('Failed to refresh abilities, using cached data', {
-        error: sanitizeError(String(error)),
-        cacheAgeMinutes,
-      });
-      return cachedAbilities;
-    }
 
-    // Cache is missing or its signature no longer matches the requested
-    // signature. If the signature has CHANGED since we entered the catch (a
-    // concurrent fetch succeeded with a different config), leave that cache
-    // intact — only null when the signature still matches the stale data we
-    // were about to serve. Either way, surface the error: we can't return
-    // wrong-namespace data, and we won't lie about a fetch that failed.
-    if (cachedAbilities && abilitiesNamespaceSignature === cachedSignature) {
-      logger?.warning('Discarding cache: namespace allowlist changed and refresh failed', {
-        cachedSignature,
-        requestedSignature: signature,
-        error: sanitizeError(String(error)),
-      });
-      cachedAbilities = null;
-      abilitiesIndex = null;
-      toolNameIndex = null;
-    }
-    throw error;
-  }
+      // Check if abilities have changed (compare names against the not-yet-
+      // replaced cache)
+      const oldNames =
+        abilitiesCache.data
+          ?.map(a => a.name)
+          .sort()
+          .join(',') ?? '';
+      const newNames = newAbilities
+        .map(a => a.name)
+        .sort()
+        .join(',');
+      const hasChanged = oldNames !== newNames;
+
+      // Build indices into local variables first; they're committed together
+      // with the cache write. If the collision throw fires mid-loop the
+      // existing cache and indexes stay untouched rather than serving a
+      // partially built tool-name index that would make some tools silently
+      // unresolvable.
+      const newAbilitiesIndex = new Map<string, Ability>();
+      const newToolNameIndex = new Map<string, Ability>();
+      const primary = namespaces[0];
+      for (const ability of newAbilities) {
+        newAbilitiesIndex.set(ability.name, ability);
+
+        const toolName = abilityNameToToolName(ability.name, primary);
+        // Tool name collisions are rare but possible: ABILITY_NAME_RE forbids
+        // `_` in names and `__` is the namespace/slug separator for non-primary
+        // namespaces, but a double hyphen in a slug also maps to `__` (e.g.
+        // primary `mainwp/foo--bar` and non-primary `foo/bar` both produce
+        // `foo__bar`), and upstream could return duplicate names. Fail loud
+        // rather than silently shadowing one ability under the other's tool
+        // name.
+        const existing = newToolNameIndex.get(toolName);
+        if (existing) {
+          throw new Error(
+            `Tool name collision: "${toolName}" produced by both "${existing.name}" and "${ability.name}". ` +
+              `This indicates a violation of the namespace/slug invariants in abilities.ts.`
+          );
+        }
+        newToolNameIndex.set(toolName, ability);
+      }
+
+      return {
+        data: newAbilities,
+        commit: () => {
+          abilityIndexes.set(newAbilities, {
+            byName: newAbilitiesIndex,
+            byToolName: newToolNameIndex,
+          });
+          // Notify callbacks if abilities changed
+          if (hasChanged && oldNames !== '') {
+            notifyCacheRefresh(logger);
+          }
+        },
+      };
+    },
+  });
 }
 
 /**
@@ -326,74 +427,27 @@ export async function fetchCategories(
   logger?: Logger
 ): Promise<Category[]> {
   const namespaces = config.abilityNamespaces;
-  const signature = namespaceSignature(namespaces);
-
-  // Return cached data only if still fresh AND the namespace allowlist hasn't
-  // changed since the cache was populated. Without this, a config change
-  // would leave the category list out of sync with the ability list for up
-  // to one TTL window.
-  if (
-    !forceRefresh &&
-    cachedCategories &&
-    categoriesNamespaceSignature === signature &&
-    Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS
-  ) {
-    return cachedCategories;
-  }
-
   const baseUrl = getAbilitiesApiUrl(config);
-  const customFetch = createFetch(config);
 
-  try {
-    const allCategories = await paginateApi<Category>(
-      customFetch,
-      `${baseUrl}/categories`,
-      'categories',
-      config.maxResponseSize,
-      logger
-    );
-
+  return getCachedOrRefresh({
+    slot: categoriesCache,
+    signature: cacheSignature(config),
+    label: 'categories',
+    forceRefresh,
+    logger,
+    fetchFn: () =>
+      paginateApi<Category>(
+        createFetch(config),
+        `${baseUrl}/categories`,
+        'categories',
+        config.maxResponseSize,
+        logger
+      ),
     // Filter categories to configured namespaces (allowlist of `{ns}-` prefixes)
-    cachedCategories = allCategories.filter(c => isAllowedCategory(c.slug, namespaces));
-    categoriesCacheTimestamp = Date.now();
-    categoriesNamespaceSignature = signature;
-
-    return cachedCategories;
-  } catch (error) {
-    const cachedSignature = categoriesNamespaceSignature;
-
-    if (cachedCategories && cachedSignature === signature) {
-      const cacheAgeMs = Date.now() - categoriesCacheTimestamp;
-      const cacheAgeMinutes = Math.round(cacheAgeMs / 60000);
-      if (cacheAgeMs > MAX_STALE_AGE_MS) {
-        logger?.error('Stale categories cache exceeded max age, discarding', {
-          cacheAgeMinutes,
-          maxStaleMinutes: MAX_STALE_AGE_MS / 60000,
-        });
-        cachedCategories = null;
-        throw error;
-      }
-      logger?.warning('Failed to refresh categories, using cached data', {
-        error: sanitizeError(String(error)),
-        cacheAgeMinutes,
-      });
-      return cachedCategories;
-    }
-
-    // Signature mismatch or no cache — race-safe discard (see fetchAbilities).
-    if (cachedCategories && categoriesNamespaceSignature === cachedSignature) {
-      logger?.warning(
-        'Discarding categories cache: namespace allowlist changed and refresh failed',
-        {
-          cachedSignature,
-          requestedSignature: signature,
-          error: sanitizeError(String(error)),
-        }
-      );
-      cachedCategories = null;
-    }
-    throw error;
-  }
+    process: allCategories => ({
+      data: allCategories.filter(c => isAllowedCategory(c.slug, namespaces)),
+    }),
+  });
 }
 
 /**
@@ -404,8 +458,10 @@ export async function getAbility(
   name: string,
   logger?: Logger
 ): Promise<Ability | undefined> {
-  await fetchAbilities(config, false, logger);
-  return abilitiesIndex?.get(name);
+  // Look up via the indexes built for the exact array this call received —
+  // never via shared mutable state a concurrent fetch could have replaced.
+  const abilities = await fetchAbilities(config, false, logger);
+  return abilityIndexes.get(abilities)?.byName.get(name);
 }
 
 /**
@@ -421,8 +477,8 @@ export async function getAbilityByToolName(
   toolName: string,
   logger?: Logger
 ): Promise<Ability | undefined> {
-  await fetchAbilities(config, false, logger);
-  return toolNameIndex?.get(toolName);
+  const abilities = await fetchAbilities(config, false, logger);
+  return abilityIndexes.get(abilities)?.byToolName.get(toolName);
 }
 
 /**
@@ -452,22 +508,6 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
   }
 
   return params.length > 0 ? '?' + params.join('&') : '';
-}
-
-/**
- * Create an HTTP error with status code for retry detection.
- * The status is embedded in the error object and message for isRetryableError() to detect.
- *
- * @param status - HTTP status code
- * @param errorCode - Error code (from JSON response or status string)
- * @param message - Error message
- */
-function createHttpError(status: number, errorCode: string, message: string): Error {
-  const error = new Error(`Ability execution failed: ${errorCode} - ${message}`);
-  const httpError = error as Error & { status: number; code: string };
-  httpError.status = status;
-  httpError.code = errorCode;
-  return error;
 }
 
 /**
@@ -514,9 +554,11 @@ export async function executeAbility(
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
 
-  // Audit log for destructive operations - logs operation name only, no sensitive parameters
+  // Audit: fires only when a destructive operation actually reaches execution
+  // (safe-mode blocks never get here); logs operation name only, no sensitive
+  // parameters. The matching "requested" event lives in executeTool.
   if (isDestructive) {
-    logger?.info('AUDIT: Destructive operation requested', { abilityName });
+    logger?.info('AUDIT: destructive operation executed', { abilityName });
   }
 
   /**
@@ -583,7 +625,11 @@ export async function executeAbility(
         upstreamLatencyMs,
       });
 
-      throw createHttpError(response.status, errorCode, sanitizeError(errorMsg));
+      throw createHttpError(
+        response.status,
+        errorCode,
+        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}`
+      );
     }
 
     // Read response body with streaming size enforcement
@@ -620,12 +666,18 @@ export async function executeAbility(
  * Clear the abilities cache
  */
 export function clearCache(): void {
-  cachedAbilities = null;
-  abilitiesIndex = null;
-  toolNameIndex = null;
-  cachedCategories = null;
-  abilitiesCacheTimestamp = 0;
-  categoriesCacheTimestamp = 0;
-  abilitiesNamespaceSignature = '';
-  categoriesNamespaceSignature = '';
+  // A refresh in flight at clear time will still commit when it resolves
+  // (same semantics as before the slot refactor); clearing the inFlight
+  // registration just stops new callers from joining the pre-clear fetch.
+  // Derived indexes live in a WeakMap keyed by the discarded arrays, so
+  // they're garbage-collected with them — nothing to clear here. The
+  // generation stays monotonic (bumped, not reset) so any refresh that
+  // snapshotted it before this clear can never mistake later data for its
+  // own start state.
+  Object.assign(abilitiesCache, emptySlot<Ability[]>(), {
+    generation: abilitiesCache.generation + 1,
+  });
+  Object.assign(categoriesCache, emptySlot<Category[]>(), {
+    generation: categoriesCache.generation + 1,
+  });
 }

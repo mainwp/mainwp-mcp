@@ -7,6 +7,7 @@
 
 import { Agent as UndiciAgent } from 'undici';
 import { Config, getAuthHeaders } from './config.js';
+import { createHttpError } from './errors.js';
 import { sanitizeError } from './security.js';
 import type { Logger } from './logging.js';
 
@@ -140,7 +141,8 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
     if (done) break;
     totalBytes += value.byteLength;
     if (totalBytes > maxBytes) {
-      reader.cancel();
+      // Fire-and-forget: a rejected cancel() must not race the throw below
+      void reader.cancel().catch(() => {});
       throw new Error(`Response body exceeds ${maxBytes} bytes limit`);
     }
     chunks.push(value);
@@ -168,7 +170,9 @@ export async function paginateApi<T>(
 
     if (!response.ok) {
       const errorText = await readLimitedBody(response, MAX_ERROR_BODY_BYTES);
-      throw new Error(
+      throw createHttpError(
+        response.status,
+        String(response.status),
         `Failed to fetch ${label}: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`
       );
     }

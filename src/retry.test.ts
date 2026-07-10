@@ -57,6 +57,21 @@ describe('isRetryableError', () => {
       const error = new Error('Unprocessable Entity: 422');
       expect(isRetryableError(error)).toBe(false);
     });
+
+    it('ignores unrelated numbers in error messages', () => {
+      expect(isRetryableError(new Error('cannot process more than 500 items'))).toBe(false);
+      expect(isRetryableError(new Error('connection idle for 503 seconds'))).toBe(false);
+    });
+
+    it('extracts status codes preceded by the word "status"', () => {
+      expect(isRetryableError(new Error('Request failed with status 503'))).toBe(true);
+      expect(isRetryableError(new Error('status code 502 received'))).toBe(true);
+    });
+
+    it('extracts status codes at the start of the message', () => {
+      expect(isRetryableError(new Error('503 Service Unavailable'))).toBe(true);
+      expect(isRetryableError(new Error('404 Not Found'))).toBe(false);
+    });
   });
 
   describe('network error codes', () => {

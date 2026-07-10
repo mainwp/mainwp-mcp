@@ -187,8 +187,9 @@ export async function handleConfirmationFlow(
   if (args.confirm === true && args.user_confirmed !== true) {
     cleanupExpiredPreviews();
 
-    // Execute preview with dry_run: true
-    const previewArgs = { ...effectiveArgs, dry_run: true, confirm: undefined };
+    // Execute preview with dry_run: true and the confirm flag removed
+    const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
+    delete previewArgs.confirm;
     const previewResult = await executeAbility(
       config,
       abilityName,
