@@ -21,8 +21,8 @@ These JSON fixtures provide reusable test data that can be shared across tests. 
 Import fixtures in test files:
 
 ```typescript
-import configFixture from '../tests/fixtures/config.json';
-import siteFixture from '../tests/fixtures/site.json';
+import configFixture from '../tests/fixtures/config.json' with { type: 'json' };
+import siteFixture from '../tests/fixtures/site.json' with { type: 'json' };
 ```
 
 **Current usage:**
