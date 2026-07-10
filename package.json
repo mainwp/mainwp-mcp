@@ -26,6 +26,7 @@
     "test:evals": "vitest run tests/evals/",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.eslint.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:manual": "tsx scripts/manual-test.ts",

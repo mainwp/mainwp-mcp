@@ -474,7 +474,8 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
     } catch (err) {
       console.error(`  Discovery failed (list-sites): ${(err as Error).message}`);
       throw new Error(
-        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`
+        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`,
+        { cause: err }
       );
     }
   }

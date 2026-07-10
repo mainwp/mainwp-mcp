@@ -30,3 +30,6 @@ test-results/
 
 # Override global gitignore for CI/CD
 !.github/
+
+# Local log output (never tracked; may contain request data)
+logs/
