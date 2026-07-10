@@ -60,6 +60,17 @@ export interface Config {
   schemaVerbosity: SchemaVerbosity;
   /** Response format: 'compact' omits whitespace to reduce token usage, 'pretty' uses 2-space indentation */
   responseFormat: ResponseFormat;
+  /**
+   * Allowed ability namespaces (default: ['mainwp']). Abilities whose name's
+   * namespace prefix is in this list are surfaced as MCP tools. The first
+   * entry is the *primary* namespace — its abilities get unprefixed tool
+   * names; other namespaces produce `{ns}__{tool}` to avoid collisions.
+   *
+   * Typed as a non-empty tuple so `abilityNamespaces[0]` is statically known
+   * to be a string. `loadConfig` enforces this at runtime; the type makes
+   * direct Config construction (e.g. in tests) honor the same invariant.
+   */
+  abilityNamespaces: [string, ...string[]];
   /** Enable retry logic for transient errors (default: true) */
   retryEnabled: boolean;
   /** Maximum retry attempts including initial request (default: 2) */
@@ -108,6 +119,8 @@ export interface SettingsFile {
   schemaVerbosity?: SchemaVerbosity;
   /** Response format: 'compact' omits whitespace to reduce token usage, 'pretty' uses 2-space indentation */
   responseFormat?: ResponseFormat;
+  /** Allowed ability namespaces (default: ['mainwp']). First entry is the primary namespace. */
+  abilityNamespaces?: string[];
   /** Enable retry logic for transient errors (default: true) */
   retryEnabled?: boolean;
   /** Maximum retry attempts including initial request (default: 2) */
@@ -119,6 +132,17 @@ export interface SettingsFile {
 }
 
 const SETTINGS_FILENAME = 'settings.json';
+
+/**
+ * Valid WP Abilities namespace: lowercase alphanumeric with internal hyphens,
+ * no leading/trailing hyphen. Must stay in sync with the namespace portion of
+ * ABILITY_NAME_RE in abilities.ts — a namespace accepted here but rejected
+ * there would silently filter out every ability it matches.
+ */
+const ABILITY_NAMESPACE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/** Default namespace allowlist. */
+const DEFAULT_ABILITY_NAMESPACES: readonly string[] = ['mainwp'] as const;
 
 /**
  * Validate settings file structure and types
@@ -157,7 +181,7 @@ function validateSettingsFile(settings: any, filePath: string): void {
     'retryBaseDelay',
     'retryMaxDelay',
   ];
-  const arrayFields = ['allowedTools', 'blockedTools'];
+  const arrayFields = ['allowedTools', 'blockedTools', 'abilityNamespaces'];
 
   // Validate string fields
   for (const field of stringFields) {
@@ -205,6 +229,23 @@ function validateSettingsFile(settings: any, filePath: string): void {
       errors.push(
         `"responseFormat" must be one of: ${RESPONSE_FORMAT_VALUES.join(', ')}; got: "${settings.responseFormat}"`
       );
+    }
+  }
+
+  // Validate abilityNamespaces entries (charset + non-empty list). The
+  // generic arrayFields check above already verified every entry is a string,
+  // so only the charset check runs here.
+  if (Array.isArray(settings.abilityNamespaces)) {
+    if (settings.abilityNamespaces.length === 0) {
+      errors.push('"abilityNamespaces" must not be empty');
+    }
+    for (const ns of settings.abilityNamespaces) {
+      if (typeof ns !== 'string') continue; // arrayFields check reported this already
+      if (!ABILITY_NAMESPACE_RE.test(ns)) {
+        errors.push(
+          `"abilityNamespaces" entry "${ns}" must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and internal hyphens)`
+        );
+      }
     }
   }
 
@@ -386,7 +427,8 @@ export function loadConfig(): Config {
     process.env.MAINWP_RETRY_ENABLED ||
     process.env.MAINWP_MAX_RETRIES ||
     process.env.MAINWP_RETRY_BASE_DELAY ||
-    process.env.MAINWP_RETRY_MAX_DELAY
+    process.env.MAINWP_RETRY_MAX_DELAY ||
+    process.env.MAINWP_ABILITY_NAMESPACES
   );
 
   const configSource: 'environment' | 'settings file' | 'mixed' =
@@ -488,6 +530,33 @@ export function loadConfig(): Config {
     );
   }
 
+  // Parse ability namespace allowlist (default: ['mainwp']). Deduplicate so
+  // the env-var path (no schema-level uniqueItems) and the settings.json path
+  // produce identical cache signatures for equivalent input.
+  const rawAbilityNamespaces = getStringArray(
+    process.env.MAINWP_ABILITY_NAMESPACES,
+    settings?.abilityNamespaces,
+    [...DEFAULT_ABILITY_NAMESPACES]
+  );
+  const abilityNamespaces = Array.from(new Set(rawAbilityNamespaces));
+  if (abilityNamespaces.length === 0) {
+    const source = process.env.MAINWP_ABILITY_NAMESPACES
+      ? `MAINWP_ABILITY_NAMESPACES="${process.env.MAINWP_ABILITY_NAMESPACES}"`
+      : 'settings.json';
+    throw new Error(
+      `abilityNamespaces must contain at least one non-empty entry (got from ${source})`
+    );
+  }
+  for (const ns of abilityNamespaces) {
+    if (!ABILITY_NAMESPACE_RE.test(ns)) {
+      throw new Error(
+        `Invalid abilityNamespaces entry "${ns}": must match ${ABILITY_NAMESPACE_RE} (lowercase alphanumeric and internal hyphens)`
+      );
+    }
+  }
+  // Re-assert the non-empty-tuple shape for the Config interface.
+  const abilityNamespacesTuple = abilityNamespaces as [string, ...string[]];
+
   // Parse retry configuration
   const retryEnabled = getBoolean(process.env.MAINWP_RETRY_ENABLED, settings?.retryEnabled, true);
 
@@ -579,6 +648,7 @@ export function loadConfig(): Config {
     maxSessionData,
     schemaVerbosity,
     responseFormat,
+    abilityNamespaces: abilityNamespacesTuple,
     retryEnabled,
     maxRetries,
     retryBaseDelay,

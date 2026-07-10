@@ -17,12 +17,20 @@ import {
   MAX_URL_LENGTH,
 } from './http-client.js';
 import type { Logger } from './logging.js';
+import { abilityNameToToolName } from './naming.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
 
-/** Strict format for ability names — prevents path traversal in URL construction */
-const ABILITY_NAME_RE = /^[a-z0-9]+\/[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/**
+ * Strict format for ability names — prevents path traversal in URL construction.
+ * The namespace portion allows internal hyphens so hyphenated namespaces like
+ * `acme-corp` round-trip cleanly between config and execute, but forbids
+ * leading/trailing hyphens (same shape as the slug portion). Both portions
+ * forbid `_` so the `__` namespace/slug separator stays unambiguous in tool
+ * names. Must stay in sync with ABILITY_NAMESPACE_RE in config.ts.
+ */
+const ABILITY_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?\/[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 /**
  * Rate limiter instance (initialized via initRateLimiter)
@@ -77,17 +85,49 @@ export interface Category {
  */
 let cachedAbilities: Ability[] | null = null;
 let abilitiesIndex: Map<string, Ability> | null = null;
+let toolNameIndex: Map<string, Ability> | null = null;
 let cachedCategories: Category[] | null = null;
 let abilitiesCacheTimestamp: number = 0;
 let categoriesCacheTimestamp: number = 0;
+let abilitiesNamespaceSignature: string = '';
+let categoriesNamespaceSignature: string = '';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Hardcoded namespace filter for MainWP abilities.
- * This server only supports MainWP abilities (mainwp/* namespace).
+ * Build a stable signature of the configured namespaces so a config change
+ * (e.g. adding a third-party namespace) forces a cache refresh instead of
+ * serving stale, namespace-filtered data.
  */
-const NAMESPACE_FILTER = 'mainwp/';
-const CATEGORY_FILTER = 'mainwp-';
+function namespaceSignature(namespaces: string[]): string {
+  return namespaces.join('|');
+}
+
+/**
+ * Returns true if the ability's namespace is in the allowlist.
+ */
+function isAllowedNamespace(abilityName: string, namespaces: string[]): boolean {
+  const slashIndex = abilityName.indexOf('/');
+  if (slashIndex === -1) return false;
+  const namespace = abilityName.slice(0, slashIndex);
+  return namespaces.includes(namespace);
+}
+
+/**
+ * Returns true if the category slug starts with any configured namespace's
+ * `{ns}-` prefix.
+ *
+ * Known limitation: category metadata from the WP Abilities API does not
+ * carry an explicit namespace field, so when the upstream server registers
+ * both `acme` and `acme-corp` and the user configures only `['acme']`, a
+ * slug like `acme-corp-things` (which belongs to `acme-corp`) still passes
+ * this filter and shows up in the `mainwp://categories` resource as an
+ * empty category — none of its abilities pass `isAllowedNamespace`, so no
+ * ability misrouting occurs. The effect is cosmetic. If both prefix-related
+ * namespaces are listed in the allowlist, all categories surface correctly.
+ */
+function isAllowedCategory(slug: string, namespaces: string[]): boolean {
+  return namespaces.some(ns => slug.startsWith(`${ns}-`));
+}
 
 /**
  * Cache refresh callbacks
@@ -123,8 +163,17 @@ export async function fetchAbilities(
   forceRefresh = false,
   logger?: Logger
 ): Promise<Ability[]> {
-  // Return cached data if still valid
-  if (!forceRefresh && cachedAbilities && Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS) {
+  const namespaces = config.abilityNamespaces;
+  const signature = namespaceSignature(namespaces);
+
+  // Return cached data only if still fresh AND the namespace allowlist hasn't
+  // changed since the cache was populated.
+  if (
+    !forceRefresh &&
+    cachedAbilities &&
+    abilitiesNamespaceSignature === signature &&
+    Date.now() - abilitiesCacheTimestamp < CACHE_TTL_MS
+  ) {
     return cachedAbilities;
   }
 
@@ -140,7 +189,31 @@ export async function fetchAbilities(
       logger
     );
 
-    const newAbilities = allAbilities.filter(a => a.name.startsWith(NAMESPACE_FILTER));
+    const newAbilities = allAbilities.filter(a => {
+      if (!isAllowedNamespace(a.name, namespaces)) return false;
+      // Defense in depth: drop abilities whose names fail the strict format
+      // check before they reach the tool index. A malformed name (extra
+      // slash, bad charset) would otherwise surface as an invalid MCP tool
+      // name in ListTools and only fail at execute time.
+      if (!ABILITY_NAME_RE.test(a.name)) {
+        logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
+        return false;
+      }
+      return true;
+    });
+
+    // A misconfigured namespace allowlist boots a server that advertises
+    // zero tools with no other symptom — warn loudly so the cause is in the
+    // logs instead of leaving a silently empty server. An empty upstream is
+    // a different problem, so it gets its own message.
+    if (allAbilities.length === 0) {
+      logger?.warning('Dashboard returned no abilities', { namespaces });
+    } else if (newAbilities.length === 0) {
+      logger?.warning('No abilities matched the configured namespaces', {
+        namespaces,
+        fetchedCount: allAbilities.length,
+      });
+    }
 
     // Check if abilities have changed (compare names)
     const oldNames =
@@ -154,12 +227,39 @@ export async function fetchAbilities(
       .join(',');
     const hasChanged = oldNames !== newNames;
 
-    cachedAbilities = newAbilities;
-    abilitiesIndex = new Map<string, Ability>();
+    // Build indices into local variables first, then assign all module-level
+    // cache state together once the loop has completed cleanly. If the
+    // collision throw fires mid-loop we leave the existing cache untouched
+    // rather than serving a partially built tool-name index that would make
+    // some tools silently unresolvable.
+    const newAbilitiesIndex = new Map<string, Ability>();
+    const newToolNameIndex = new Map<string, Ability>();
+    const primary = namespaces[0];
     for (const ability of newAbilities) {
-      abilitiesIndex.set(ability.name, ability);
+      newAbilitiesIndex.set(ability.name, ability);
+
+      const toolName = abilityNameToToolName(ability.name, primary);
+      // Tool name collisions are rare but possible: ABILITY_NAME_RE forbids
+      // `_` in names and `__` is the namespace/slug separator for non-primary
+      // namespaces, but a double hyphen in a slug also maps to `__` (e.g.
+      // primary `mainwp/foo--bar` and non-primary `foo/bar` both produce
+      // `foo__bar`), and upstream could return duplicate names. Fail loud
+      // rather than silently shadowing one ability under the other's tool
+      // name.
+      const existing = newToolNameIndex.get(toolName);
+      if (existing) {
+        throw new Error(
+          `Tool name collision: "${toolName}" produced by both "${existing.name}" and "${ability.name}". ` +
+            `This indicates a violation of the namespace/slug invariants in abilities.ts.`
+        );
+      }
+      newToolNameIndex.set(toolName, ability);
     }
+    cachedAbilities = newAbilities;
+    abilitiesIndex = newAbilitiesIndex;
+    toolNameIndex = newToolNameIndex;
     abilitiesCacheTimestamp = Date.now();
+    abilitiesNamespaceSignature = signature;
 
     // Notify callbacks if abilities changed
     if (hasChanged && oldNames !== '') {
@@ -168,9 +268,16 @@ export async function fetchAbilities(
 
     return cachedAbilities;
   } catch (error) {
-    // Serve stale cache on transient failures, but only up to MAX_STALE_AGE_MS.
-    // Beyond that, the cache may be dangerously outdated (e.g., poisoned abilities).
-    if (cachedAbilities) {
+    // Snapshot the cache's current signature so a concurrent fetch that
+    // succeeds and writes new cache state can't be silently discarded by
+    // this catch block when we re-check below.
+    const cachedSignature = abilitiesNamespaceSignature;
+
+    // Serve stale cache on transient failures, but only up to MAX_STALE_AGE_MS,
+    // and only when the cached data was built for the same namespace allowlist.
+    // A signature mismatch means the user changed config — falling back to the
+    // old cache would silently return the wrong set of abilities.
+    if (cachedAbilities && cachedSignature === signature) {
       const cacheAgeMs = Date.now() - abilitiesCacheTimestamp;
       const cacheAgeMinutes = Math.round(cacheAgeMs / 60000);
       if (cacheAgeMs > MAX_STALE_AGE_MS) {
@@ -180,6 +287,7 @@ export async function fetchAbilities(
         });
         cachedAbilities = null;
         abilitiesIndex = null;
+        toolNameIndex = null;
         throw error;
       }
       logger?.warning('Failed to refresh abilities, using cached data', {
@@ -187,6 +295,23 @@ export async function fetchAbilities(
         cacheAgeMinutes,
       });
       return cachedAbilities;
+    }
+
+    // Cache is missing or its signature no longer matches the requested
+    // signature. If the signature has CHANGED since we entered the catch (a
+    // concurrent fetch succeeded with a different config), leave that cache
+    // intact — only null when the signature still matches the stale data we
+    // were about to serve. Either way, surface the error: we can't return
+    // wrong-namespace data, and we won't lie about a fetch that failed.
+    if (cachedAbilities && abilitiesNamespaceSignature === cachedSignature) {
+      logger?.warning('Discarding cache: namespace allowlist changed and refresh failed', {
+        cachedSignature,
+        requestedSignature: signature,
+        error: sanitizeError(String(error)),
+      });
+      cachedAbilities = null;
+      abilitiesIndex = null;
+      toolNameIndex = null;
     }
     throw error;
   }
@@ -200,8 +325,19 @@ export async function fetchCategories(
   forceRefresh = false,
   logger?: Logger
 ): Promise<Category[]> {
-  // Return cached data if still valid
-  if (!forceRefresh && cachedCategories && Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS) {
+  const namespaces = config.abilityNamespaces;
+  const signature = namespaceSignature(namespaces);
+
+  // Return cached data only if still fresh AND the namespace allowlist hasn't
+  // changed since the cache was populated. Without this, a config change
+  // would leave the category list out of sync with the ability list for up
+  // to one TTL window.
+  if (
+    !forceRefresh &&
+    cachedCategories &&
+    categoriesNamespaceSignature === signature &&
+    Date.now() - categoriesCacheTimestamp < CACHE_TTL_MS
+  ) {
     return cachedCategories;
   }
 
@@ -217,13 +353,16 @@ export async function fetchCategories(
       logger
     );
 
-    // Filter categories to only MainWP namespace
-    cachedCategories = allCategories.filter(c => c.slug.startsWith(CATEGORY_FILTER));
+    // Filter categories to configured namespaces (allowlist of `{ns}-` prefixes)
+    cachedCategories = allCategories.filter(c => isAllowedCategory(c.slug, namespaces));
     categoriesCacheTimestamp = Date.now();
+    categoriesNamespaceSignature = signature;
 
     return cachedCategories;
   } catch (error) {
-    if (cachedCategories) {
+    const cachedSignature = categoriesNamespaceSignature;
+
+    if (cachedCategories && cachedSignature === signature) {
       const cacheAgeMs = Date.now() - categoriesCacheTimestamp;
       const cacheAgeMinutes = Math.round(cacheAgeMs / 60000);
       if (cacheAgeMs > MAX_STALE_AGE_MS) {
@@ -240,6 +379,19 @@ export async function fetchCategories(
       });
       return cachedCategories;
     }
+
+    // Signature mismatch or no cache — race-safe discard (see fetchAbilities).
+    if (cachedCategories && categoriesNamespaceSignature === cachedSignature) {
+      logger?.warning(
+        'Discarding categories cache: namespace allowlist changed and refresh failed',
+        {
+          cachedSignature,
+          requestedSignature: signature,
+          error: sanitizeError(String(error)),
+        }
+      );
+      cachedCategories = null;
+    }
     throw error;
   }
 }
@@ -254,6 +406,23 @@ export async function getAbility(
 ): Promise<Ability | undefined> {
   await fetchAbilities(config, false, logger);
   return abilitiesIndex?.get(name);
+}
+
+/**
+ * Resolve an MCP tool name to its underlying ability via the cache index.
+ * Tool names are not uniquely decodable back to ability names — hyphens in
+ * the ability slug map to underscores, and the same shape can in principle
+ * collide across namespaces — so reverse lookup goes through the map built
+ * during `fetchAbilities`. The build loop throws on any collision rather
+ * than guessing; see `fetchAbilities` for the invariant rationale.
+ */
+export async function getAbilityByToolName(
+  config: Config,
+  toolName: string,
+  logger?: Logger
+): Promise<Ability | undefined> {
+  await fetchAbilities(config, false, logger);
+  return toolNameIndex?.get(toolName);
 }
 
 /**
@@ -453,7 +622,10 @@ export async function executeAbility(
 export function clearCache(): void {
   cachedAbilities = null;
   abilitiesIndex = null;
+  toolNameIndex = null;
   cachedCategories = null;
   abilitiesCacheTimestamp = 0;
   categoriesCacheTimestamp = 0;
+  abilitiesNamespaceSignature = '';
+  categoriesNamespaceSignature = '';
 }

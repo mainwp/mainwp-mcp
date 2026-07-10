@@ -28,7 +28,6 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
 import { getTools, executeTool } from './tools.js';
-import { toolNameToAbilityName } from './naming.js';
 import { getSessionDataUsage } from './session.js';
 import {
   fetchAbilities,
@@ -37,7 +36,7 @@ import {
   onCacheRefresh,
   executeAbility,
   initRateLimiter,
-  getAbility,
+  getAbilityByToolName,
   type Ability,
 } from './abilities.js';
 import { generateHelpDocument, generateToolHelp } from './help.js';
@@ -48,7 +47,7 @@ import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from 
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0-beta.2';
+const SERVER_VERSION = '1.0.0-beta.3';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
@@ -147,15 +146,11 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
     const { name, arguments: args } = request.params;
 
     try {
-      // Pass abort signal for cancellation support
-      const content = await executeTool(
-        config,
-        name,
-        (args as Record<string, unknown>) ?? {},
-        logger,
-        { signal: extra.signal }
-      );
-      return { content };
+      // Pass abort signal for cancellation support; executeTool returns the
+      // full CallToolResult shape including isError on failed calls
+      return await executeTool(config, name, (args as Record<string, unknown>) ?? {}, logger, {
+        signal: extra.signal,
+      });
     } catch (error) {
       return {
         content: [
@@ -254,7 +249,7 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (uri === 'mainwp://help') {
         const abilities = await fetchAbilities(config, false, logger);
-        return jsonResource(generateHelpDocument(abilities));
+        return jsonResource(generateHelpDocument(abilities, config.abilityNamespaces[0]));
       }
 
       // Validate and parse the resource URI (throws on invalid URIs)
@@ -272,14 +267,13 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
         const toolName = parsed.params.tool_name as string;
-        const abilityName = toolNameToAbilityName(toolName, 'mainwp');
 
-        const ability = await getAbility(config, abilityName, logger);
+        const ability = await getAbilityByToolName(config, toolName, logger);
         if (!ability) {
           throw McpErrorFactory.resourceNotFound(uri);
         }
 
-        return jsonResource(generateToolHelp(ability));
+        return jsonResource(generateToolHelp(ability, config.abilityNamespaces[0]));
       }
 
       throw new Error(`Unhandled resource type: ${parsed.type}`);
@@ -512,6 +506,20 @@ async function main(): Promise<void> {
       startupLogger.error('║  Connection is vulnerable to man-in-the-middle attacks       ║');
       startupLogger.error('║  Only use for local development with self-signed certs       ║');
       startupLogger.error('╚══════════════════════════════════════════════════════════════╝');
+    }
+
+    // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
+    // site ID prompt completions call mainwp/list-sites-v1. Without 'mainwp'
+    // in the allowlist those abilities are filtered out, so warn up front
+    // (see docs/configuration.md, "Keep mainwp in the list").
+    if (!config.abilityNamespaces.includes('mainwp')) {
+      startupLogger.warning(
+        "Namespace allowlist does not include 'mainwp'. The mainwp://site/{id} resource calls " +
+          'mainwp/get-site-v1 and site ID prompt completions call mainwp/list-sites-v1; with ' +
+          "'mainwp' filtered out, the resource returns an error payload and completions come " +
+          "back empty. Add 'mainwp' alongside other namespaces rather than replacing it.",
+        { abilityNamespaces: config.abilityNamespaces }
+      );
     }
 
     // Validate credentials with fail-fast behavior

@@ -1,38 +1,46 @@
 /**
  * Name Conversion Utilities
  *
- * Shared functions for converting between MainWP ability names and MCP tool names.
- * Extracted to avoid circular imports between abilities.ts and tools.ts.
+ * Forward-only: ability name → MCP tool name. Reverse lookup
+ * (tool name → ability) is handled via the cache index in abilities.ts
+ * (see getAbilityByToolName) — tool names are not uniquely decodable.
  */
 
 /**
- * Convert ability name to MCP tool name
- * Strips namespace prefix since MCP server name provides context.
- * e.g., "mainwp/list-sites-v1" -> "list_sites_v1"
+ * Convert an ability name to its MCP tool name.
+ *
+ * The function has two output shapes selected by `primaryNamespace`:
+ *
+ * 1. **Ability is in the primary namespace** — namespace prefix is stripped
+ *    (the MCP server name already provides that context):
+ *      abilityNameToToolName('mainwp/list-sites-v1', 'mainwp')
+ *      → 'list_sites_v1'
+ *
+ * 2. **Ability is in any other configured namespace** — namespace is kept
+ *    with a double-underscore separator so it can't be confused with the
+ *    single underscores inside tool names. Hyphens in the namespace itself
+ *    are converted to underscores to keep MCP tool names within the
+ *    `[a-z0-9_]+` charset that all MCP clients accept:
+ *      abilityNameToToolName('acme/do-thing-v1', 'mainwp')
+ *      → 'acme__do_thing_v1'
+ *      abilityNameToToolName('acme-corp/do-thing-v1', 'mainwp')
+ *      → 'acme_corp__do_thing_v1'
+ *
+ * The `__` separator stays unambiguous because ability slugs cannot contain
+ * underscores (enforced by ABILITY_NAME_RE in abilities.ts).
  */
-export function abilityNameToToolName(abilityName: string): string {
-  // Strip namespace prefix: "mainwp/list-sites-v1" → "list-sites-v1"
+export function abilityNameToToolName(abilityName: string, primaryNamespace: string): string {
   const slashIndex = abilityName.indexOf('/');
   if (slashIndex === -1) {
     throw new Error(`Invalid ability name format (missing namespace): ${abilityName}`);
   }
-  const withoutNamespace = abilityName.slice(slashIndex + 1);
-  // Convert hyphens to underscores: "list-sites-v1" → "list_sites_v1"
-  return withoutNamespace.replace(/-/g, '_');
-}
+  const namespace = abilityName.slice(0, slashIndex);
+  const rest = abilityName.slice(slashIndex + 1).replace(/-/g, '_');
 
-/**
- * Map MCP tool name back to ability name.
- * Prepends the namespace since tool names don't include it.
- *
- * Note: This server only uses the 'mainwp' namespace. The namespace parameter
- * is kept for test flexibility but is always called with 'mainwp' in production.
- *
- * @example toolNameToAbilityName("list_sites_v1", "mainwp") -> "mainwp/list-sites-v1"
- */
-export function toolNameToAbilityName(toolName: string, namespace: string): string {
-  // Convert underscores back to hyphens: "list_sites_v1" → "list-sites-v1"
-  const withHyphens = toolName.replace(/_/g, '-');
-  // Prepend namespace: "mainwp/list-sites-v1"
-  return `${namespace}/${withHyphens}`;
+  if (namespace === primaryNamespace) {
+    return rest;
+  }
+  // Convert hyphens in the namespace too so the tool name stays within
+  // [a-z0-9_]+ for MCP client compatibility.
+  return `${namespace.replace(/-/g, '_')}__${rest}`;
 }

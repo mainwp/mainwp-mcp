@@ -7,6 +7,7 @@ import {
   fetchAbilities,
   fetchCategories,
   getAbility,
+  getAbilityByToolName,
   executeAbility,
   clearCache,
   onCacheRefresh,
@@ -209,6 +210,7 @@ const baseConfig: Config = {
   maxRetries: 2,
   retryBaseDelay: 1000,
   retryMaxDelay: 2000,
+  abilityNamespaces: ['mainwp'],
   configSource: 'environment',
 };
 
@@ -266,7 +268,7 @@ describe('fetchAbilities', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it('should filter by namespace', async () => {
+  it('should filter by namespace (default: mainwp only)', async () => {
     const mixedAbilities = [
       ...sampleAbilities,
       { name: 'other/some-ability', label: 'Other', description: 'Other', category: 'other' },
@@ -282,6 +284,183 @@ describe('fetchAbilities', () => {
 
     expect(abilities).toHaveLength(7);
     expect(abilities.every(a => a.name.startsWith('mainwp/'))).toBe(true);
+  });
+
+  it('keeps abilities from any configured namespace', async () => {
+    const mixedAbilities = [
+      ...sampleAbilities,
+      { name: 'acme/do-thing-v1', label: 'Acme Do', description: 'Acme', category: 'acme-misc' },
+      { name: 'other/skip-me-v1', label: 'Other', description: 'Skip', category: 'other-misc' },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mixedAbilities,
+      headers: new Headers(),
+    });
+
+    const multiNsConfig: Config = { ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] };
+    const abilities = await fetchAbilities(multiNsConfig);
+
+    expect(abilities.map(a => a.name)).toContain('acme/do-thing-v1');
+    expect(abilities.map(a => a.name)).not.toContain('other/skip-me-v1');
+  });
+
+  it('warns when the namespace filter leaves zero abilities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const acmeOnlyConfig: Config = { ...baseConfig, abilityNamespaces: ['acme'] };
+    const abilities = await fetchAbilities(acmeOnlyConfig, false, mockLogger);
+
+    expect(abilities).toHaveLength(0);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.objectContaining({
+        namespaces: ['acme'],
+        fetchedCount: sampleAbilities.length,
+      })
+    );
+  });
+
+  it('warns with a distinct message when the upstream returns no abilities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities).toHaveLength(0);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Dashboard returned no abilities',
+      expect.objectContaining({ namespaces: ['mainwp'] })
+    );
+    expect(mockLogger.warning).not.toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.anything()
+    );
+  });
+
+  it('does not warn about empty namespace match when abilities are found', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities.length).toBeGreaterThan(0);
+    expect(mockLogger.warning).not.toHaveBeenCalledWith(
+      'No abilities matched the configured namespaces',
+      expect.anything()
+    );
+  });
+
+  it('refreshes cache when abilityNamespaces changes between calls', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        ...sampleAbilities,
+        { name: 'acme/do-thing-v1', label: 'Acme', description: 'Acme', category: 'acme-misc' },
+      ],
+      headers: new Headers(),
+    });
+
+    await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Different namespace allowlist must invalidate the cache despite fresh TTL.
+    await fetchAbilities({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops abilities with malformed names before they reach the tool index', async () => {
+    const payload = [
+      ...sampleAbilities,
+      {
+        name: 'mainwp/sub/path-name',
+        label: 'Malformed',
+        description: 'Extra slash should be filtered out',
+        category: 'mainwp-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => payload,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, true, mockLogger);
+
+    expect(abilities.map(a => a.name)).not.toContain('mainwp/sub/path-name');
+    expect(abilities.length).toBe(sampleAbilities.length);
+    expect(await getAbilityByToolName(baseConfig, 'sub/path_name')).toBeUndefined();
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability with malformed name',
+      expect.objectContaining({ name: expect.stringContaining('sub/path-name') })
+    );
+  });
+
+  it('keeps the existing index intact when a refresh hits the collision throw', async () => {
+    // Warm cache with a clean ability set.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    // Force a refresh that returns malformed data — two abilities with the
+    // same name produce the same tool name and trip the collision check.
+    // The new atomic-assignment code must leave the existing toolNameIndex
+    // intact, so a tool-name lookup for any ability from the first fetch
+    // still resolves.
+    const dupedPayload = [sampleAbilities[0], sampleAbilities[0]];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => dupedPayload,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true, mockLogger);
+
+    const delAbility = await getAbilityByToolName(baseConfig, 'delete_site_v1');
+    expect(delAbility?.name).toBe('mainwp/delete-site-v1');
+  });
+
+  it('discards cache and re-throws when signature mismatches and refresh fails', async () => {
+    // Populate cache for ['mainwp'] successfully.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Now request ['mainwp','acme'] but the refresh fails. The catch block must
+    // NOT serve the cache built for the wrong namespace; it must surface the error.
+    mockFetch.mockRejectedValueOnce(new Error('Network blip'));
+    await expect(
+      fetchAbilities({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] })
+    ).rejects.toThrow(/Network blip/);
+
+    // The downstream toolNameIndex was nulled along with cachedAbilities, so a
+    // tool-name lookup must trigger a fresh fetch rather than returning stale data.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    const ability = await getAbilityByToolName(baseConfig, 'list_sites_v1');
+    expect(ability?.name).toBe('mainwp/list-sites-v1');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it('should handle fetch errors with cached fallback', async () => {
@@ -440,6 +619,71 @@ describe('fetchCategories', () => {
     expect(categories[0].slug).toBe('mainwp-sites');
   });
 
+  it('includes categories from any configured namespace', async () => {
+    const mixedCategories = [
+      ...sampleCategories,
+      { slug: 'acme-things', label: 'Acme', description: 'Acme stuff' },
+      { slug: 'other-skip', label: 'Other', description: 'Should be skipped' },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mixedCategories,
+      headers: new Headers(),
+    });
+
+    const config: Config = { ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] };
+    const categories = await fetchCategories(config);
+
+    expect(categories.map(c => c.slug).sort()).toEqual(['acme-things', 'mainwp-sites']);
+  });
+
+  it('surfaces categories for prefix-related namespaces (acme vs acme-corp)', async () => {
+    const mixedCategories = [
+      { slug: 'acme-foo', label: 'Acme Foo', description: 'Acme category' },
+      { slug: 'acme-corp-bar', label: 'Acme Corp Bar', description: 'Acme Corp category' },
+      { slug: 'other-skip', label: 'Other', description: 'Should be skipped' },
+    ];
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => mixedCategories,
+      headers: new Headers(),
+    });
+
+    // Both prefix-related namespaces configured: both categories surface.
+    const both: Config = { ...baseConfig, abilityNamespaces: ['acme', 'acme-corp'] };
+    const categories = await fetchCategories(both);
+    expect(categories.map(c => c.slug).sort()).toEqual(['acme-corp-bar', 'acme-foo']);
+
+    // Known limitation (see isAllowedCategory): with only 'acme' configured,
+    // 'acme-corp-bar' still passes the prefix filter because category slugs
+    // carry no explicit namespace field. Pinned here so a future change to
+    // this behavior is a conscious one.
+    const acmeOnly: Config = { ...baseConfig, abilityNamespaces: ['acme'] };
+    const acmeCategories = await fetchCategories(acmeOnly);
+    expect(acmeCategories.map(c => c.slug).sort()).toEqual(['acme-corp-bar', 'acme-foo']);
+  });
+
+  it('refreshes cache when abilityNamespaces changes between calls', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        ...sampleCategories,
+        { slug: 'acme-things', label: 'Acme', description: 'Acme stuff' },
+      ],
+      headers: new Headers(),
+    });
+
+    await fetchCategories(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Different namespace allowlist must invalidate the cache despite fresh
+    // TTL, matching the equivalent fetchAbilities behavior.
+    await fetchCategories({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('should paginate when X-WP-TotalPages > 1', async () => {
     vi.resetAllMocks();
 
@@ -540,6 +784,62 @@ describe('getAbility', () => {
     expect(ability2).toBeDefined();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getAbilityByToolName', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolves primary-namespace tool name (unprefixed)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const ability = await getAbilityByToolName(baseConfig, 'list_sites_v1');
+    expect(ability?.name).toBe('mainwp/list-sites-v1');
+  });
+
+  it('resolves non-primary namespace tool name ({ns}__ prefix)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        ...sampleAbilities,
+        {
+          name: 'acme/do-thing-v1',
+          label: 'Acme Do',
+          description: 'Acme',
+          category: 'acme-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const config: Config = { ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] };
+    const ability = await getAbilityByToolName(config, 'acme__do_thing_v1');
+    expect(ability?.name).toBe('acme/do-thing-v1');
+  });
+
+  it('returns undefined for unknown tool name', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const ability = await getAbilityByToolName(baseConfig, 'totally_unknown_tool');
+    expect(ability).toBeUndefined();
   });
 });
 
@@ -872,6 +1172,34 @@ describe('clearCache', () => {
     await getAbility(baseConfig, 'mainwp/list-sites-v1');
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('should clear the toolName index', async () => {
+    // Warm cache and toolNameIndex
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const beforeClear = await getAbilityByToolName(baseConfig, 'list_sites_v1');
+    expect(beforeClear?.name).toBe('mainwp/list-sites-v1');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Clear cache (which must also clear toolNameIndex)
+    clearCache();
+
+    // Next getAbilityByToolName should trigger a new fetch — if clearCache forgot
+    // toolNameIndex, the lookup would silently hit the stale Map and skip the fetch.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const afterClear = await getAbilityByToolName(baseConfig, 'list_sites_v1');
+    expect(afterClear?.name).toBe('mainwp/list-sites-v1');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('onCacheRefresh', () => {
@@ -907,7 +1235,7 @@ describe('onCacheRefresh', () => {
 describe('generateToolHelp', () => {
   it('should generate help for a simple ability', () => {
     const ability = sampleAbilities[0];
-    const help = generateToolHelp(ability);
+    const help = generateToolHelp(ability, 'mainwp');
 
     expect(help.toolName).toBe('list_sites_v1');
     expect(help.abilityName).toBe('mainwp/list-sites-v1');
@@ -918,7 +1246,7 @@ describe('generateToolHelp', () => {
 
   it('should detect safety features', () => {
     const ability = sampleAbilities[1];
-    const help = generateToolHelp(ability);
+    const help = generateToolHelp(ability, 'mainwp');
 
     expect(help.safetyFeatures.supportsDryRun).toBe(true);
     expect(help.safetyFeatures.requiresConfirm).toBe(true);
@@ -927,7 +1255,7 @@ describe('generateToolHelp', () => {
 
   it('should include parameters', () => {
     const ability = sampleAbilities[1];
-    const help = generateToolHelp(ability);
+    const help = generateToolHelp(ability, 'mainwp');
 
     expect(help.parameters).toContainEqual(
       expect.objectContaining({ name: 'site_id', required: true })
@@ -940,7 +1268,7 @@ describe('generateToolHelp', () => {
 
 describe('generateHelpDocument', () => {
   it('should generate complete help document', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     expect(helpDoc.version).toBe('1.0');
     expect(helpDoc.overview.totalTools).toBe(7);
@@ -948,33 +1276,33 @@ describe('generateHelpDocument', () => {
   });
 
   it('should list destructive tools', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     expect(helpDoc.destructiveTools).toContain('delete_site_v1');
     expect(helpDoc.destructiveTools).not.toContain('list_sites_v1');
   });
 
   it('should list tools with dry_run', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     expect(helpDoc.toolsWithDryRun).toContain('delete_site_v1');
   });
 
   it('should list tools requiring confirm', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     expect(helpDoc.toolsRequiringConfirm).toContain('delete_site_v1');
   });
 
   it('should group tools by category', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     // mainwp-sites has: list-sites, delete-site, delete-site-plugins, delete-site-themes, update-site
     expect(helpDoc.toolsByCategory['mainwp-sites']).toHaveLength(5);
   });
 
   it('should include safety conventions', () => {
-    const helpDoc = generateHelpDocument(sampleAbilities);
+    const helpDoc = generateHelpDocument(sampleAbilities, 'mainwp');
 
     expect(helpDoc.overview.safetyConventions).toHaveProperty('dryRun');
     expect(helpDoc.overview.safetyConventions).toHaveProperty('confirm');

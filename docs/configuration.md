@@ -26,6 +26,7 @@ The server accepts configuration through environment variables and a configurati
 | `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
 | `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
 | `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
+| `MAINWP_ABILITY_NAMESPACES`        | No       | `mainwp`   | Comma-separated namespace allowlist (see below)          |
 
 ## Configuration File
 
@@ -69,8 +70,35 @@ Create a `settings.json` file in one of these locations (checked in order):
 | `maxRetries`              | `MAINWP_MAX_RETRIES`               | number   |
 | `retryBaseDelay`          | `MAINWP_RETRY_BASE_DELAY`          | number   |
 | `retryMaxDelay`           | `MAINWP_RETRY_MAX_DELAY`           | number   |
+| `abilityNamespaces`       | `MAINWP_ABILITY_NAMESPACES`        | string[] |
 
 A JSON schema is available at `settings.schema.json` for IDE autocompletion.
+
+### Ability Namespaces
+
+By default the server only surfaces abilities in the `mainwp/` namespace. Set `abilityNamespaces` to expose abilities from third-party MainWP extensions that register their own abilities (via the WordPress Abilities API). The first entry in the list is the **primary** namespace — abilities in it get unprefixed tool names. Other namespaces get a `{namespace}__{tool}` prefix so MCP tool names stay collision-free.
+
+```json
+{
+  "abilityNamespaces": ["mainwp", "acme"]
+}
+```
+
+```bash
+MAINWP_ABILITY_NAMESPACES="mainwp,acme"
+```
+
+Examples with `abilityNamespaces: ["mainwp", "acme"]`:
+
+| Ability name            | MCP tool name            |
+| ----------------------- | ------------------------ |
+| `mainwp/list-sites-v1`  | `list_sites_v1`          |
+| `acme/do-thing-v1`      | `acme__do_thing_v1`      |
+| `acme-corp/do-thing-v1` | `acme_corp__do_thing_v1` |
+
+When combining with `allowedTools` / `blockedTools`, use the prefixed form for non-primary namespaces (e.g. `"allowedTools": ["list_sites_v1", "acme__do_thing_v1"]`).
+
+**Keep `mainwp` in the list.** The `mainwp://site/{id}` resource calls the `mainwp/get-site-v1` ability directly, and prompt argument completions for site IDs call `mainwp/list-sites-v1`. Removing `mainwp` from `abilityNamespaces` filters those abilities out: `mainwp://site/{id}` returns an error payload, site ID completions come back empty, and `mainwp://help` lists no MainWP tools. If you want to expose third-party namespaces, add them alongside `mainwp` rather than replacing it.
 
 ---
 
@@ -78,7 +106,7 @@ A JSON schema is available at `settings.schema.json` for IDE autocompletion.
 
 Control which tools are exposed to AI assistants. Useful for limiting access to read-only operations, hiding destructive tools in production, or reducing context size for the AI.
 
-The server exposes 64 tools by default, consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
+The server exposes around 60 tools by default (the exact count varies by Dashboard version), consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
 
 ### Whitelist Mode
 

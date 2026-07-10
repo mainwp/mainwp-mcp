@@ -99,6 +99,17 @@
       "default": "compact",
       "description": "Response JSON format. 'compact' omits whitespace to reduce token usage. 'pretty' uses 2-space indentation for human-readable output. Default is 'compact'."
     },
+    "abilityNamespaces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "default": ["mainwp"],
+      "description": "Allowed ability namespaces. Abilities whose name's namespace prefix is in this list are surfaced as MCP tools. The first entry is the primary namespace — its abilities get unprefixed tool names (e.g. mainwp/list-sites-v1 -> list_sites_v1). Abilities in other namespaces get a {ns}__ prefix (e.g. acme/do-thing-v1 -> acme__do_thing_v1; hyphens in the namespace are converted to underscores so the tool name stays within [a-z0-9_]). Category slugs are matched by `{namespace}-` prefix, so an extension's categories are included when its namespace is listed here. Defaults to [\"mainwp\"]; add third-party MainWP extension namespaces here to expose their abilities."
+    },
     "retryEnabled": {
       "type": "boolean",
       "default": true,

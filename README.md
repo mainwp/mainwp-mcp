@@ -421,6 +421,7 @@ For Windsurf and other hosts, use the same JSON configuration pattern shown abov
 | `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
 | `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
 | `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
+| `MAINWP_ABILITY_NAMESPACES`        | No       | `mainwp`   | Comma-separated ability namespace allowlist              |
 
 > **⚠️ Security Warning: SSL Verification**
 >
@@ -454,7 +455,7 @@ Configuration loads from `./settings.json` or `~/.config/mainwp-mcp/settings.jso
 
 ## Optimizing Token Usage
 
-You have access to 64 tools, which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
+You have access to around 60 tools (the exact count varies by Dashboard version), which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
 
 ### Compact Schema Mode
 
@@ -476,7 +477,7 @@ Compact mode truncates descriptions to 60 characters and removes examples while 
 
 ### Limiting Exposed Tools
 
-You can expose only the tools you need. These configurations cover common scenarios:
+You can expose only the tools you need. These configurations cover common scenarios. Tool names from non-primary namespaces (added via `abilityNamespaces`) use the `{namespace}__{tool}` form — e.g. `acme__do_thing_v1` — so reference them that way in `allowedTools` / `blockedTools`.
 
 **Read-only monitoring** (17 tools, ~73% reduction):
 
@@ -667,9 +668,9 @@ See the [Security Guide](docs/security.md#confirmation-guardrails) for more deta
 
 ## Tools
 
-Over 60 tools organized by category. Each tool shows parameters with type, requirement, and description.
+Around 60 tools organized by category (the exact count varies by Dashboard version). Each tool shows parameters with type, requirement, and description.
 
-> **Note:** Tool names omit the `mainwp` namespace. The ability `mainwp/list-sites-v1` becomes `list_sites_v1`.
+> **Note:** Tool names omit the primary namespace (default `mainwp`), so `mainwp/list-sites-v1` becomes `list_sites_v1`. If you add other namespaces via `abilityNamespaces`, abilities in those namespaces are exposed as `{namespace}__{tool}` (e.g. `acme/do-thing-v1` → `acme__do_thing_v1`). Keep `mainwp` in `abilityNamespaces` — the `mainwp://site/{id}` resource and the site ID prompt completions call `mainwp/get-site-v1` and `mainwp/list-sites-v1` directly and start returning errors or empty results if those abilities are filtered out.
 
 <details>
 <summary>Sites</summary>

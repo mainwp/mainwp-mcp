@@ -34,6 +34,7 @@ const baseConfig: Config = {
   maxSessionData: 52428800,
   schemaVerbosity: 'standard',
   responseFormat: 'compact',
+  abilityNamespaces: ['mainwp'],
   configSource: 'environment',
   retryEnabled: false,
   maxRetries: 2,
@@ -130,10 +131,11 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result).toHaveLength(1);
-      expect(result[0].type).toBe('text');
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe('text');
+      expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result[0].text);
+      const parsed = JSON.parse(result.content[0].text);
       expect(parsed.sites).toHaveLength(1);
     });
 
@@ -175,8 +177,9 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result[0].text).toContain('SAFE_MODE_BLOCKED');
-      expect(result[0].text).toContain('delete_site_v1');
+      expect(result.content[0].text).toContain('SAFE_MODE_BLOCKED');
+      expect(result.content[0].text).toContain('delete_site_v1');
+      expect(result.isError).toBe(true);
     });
 
     it('should allow read-only tool in safe mode', async () => {
@@ -195,7 +198,7 @@ describe('Tools Integration', () => {
       const safeConfig = { ...baseConfig, safeMode: true };
       const result = await executeTool(safeConfig, 'list_sites_v1', {}, mockLogger);
 
-      const parsed = JSON.parse(result[0].text);
+      const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toHaveProperty('sites');
     });
   });
@@ -225,9 +228,11 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result[0].text).toContain('CONFIRMATION_REQUIRED');
-      expect(result[0].text).toContain('preview');
-      expect(result[0].text).toContain('user_confirmed');
+      expect(result.content[0].text).toContain('CONFIRMATION_REQUIRED');
+      expect(result.content[0].text).toContain('preview');
+      expect(result.content[0].text).toContain('user_confirmed');
+      // Preview is a successful workflow step, not a failed call
+      expect(result.isError).toBeUndefined();
     });
 
     it('should complete two-phase confirmation flow', async () => {
@@ -251,7 +256,7 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(previewResult[0].text).toContain('CONFIRMATION_REQUIRED');
+      expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
 
       // Phase 2: Confirmed execution (need to clear logger mocks for fresh tracking)
       vi.mocked(mockLogger.info).mockClear();
@@ -270,7 +275,7 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      const parsed = JSON.parse(confirmResult[0].text);
+      const parsed = JSON.parse(confirmResult.content[0].text);
       expect(parsed.success).toBe(true);
     });
 
@@ -289,7 +294,8 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result[0].text).toContain('PREVIEW_REQUIRED');
+      expect(result.content[0].text).toContain('PREVIEW_REQUIRED');
+      expect(result.isError).toBe(true);
     });
 
     it('should reject conflicting parameters', async () => {
@@ -306,7 +312,8 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result[0].text).toContain('CONFLICTING_PARAMETERS');
+      expect(result.content[0].text).toContain('CONFLICTING_PARAMETERS');
+      expect(result.isError).toBe(true);
     });
 
     it('should allow explicit dry_run to bypass confirmation', async () => {
@@ -330,7 +337,7 @@ describe('Tools Integration', () => {
       );
 
       // Should return the dry_run result directly, not CONFIRMATION_REQUIRED
-      const parsed = JSON.parse(result[0].text);
+      const parsed = JSON.parse(result.content[0].text);
       expect(parsed.dry_run).toBe(true);
     });
   });
@@ -361,7 +368,8 @@ describe('Tools Integration', () => {
         mockLogger
       );
 
-      expect(result[0].text).toContain('error');
+      expect(result.content[0].text).toContain('error');
+      expect(result.isError).toBe(true);
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
@@ -374,8 +382,9 @@ describe('Tools Integration', () => {
 
       const result = await executeTool(baseConfig, 'get_site_v1', { site_id: -1 }, mockLogger);
 
-      expect(result[0].text).toContain('error');
-      expect(result[0].text).toContain('positive integer');
+      expect(result.content[0].text).toContain('error');
+      expect(result.content[0].text).toContain('positive integer');
+      expect(result.isError).toBe(true);
     });
 
     it('should handle tool not found', async () => {
@@ -387,8 +396,9 @@ describe('Tools Integration', () => {
 
       const result = await executeTool(baseConfig, 'nonexistent_tool_v1', {}, mockLogger);
 
-      expect(result[0].text).toContain('error');
-      expect(result[0].text).toContain('not found');
+      expect(result.content[0].text).toContain('error');
+      expect(result.content[0].text).toContain('not found');
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -443,6 +453,80 @@ describe('Tools Integration', () => {
         expect.stringContaining('Destructive'),
         expect.any(Object)
       );
+    });
+  });
+
+  describe('non-primary namespace tools', () => {
+    it('resolves an {ns}__ tool name to the right ability URL', async () => {
+      const abilitiesPayload = [
+        {
+          name: 'acme/do-thing-v1',
+          label: 'Acme Do Thing',
+          description: 'Third-party readonly ability',
+          category: 'acme-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => abilitiesPayload,
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ result: 'pong' }),
+        headers: new Headers(),
+      });
+
+      const config: Config = {
+        ...baseConfig,
+        abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+      };
+
+      const result = await executeTool(config, 'acme__do_thing_v1', { input: 'ping' }, mockLogger);
+
+      const executeCall = mockFetch.mock.calls[1];
+      const url = executeCall[0] as string;
+      expect(url).toContain('/abilities/acme/do-thing-v1/run');
+      expect(JSON.parse(result.content[0].text)).toEqual({ result: 'pong' });
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('round-trips a hyphenated namespace through execute', async () => {
+      const abilitiesPayload = [
+        {
+          name: 'acme-corp/do-thing-v1',
+          label: 'Acme Corp Do Thing',
+          description: 'Hyphenated-namespace ability',
+          category: 'acme-corp-misc',
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => abilitiesPayload,
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true }),
+        headers: new Headers(),
+      });
+
+      const config: Config = {
+        ...baseConfig,
+        abilityNamespaces: ['mainwp', 'acme-corp'] as [string, ...string[]],
+      };
+
+      const result = await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
+
+      const executeCall = mockFetch.mock.calls[1];
+      const url = executeCall[0] as string;
+      expect(url).toContain('/abilities/acme-corp/do-thing-v1/run');
+      expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
+      expect(result.isError).toBeUndefined();
     });
   });
 });

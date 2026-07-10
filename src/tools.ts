@@ -12,7 +12,7 @@ import {
   AbilityAnnotations,
   fetchAbilities,
   executeAbility,
-  getAbility,
+  getAbilityByToolName,
 } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
@@ -24,7 +24,6 @@ import {
   isNoOpError,
   NOOP_DESCRIPTIONS,
 } from './session.js';
-import { toolNameToAbilityName } from './naming.js';
 import { abilityToTool } from './tool-schema.js';
 import { handleConfirmationFlow } from './confirmation.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
@@ -36,6 +35,18 @@ export interface ExecuteToolOptions {
   /** AbortSignal for cancellation support */
   signal?: AbortSignal;
 }
+
+/**
+ * Result of a tool call, matching the MCP CallToolResult shape.
+ * `isError: true` marks failed calls (unknown tool, validation failure,
+ * execution failure, confirmation rejection) so clients can branch on it.
+ * A type alias (not interface) so it gets an implicit index signature and
+ * stays assignable to the SDK's CallToolResult handler return type.
+ */
+export type ToolCallResult = {
+  content: TextContent[];
+  isError?: boolean;
+};
 
 /**
  * Cached tool list to avoid re-converting abilities on every ListTools call.
@@ -71,7 +82,7 @@ export function clearToolsCache(): void {
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config, false, logger);
-  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}`;
+  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}|${config.abilityNamespaces.join(',')}`;
 
   if (
     cachedTools &&
@@ -81,7 +92,10 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
     return cachedTools;
   }
 
-  let tools = abilities.map(ability => abilityToTool(ability, config.schemaVerbosity));
+  const primaryNamespace = config.abilityNamespaces[0];
+  let tools = abilities.map(ability =>
+    abilityToTool(ability, primaryNamespace, config.schemaVerbosity)
+  );
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
@@ -131,7 +145,7 @@ export async function executeTool(
   args: Record<string, unknown>,
   logger: Logger,
   options?: ExecuteToolOptions
-): Promise<TextContent[]> {
+): Promise<ToolCallResult> {
   const startTime = performance.now();
   const hasArguments = Object.keys(args).length > 0;
   const requestId = crypto.randomUUID();
@@ -156,13 +170,14 @@ export async function executeTool(
     // Validate input before forwarding to API
     validateInput(args);
 
-    abilityName = toolNameToAbilityName(toolName, 'mainwp');
-
-    // Fetch ability metadata to check if destructive
-    const ability = await getAbility(config, abilityName, reqLogger);
+    // Resolve tool name → ability via the cache reverse index built during
+    // fetchAbilities. This handles both primary-namespace (unprefixed) tools
+    // and prefixed `{ns}__tool` names from non-primary namespaces.
+    const ability = await getAbilityByToolName(config, toolName, reqLogger);
     if (!ability) {
-      throw new Error(`Ability not found: ${abilityName}`);
+      throw new Error(`Ability not found for tool: ${toolName}`);
     }
+    abilityName = ability.name;
 
     const ctx = { tool: toolName, ability: abilityName };
 
@@ -208,12 +223,15 @@ export async function executeTool(
       // runaway API responses, not small fixed-size local error messages.
       if (isDestructive) {
         reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
-        return [
-          {
-            type: 'text',
-            text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
-          },
-        ];
+        return {
+          content: [
+            {
+              type: 'text',
+              text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
+            },
+          ],
+          isError: true,
+        };
       }
     }
 
@@ -232,7 +250,9 @@ export async function executeTool(
       });
 
       if (confirmResult.action === 'respond') {
-        return confirmResult.response;
+        return confirmResult.isError
+          ? { content: confirmResult.response, isError: true }
+          : { content: confirmResult.response };
       }
       if (confirmResult.action === 'execute') {
         effectiveArgs = confirmResult.effectiveArgs;
@@ -268,12 +288,14 @@ export async function executeTool(
       sessionDataBytes: getSessionDataUsage(config).used,
     });
 
-    return [
-      {
-        type: 'text',
-        text: formattedResult,
-      },
-    ];
+    return {
+      content: [
+        {
+          type: 'text',
+          text: formattedResult,
+        },
+      ],
+    };
   } catch (error) {
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
@@ -294,7 +316,7 @@ export async function executeTool(
         responseBytes,
         sessionDataBytes: getSessionDataUsage(config).used,
       });
-      return [{ type: 'text', text: noChangeText }];
+      return { content: [{ type: 'text', text: noChangeText }] };
     }
 
     const durationMs = Math.round(performance.now() - startTime);
@@ -306,12 +328,16 @@ export async function executeTool(
       error: errorMessage,
     });
 
-    // Use standardized error format with code
-    return [
-      {
-        type: 'text',
-        text: formatErrorResponse(error, sanitizeError),
-      },
-    ];
+    // Use standardized error format with code; isError marks the call as
+    // failed per the MCP spec while keeping the JSON error body in content
+    return {
+      content: [
+        {
+          type: 'text',
+          text: formatErrorResponse(error, sanitizeError),
+        },
+      ],
+      isError: true,
+    };
   }
 }
