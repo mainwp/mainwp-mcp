@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Typecheck (src + tests + scripts)
+        run: npm run typecheck
+
       - name: Check version consistency
         run: npm run check-version
 
