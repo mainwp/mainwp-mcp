@@ -18,20 +18,13 @@ import { readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
-import { type Logger } from './logging.js';
+import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-const mockLogger: Logger = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  notice: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  critical: vi.fn(),
-};
+const mockLogger = makeMockLogger();
 
 // Sample abilities for testing
 const sampleAbilities: Ability[] = [
@@ -191,28 +184,7 @@ const sampleAbilities: Ability[] = [
 
 const sampleCategories = [{ slug: 'mainwp-sites', label: 'Sites', description: 'Site management' }];
 
-const baseConfig: Config = {
-  dashboardUrl: 'https://test.local',
-  authType: 'basic',
-  username: 'admin',
-  appPassword: 'xxxx',
-  skipSslVerify: true,
-  allowHttp: false,
-  rateLimit: 0, // Disable rate limiting for tests
-  requestTimeout: 5000,
-  maxResponseSize: 10485760,
-  safeMode: false,
-  requireUserConfirmation: true,
-  maxSessionData: 52428800,
-  schemaVerbosity: 'standard',
-  responseFormat: 'compact',
-  retryEnabled: false, // Disable retries for tests
-  maxRetries: 2,
-  retryBaseDelay: 1000,
-  retryMaxDelay: 2000,
-  abilityNamespaces: ['mainwp'],
-  configSource: 'environment',
-};
+const baseConfig = makeBaseConfig();
 
 describe('fetchAbilities', () => {
   beforeEach(() => {
@@ -419,9 +391,9 @@ describe('fetchAbilities', () => {
 
     // Force a refresh that returns malformed data — two abilities with the
     // same name produce the same tool name and trip the collision check.
-    // The new atomic-assignment code must leave the existing toolNameIndex
-    // intact, so a tool-name lookup for any ability from the first fetch
-    // still resolves.
+    // The failed refresh must leave the cached abilities array and its
+    // abilityIndexes entry intact, so a tool-name lookup for any ability
+    // from the first fetch still resolves.
     const dupedPayload = [sampleAbilities[0], sampleAbilities[0]];
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -451,8 +423,9 @@ describe('fetchAbilities', () => {
       fetchAbilities({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] })
     ).rejects.toThrow(/Network blip/);
 
-    // The downstream toolNameIndex was nulled along with cachedAbilities, so a
-    // tool-name lookup must trigger a fresh fetch rather than returning stale data.
+    // Emptying the cache slot dropped the abilities array and with it the
+    // WeakMap-keyed lookup indexes, so a tool-name lookup must trigger a
+    // fresh fetch rather than returning stale data.
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -532,6 +505,93 @@ describe('fetchAbilities', () => {
     });
 
     await expect(fetchAbilities(baseConfig)).rejects.toThrow(/401/);
+  });
+
+  it('should share one upstream fetch across concurrent callers', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    mockFetch.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const first = fetchAbilities(baseConfig);
+    const second = fetchAbilities(baseConfig);
+
+    resolveFetch({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a).toHaveLength(7);
+    expect(b).toBe(a);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('should attach a structured status to HTTP error responses', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'Invalid credentials',
+      headers: new Headers(),
+    });
+
+    await expect(fetchAbilities(baseConfig)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('should not share an in-flight fetch across different dashboards', async () => {
+    const resolvers: Array<(v: unknown) => void> = [];
+    mockFetch.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvers.push(resolve);
+        })
+    );
+
+    const first = fetchAbilities(baseConfig);
+    const second = fetchAbilities({ ...baseConfig, dashboardUrl: 'https://other.local' });
+
+    // Different dashboard must NOT join the first request
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[1][0])).toContain('other.local');
+
+    for (const resolve of resolvers) {
+      resolve({ ok: true, json: async () => sampleAbilities, headers: new Headers() });
+    }
+    await Promise.all([first, second]);
+  });
+
+  it('should not discard a newer cache committed while a failing refresh was in flight', async () => {
+    let rejectFirst!: (e: Error) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    const failing = fetchAbilities(baseConfig);
+
+    // A different config commits successfully while the first is in flight
+    const otherConfig = { ...baseConfig, dashboardUrl: 'https://other.local' };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(otherConfig);
+
+    rejectFirst(new Error('Network error'));
+    await expect(failing).rejects.toThrow('Network error');
+
+    // The newer cache must survive the older refresh's failure — this call
+    // is served from cache, not a third upstream fetch
+    await fetchAbilities(otherConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('should paginate when X-WP-TotalPages > 1', async () => {
@@ -1174,7 +1234,7 @@ describe('clearCache', () => {
   });
 
   it('should clear the toolName index', async () => {
-    // Warm cache and toolNameIndex
+    // Warm the cache and its tool-name lookup index
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -1185,11 +1245,12 @@ describe('clearCache', () => {
     expect(beforeClear?.name).toBe('mainwp/list-sites-v1');
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    // Clear cache (which must also clear toolNameIndex)
+    // Clear the cache, dropping the abilities array and its WeakMap-keyed indexes
     clearCache();
 
-    // Next getAbilityByToolName should trigger a new fetch — if clearCache forgot
-    // toolNameIndex, the lookup would silently hit the stale Map and skip the fetch.
+    // Next getAbilityByToolName should trigger a new fetch — if clearCache left
+    // the cached array in place, the lookup would silently resolve through its
+    // stale indexes and skip the fetch.
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,

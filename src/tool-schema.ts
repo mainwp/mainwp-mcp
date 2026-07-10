@@ -59,13 +59,20 @@ function paramNameToDescription(name: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1) + '.';
 }
 
+/** Descriptions at or under this length are kept as-is */
+const TARGET_DESC_LENGTH = 60;
+/** A first sentence may exceed the target by this small tolerance */
+const SENTENCE_TOLERANCE = 5;
+/** Hard-truncate length; +3 for the ellipsis lands near the target */
+const HARD_TRUNCATE_LENGTH = TARGET_DESC_LENGTH - 3;
+
 /**
- * Truncate a description to the first sentence or ~60 characters
+ * Truncate a description to the first sentence or ~TARGET_DESC_LENGTH characters
  *
  * Strategy:
- * - Preserve full description if already ≤60 characters
- * - Return first sentence if it's within limit (≤65 chars, small tolerance)
- * - Otherwise truncate to 57 characters with ellipsis
+ * - Preserve full description if already within the target length
+ * - Return first sentence if it's within target + tolerance
+ * - Otherwise hard-truncate with ellipsis
  */
 function truncateDescription(description: string | undefined | null): string {
   if (!description) {
@@ -73,7 +80,7 @@ function truncateDescription(description: string | undefined | null): string {
   }
 
   // If already short enough, return as-is
-  if (description.length <= 60) {
+  if (description.length <= TARGET_DESC_LENGTH) {
     return description;
   }
 
@@ -81,14 +88,13 @@ function truncateDescription(description: string | undefined | null): string {
   const sentenceMatch = description.match(/^[^.!?]+[.!?](?:\s|$)/);
   if (sentenceMatch) {
     const sentence = sentenceMatch[0].trim();
-    // Only use sentence if it's within limit (allow small tolerance of 5 chars)
-    if (sentence.length <= 65) {
+    if (sentence.length <= TARGET_DESC_LENGTH + SENTENCE_TOLERANCE) {
       return sentence;
     }
   }
 
-  // No suitable sentence found, truncate to ~60 chars
-  return description.slice(0, 57) + '...';
+  // No suitable sentence found
+  return description.slice(0, HARD_TRUNCATE_LENGTH) + '...';
 }
 
 /**
@@ -247,6 +253,71 @@ export function buildSafetyTags(
 }
 
 /**
+ * Build the full-detail tool description for standard verbosity:
+ * category prefix, full ability description, contextual LLM instructions,
+ * safety tags, and the two-phase confirmation workflow.
+ */
+function buildStandardDescription(
+  ability: Ability,
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean,
+  isDestructive: boolean
+): string {
+  // Category prefix (e.g., "[sites] ...")
+  const categoryLabel = ability.category?.replace(/^mainwp-/, '').replace(/-/g, ' ');
+  let description = categoryLabel
+    ? `[${categoryLabel}] ${ability.description}`
+    : ability.description;
+
+  // Append contextual LLM instructions
+  const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
+  if (instructions) {
+    description += ` ${instructions}`;
+  }
+
+  // Append safety tags
+  const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'standard');
+  if (tags) {
+    description += ` ${tags}`;
+  }
+
+  // Append confirmation workflow for destructive tools with confirm parameter
+  if (isDestructive && hasConfirm) {
+    description +=
+      '\n\nCONFIRMATION FLOW: ' +
+      '1) Call with confirm:true to preview what will be affected. ' +
+      '2) Show preview to user and ask for confirmation. ' +
+      '3) If confirmed, call again with user_confirmed:true to execute. ' +
+      'Do NOT set user_confirmed:true without explicit user consent.';
+  }
+
+  return description;
+}
+
+/**
+ * Build the token-lean tool description for compact verbosity:
+ * truncated description, short safety tags, one-line confirm flow.
+ */
+function buildCompactDescription(
+  ability: Ability,
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean,
+  isDestructive: boolean
+): string {
+  let description = truncateDescription(ability.description);
+  const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
+  if (tags) {
+    description += ` ${tags}`;
+  }
+  if (isDestructive && hasConfirm) {
+    description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
+  }
+  return description;
+}
+
+/**
  * Convert a MainWP Ability to an MCP Tool definition
  *
  * Enhances tool metadata with:
@@ -292,45 +363,10 @@ export function abilityToTool(
   }
 
   // Build description with safety context
-  let description: string;
-
-  if (verbosity === 'standard') {
-    // Category prefix for standard mode (e.g., "[sites] ...")
-    const categoryLabel = ability.category?.replace(/^mainwp-/, '').replace(/-/g, ' ');
-    description = categoryLabel ? `[${categoryLabel}] ${ability.description}` : ability.description;
-
-    // Append contextual LLM instructions
-    const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
-    if (instructions) {
-      description += ` ${instructions}`;
-    }
-
-    // Append safety tags
-    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'standard');
-    if (tags) {
-      description += ` ${tags}`;
-    }
-
-    // Append confirmation workflow for destructive tools with confirm parameter
-    if (isDestructive && hasConfirm) {
-      description +=
-        '\n\nCONFIRMATION FLOW: ' +
-        '1) Call with confirm:true to preview what will be affected. ' +
-        '2) Show preview to user and ask for confirmation. ' +
-        '3) If confirmed, call again with user_confirmed:true to execute. ' +
-        'Do NOT set user_confirmed:true without explicit user consent.';
-    }
-  } else {
-    // Compact mode: truncated description + short safety tags
-    description = truncateDescription(ability.description);
-    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
-    if (tags) {
-      description += ` ${tags}`;
-    }
-    if (isDestructive && hasConfirm) {
-      description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
-    }
-  }
+  const description =
+    verbosity === 'standard'
+      ? buildStandardDescription(ability, meta, hasDryRun, hasConfirm, isDestructive)
+      : buildCompactDescription(ability, meta, hasDryRun, hasConfirm, isDestructive);
 
   return {
     name: toolName,

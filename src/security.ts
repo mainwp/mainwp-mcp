@@ -37,13 +37,16 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
 
     // ID fields: accept number or numeric string, must be positive integer
     if (key.endsWith('_id')) {
-      const numValue = typeof value === 'string' ? parseInt(value, 10) : value;
-      if (typeof numValue === 'number') {
-        if (!Number.isInteger(numValue) || numValue < 1 || numValue > Number.MAX_SAFE_INTEGER) {
-          throw McpErrorFactory.invalidParams(`Parameter "${key}" must be a positive integer`, {
-            parameter: key,
-          });
-        }
+      if (typeof value !== 'string' && typeof value !== 'number') {
+        throw McpErrorFactory.invalidParams(
+          `Parameter "${key}" must be a string or number, got ${typeof value}`,
+          { parameter: key }
+        );
+      }
+      if (!isValidId(value)) {
+        throw McpErrorFactory.invalidParams(`Parameter "${key}" must be a positive integer`, {
+          parameter: key,
+        });
       }
     }
 
@@ -59,13 +62,7 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
             { parameter: key }
           );
         }
-        const numItem = typeof item === 'string' ? Number(item) : item;
-        if (
-          !Number.isFinite(numItem) ||
-          !Number.isInteger(numItem) ||
-          numItem < 1 ||
-          numItem > Number.MAX_SAFE_INTEGER
-        ) {
+        if (!isValidId(item)) {
           throw McpErrorFactory.invalidParams(`Element in "${key}" must be a positive integer`, {
             parameter: key,
           });
@@ -212,8 +209,14 @@ export function isValidId(value: unknown): boolean {
     return Number.isInteger(value) && value >= 1 && value <= Number.MAX_SAFE_INTEGER;
   }
   if (typeof value === 'string') {
-    const num = parseInt(value, 10);
-    return !isNaN(num) && num >= 1 && num <= Number.MAX_SAFE_INTEGER;
+    // Decimal digits only — Number() alone would also accept "1e3", "0x10",
+    // "+7", and " 8 ", where local validation and upstream interpretation of
+    // the raw forwarded string can disagree.
+    if (!/^\d+$/.test(value)) {
+      return false;
+    }
+    const num = Number(value);
+    return Number.isSafeInteger(num) && num >= 1;
   }
   return false;
 }

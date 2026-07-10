@@ -185,6 +185,33 @@ export const McpErrorFactory = {
 };
 
 /**
+ * Create an Error carrying a structured HTTP status and error code.
+ * Callers own the full message text; this helper only guarantees the
+ * `.status`/`.code` fields that retry eligibility (isRetryableError) and
+ * startup error classification (validateCredentials) rely on.
+ */
+export function createHttpError(status: number, errorCode: string, message: string): Error {
+  const error = new Error(message);
+  const httpError = error as Error & { status: number; code: string };
+  httpError.status = status;
+  httpError.code = errorCode;
+  return error;
+}
+
+/**
+ * Extract a structured HTTP status from an error, if present.
+ */
+export function getHttpStatus(error: unknown): number | undefined {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status: unknown }).status;
+    if (typeof status === 'number') {
+      return status;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Convert any error to an MCP error response
  */
 export function toMcpErrorResponse(
@@ -208,7 +235,11 @@ export function toMcpErrorResponse(
   const message = getErrorMessage(error);
   const sanitizedMessage = sanitize ? sanitize(message) : message;
 
-  // Try to infer error code from message
+  // Last-resort classifier for plain Errors that reached the MCP boundary
+  // without being wrapped in a typed McpError. Substring matching is fragile
+  // and BRANCH ORDER IS SIGNIFICANT (first match wins — e.g. a message with
+  // both "invalid" and "unauthorized" classifies as INVALID_PARAMS). Prefer
+  // throwing McpErrorFactory errors at the source over extending this chain.
   let code: McpErrorCode = MCP_ERROR_CODES.INTERNAL_ERROR;
 
   if (message.includes('cancelled') || message.includes('aborted')) {

@@ -6,6 +6,7 @@
  */
 
 import type { Prompt, GetPromptResult, PromptMessage } from '@modelcontextprotocol/sdk/types.js';
+import { isValidId } from './security.js';
 
 /**
  * Internal prompt definition with message generator
@@ -379,18 +380,27 @@ function validatePromptArgs(
   for (const [key, value] of Object.entries(args)) {
     if (typeof value !== 'string') continue;
 
-    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric
+    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric.
+    // isValidId (security.ts) is the single definition of a valid ID — it
+    // also enforces the >= 1 and safe-integer bounds the old regexes missed.
     if (key === 'site_id') {
-      if (value !== 'all' && !/^\d+$/.test(value)) {
+      if (value !== 'all' && !isValidId(value)) {
         throw new Error(`Invalid site_id: must be a numeric value or "all"`);
       }
       sanitized[key] = value;
     } else if (key === 'site_ids') {
-      // "all" or comma-separated IDs
-      if (value !== 'all' && !/^(\d+)(,\s*\d+)*$/.test(value)) {
-        throw new Error(`Invalid site_ids: must be "all" or comma-separated numeric IDs`);
+      // "all" or comma-separated IDs. Store the canonicalized join, not the
+      // raw value — validation trims each part, so the raw string could
+      // smuggle whitespace/newlines into the prompt template
+      if (value === 'all') {
+        sanitized[key] = value;
+      } else {
+        const ids = value.split(',').map(part => part.trim());
+        if (!ids.every(isValidId)) {
+          throw new Error(`Invalid site_ids: must be "all" or comma-separated numeric IDs`);
+        }
+        sanitized[key] = ids.join(',');
       }
-      sanitized[key] = value;
     } else if (key === 'issue_type') {
       if (!VALID_ISSUE_TYPES.has(value)) {
         throw new Error(`Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`);

@@ -77,6 +77,20 @@ describe('loadSettingsFile', () => {
     expect(() => loadSettingsFile()).toThrow(/must be a number/);
   });
 
+  it('should reject non-finite numbers (JSON 1e999 parses to Infinity)', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue('{"maxResponseSize": 1e999}');
+
+    expect(() => loadSettingsFile()).toThrow(/must be an integer within the safe range/);
+  });
+
+  it('should reject decimal numbers in settings file', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ rateLimit: 60.5 }));
+
+    expect(() => loadSettingsFile()).toThrow(/must be an integer within the safe range/);
+  });
+
   it('should validate field types - array fields', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ allowedTools: 'not-array' }));
@@ -346,6 +360,77 @@ describe('loadConfig', () => {
     process.env.MAINWP_BLOCKED_TOOLS = 'list_sites_v1';
 
     expect(() => loadConfig()).toThrow(/conflict/);
+  });
+
+  function baseEnv() {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+  }
+
+  describe('boolean env var parsing', () => {
+    it.each(['true', 'TRUE', 'True', '1', 'yes', 'on', 'ON'])('parses %s as true', value => {
+      baseEnv();
+      process.env.MAINWP_SAFE_MODE = value;
+
+      expect(loadConfig().safeMode).toBe(true);
+    });
+
+    it.each(['false', 'FALSE', '0', 'no', 'off'])('parses %s as false', value => {
+      baseEnv();
+      process.env.MAINWP_REQUIRE_USER_CONFIRMATION = value;
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('warns and falls back to default on unrecognized values', () => {
+      baseEnv();
+      process.env.MAINWP_SAFE_MODE = 'maybe';
+
+      const config = loadConfig();
+
+      expect(config.safeMode).toBe(false);
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('MAINWP_SAFE_MODE'));
+    });
+
+    it('falls back to settings file value on unrecognized env value', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ safeMode: true }));
+      baseEnv();
+      process.env.MAINWP_SAFE_MODE = 'garbage';
+
+      expect(loadConfig().safeMode).toBe(true);
+    });
+  });
+
+  describe('numeric env var parsing', () => {
+    it('rejects values with trailing non-numeric characters', () => {
+      baseEnv();
+      process.env.MAINWP_RATE_LIMIT = '60abc';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_RATE_LIMIT.*60abc/);
+    });
+
+    it('rejects entirely non-numeric values', () => {
+      baseEnv();
+      process.env.MAINWP_REQUEST_TIMEOUT = 'abc';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_REQUEST_TIMEOUT.*abc/);
+    });
+
+    it('accepts clean integer values', () => {
+      baseEnv();
+      process.env.MAINWP_RATE_LIMIT = '120';
+
+      expect(loadConfig().rateLimit).toBe(120);
+    });
+
+    it('rejects digit-only values that overflow to Infinity', () => {
+      baseEnv();
+      process.env.MAINWP_REQUEST_TIMEOUT = '9'.repeat(400);
+
+      expect(() => loadConfig()).toThrow(/MAINWP_REQUEST_TIMEOUT.*safe integer/);
+    });
   });
 
   it('should prioritize env vars over settings file', () => {

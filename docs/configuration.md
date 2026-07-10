@@ -6,27 +6,31 @@ The server accepts configuration through environment variables and a configurati
 
 ## Environment Variables
 
-| Variable                           | Required | Default    | Description                                              |
-| ---------------------------------- | -------- | ---------- | -------------------------------------------------------- |
-| `MAINWP_URL`                       | Yes      |            | Base URL of your MainWP Dashboard                        |
-| `MAINWP_USER`                      | Yes      |            | WordPress admin username                                 |
-| `MAINWP_APP_PASSWORD`              | Yes      |            | WordPress Application Password                           |
-| `MAINWP_SKIP_SSL_VERIFY`           | No       | `false`    | Skip SSL certificate verification                        |
-| `MAINWP_ALLOW_HTTP`                | No       | `false`    | Allow HTTP URLs (credentials sent in plain text)         |
-| `MAINWP_SAFE_MODE`                 | No       | `false`    | Block all destructive operations                         |
-| `MAINWP_REQUIRE_USER_CONFIRMATION` | No       | `true`     | Require two-step confirmation for destructive operations |
-| `MAINWP_ALLOWED_TOOLS`             | No       |            | Comma-separated whitelist of tools                       |
-| `MAINWP_BLOCKED_TOOLS`             | No       |            | Comma-separated blacklist of tools                       |
-| `MAINWP_SCHEMA_VERBOSITY`          | No       | `standard` | Schema detail level: `standard` or `compact`             |
-| `MAINWP_RATE_LIMIT`                | No       | `60`       | Maximum API requests per minute                          |
-| `MAINWP_REQUEST_TIMEOUT`           | No       | `30000`    | Request timeout in milliseconds                          |
-| `MAINWP_MAX_RESPONSE_SIZE`         | No       | `10485760` | Maximum response size in bytes (10MB)                    |
-| `MAINWP_MAX_SESSION_DATA`          | No       | `52428800` | Maximum cumulative session data (50MB)                   |
-| `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
-| `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
-| `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
-| `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
-| `MAINWP_ABILITY_NAMESPACES`        | No       | `mainwp`   | Comma-separated namespace allowlist (see below)          |
+| Variable                           | Required    | Default    | Description                                              |
+| ---------------------------------- | ----------- | ---------- | -------------------------------------------------------- |
+| `MAINWP_URL`                       | Yes         |            | Base URL of your MainWP Dashboard                        |
+| `MAINWP_USER`                      | Basic auth  |            | WordPress admin username                                 |
+| `MAINWP_APP_PASSWORD`              | Basic auth  |            | WordPress Application Password                           |
+| `MAINWP_TOKEN`                     | Bearer auth |            | MainWP REST API bearer token                             |
+| `MAINWP_SKIP_SSL_VERIFY`           | No          | `false`    | Skip SSL certificate verification                        |
+| `MAINWP_ALLOW_HTTP`                | No          | `false`    | Allow HTTP URLs (credentials sent in plain text)         |
+| `MAINWP_SAFE_MODE`                 | No          | `false`    | Block all destructive operations                         |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No          | `true`     | Require two-step confirmation for destructive operations |
+| `MAINWP_ALLOWED_TOOLS`             | No          |            | Comma-separated whitelist of tools                       |
+| `MAINWP_BLOCKED_TOOLS`             | No          |            | Comma-separated blacklist of tools                       |
+| `MAINWP_SCHEMA_VERBOSITY`          | No          | `standard` | Schema detail level: `standard` or `compact`             |
+| `MAINWP_RESPONSE_FORMAT`           | No          | `compact`  | Tool response JSON: `compact` or `pretty`                |
+| `MAINWP_RATE_LIMIT`                | No          | `60`       | Maximum API requests per minute                          |
+| `MAINWP_REQUEST_TIMEOUT`           | No          | `30000`    | Request timeout in milliseconds                          |
+| `MAINWP_MAX_RESPONSE_SIZE`         | No          | `10485760` | Maximum response size in bytes (10MB)                    |
+| `MAINWP_MAX_SESSION_DATA`          | No          | `52428800` | Maximum cumulative session data (50MB)                   |
+| `MAINWP_RETRY_ENABLED`             | No          | `true`     | Enable automatic retry for transient errors              |
+| `MAINWP_MAX_RETRIES`               | No          | `2`        | Total retry attempts including initial request           |
+| `MAINWP_RETRY_BASE_DELAY`          | No          | `1000`     | Base delay between retries in milliseconds               |
+| `MAINWP_RETRY_MAX_DELAY`           | No          | `2000`     | Maximum delay between retries in milliseconds            |
+| `MAINWP_ABILITY_NAMESPACES`        | No          | `mainwp`   | Comma-separated namespace allowlist (see below)          |
+
+Authentication supports two modes: set `MAINWP_USER` + `MAINWP_APP_PASSWORD` (Basic auth, recommended) or `MAINWP_TOKEN` alone (Bearer auth). When both are present, Basic auth wins.
 
 ## Configuration File
 
@@ -62,6 +66,7 @@ Create a `settings.json` file in one of these locations (checked in order):
 | `allowedTools`            | `MAINWP_ALLOWED_TOOLS`             | string[] |
 | `blockedTools`            | `MAINWP_BLOCKED_TOOLS`             | string[] |
 | `schemaVerbosity`         | `MAINWP_SCHEMA_VERBOSITY`          | string   |
+| `responseFormat`          | `MAINWP_RESPONSE_FORMAT`           | string   |
 | `rateLimit`               | `MAINWP_RATE_LIMIT`                | number   |
 | `requestTimeout`          | `MAINWP_REQUEST_TIMEOUT`           | number   |
 | `maxResponseSize`         | `MAINWP_MAX_RESPONSE_SIZE`         | number   |
@@ -106,7 +111,7 @@ When combining with `allowedTools` / `blockedTools`, use the prefixed form for n
 
 Control which tools are exposed to AI assistants. Useful for limiting access to read-only operations, hiding destructive tools in production, or reducing context size for the AI.
 
-The server exposes around 60 tools by default (the exact count varies by Dashboard version), consuming approximately 28,000 tokens. Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
+The server exposes around 60 tools by default (the exact count varies by Dashboard version), consuming roughly 13,000 tokens in standard mode (measured against a 62-tool catalog; actual counts vary by tokenizer). Tool filtering can reduce this significantly while limiting the AI to specific capabilities.
 
 ### Whitelist Mode
 
@@ -269,8 +274,8 @@ Control the detail level of tool descriptions sent to the AI. This affects token
 
 | Mode       | Description                                    | Token Impact            |
 | ---------- | ---------------------------------------------- | ----------------------- |
-| `standard` | Full descriptions, safety tags, usage hints    | Default, ~41,500 tokens |
-| `compact`  | Truncated descriptions (60 chars), no examples | ~30% reduction          |
+| `standard` | Full descriptions, safety tags, usage hints    | Default, ~13,000 tokens |
+| `compact`  | Truncated descriptions (60 chars), no examples | ~25% reduction          |
 
 ```json
 {

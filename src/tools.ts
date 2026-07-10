@@ -50,7 +50,16 @@ export type ToolCallResult = {
 
 /**
  * Cached tool list to avoid re-converting abilities on every ListTools call.
- * Invalidated by abilities array reference change or config fingerprint change.
+ *
+ * This is the second tier of a two-tier cache and deliberately uses a
+ * different invalidation model than abilities.ts:
+ * - abilities.ts owns the SOURCE cache: TTL + namespace signature, with
+ *   stale-serving on upstream failures.
+ * - this is a pure derivation memo: abilities → tools is deterministic given
+ *   the config, so it's keyed on the abilities array identity (fetchAbilities
+ *   returns the same array while its cache is valid) plus a fingerprint of
+ *   the config fields that affect conversion. No TTL or staleness concept
+ *   needed — freshness is entirely the source cache's problem.
  */
 let cachedTools: Tool[] | null = null;
 let cachedToolsAbilitiesRef: Ability[] | null = null;
@@ -82,7 +91,14 @@ export function clearToolsCache(): void {
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config, false, logger);
-  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}|${config.abilityNamespaces.join(',')}`;
+  // JSON.stringify (not delimiter-joining) so a tool or namespace name
+  // containing the delimiter could never produce a colliding fingerprint
+  const fingerprint = JSON.stringify([
+    config.schemaVerbosity,
+    config.allowedTools ?? [],
+    config.blockedTools ?? [],
+    config.abilityNamespaces,
+  ]);
 
   if (
     cachedTools &&
@@ -196,9 +212,11 @@ export async function executeTool(
       });
     }
 
-    // Log all destructive operation attempts for audit purposes (regardless of safe mode)
+    // Audit: fires for every destructive request, including ones safe mode
+    // blocks below. The matching "executed" event lives in executeAbility;
+    // grep "AUDIT:" for the full trail.
     if (isDestructive) {
-      reqLogger.info('Destructive operation invoked', {
+      reqLogger.info('AUDIT: destructive operation requested', {
         toolName,
         abilityName,
         safeMode: config.safeMode,

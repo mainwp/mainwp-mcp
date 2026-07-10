@@ -68,12 +68,18 @@ function extractStatusCode(error: unknown): number | null {
     }
   }
 
-  // Extract from error message patterns
+  // Extract from error message patterns (last resort — structured .status above
+  // is preferred). Requires status context before the digits so unrelated
+  // numbers ("more than 500 items") aren't misread as HTTP statuses.
   if (error instanceof Error) {
     const message = error.message;
 
-    // Match patterns like "Failed to fetch: 503" or "HTTP 503"
-    const statusMatch = message.match(/\b([45]\d{2})\b/);
+    // Match patterns like "HTTP 503", "status 503", "status code 503",
+    // "Failed to fetch: 503", or a status-line-style message starting with
+    // the code ("503 Service Unavailable")
+    const statusMatch = message.match(
+      /(?:^|\bHTTP\s+|\bstatus(?:\s+code)?\s*:?\s*|:\s*)([45]\d{2})\b/i
+    );
     if (statusMatch) {
       return parseInt(statusMatch[1], 10);
     }

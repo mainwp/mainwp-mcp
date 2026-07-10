@@ -3,12 +3,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { createLogger, createStderrLogger, withRequestId } from './logging.js';
 
 describe('createLogger', () => {
   let mockServer: {
     sendLoggingMessage: ReturnType<typeof vi.fn>;
   };
+  // createLogger only calls sendLoggingMessage, so the stub narrows to that
+  const asServer = () => mockServer as unknown as Server;
 
   beforeEach(() => {
     mockServer = {
@@ -17,7 +20,7 @@ describe('createLogger', () => {
   });
 
   it('should send logs via MCP server', async () => {
-    const logger = createLogger(mockServer as any);
+    const logger = createLogger(asServer());
 
     logger.info('Test message');
 
@@ -34,7 +37,7 @@ describe('createLogger', () => {
   });
 
   it('should include data in log messages', async () => {
-    const logger = createLogger(mockServer as any);
+    const logger = createLogger(asServer());
 
     logger.info('Test message', { key: 'value' });
 
@@ -50,7 +53,7 @@ describe('createLogger', () => {
   });
 
   it('should use custom logger name', async () => {
-    const logger = createLogger(mockServer as any, 'custom-logger');
+    const logger = createLogger(asServer(), 'custom-logger');
 
     logger.debug('Test');
 
@@ -64,7 +67,7 @@ describe('createLogger', () => {
   });
 
   it('should support all log levels', async () => {
-    const logger = createLogger(mockServer as any);
+    const logger = createLogger(asServer());
 
     logger.debug('debug');
     logger.info('info');
@@ -92,7 +95,7 @@ describe('createLogger', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockServer.sendLoggingMessage.mockRejectedValue(new Error('Server not connected'));
 
-    const logger = createLogger(mockServer as any);
+    const logger = createLogger(asServer());
     logger.info('Test message');
 
     // Wait for the promise to reject and fallback to stderr

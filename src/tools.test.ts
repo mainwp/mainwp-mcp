@@ -8,9 +8,8 @@ import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
-import { type Config } from './config.js';
-import { type Logger } from './logging.js';
 import { type Ability, clearCache, initRateLimiter } from './abilities.js';
+import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -127,37 +126,9 @@ const sampleAbilities: Ability[] = [
   },
 ];
 
-const baseConfig: Config = {
-  dashboardUrl: 'https://test.local',
-  authType: 'basic',
-  username: 'admin',
-  appPassword: 'xxxx',
-  skipSslVerify: true,
-  allowHttp: false,
-  rateLimit: 0,
-  requestTimeout: 5000,
-  maxResponseSize: 10485760,
-  safeMode: false,
-  requireUserConfirmation: true,
-  maxSessionData: 52428800,
-  schemaVerbosity: 'standard',
-  responseFormat: 'compact',
-  retryEnabled: false, // Disable retries for tests
-  maxRetries: 2,
-  retryBaseDelay: 1000,
-  retryMaxDelay: 2000,
-  abilityNamespaces: ['mainwp'],
-  configSource: 'environment',
-};
+const baseConfig = makeBaseConfig();
 
-const mockLogger: Logger = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  notice: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  critical: vi.fn(),
-};
+const mockLogger = makeMockLogger();
 
 describe('getTools', () => {
   beforeEach(() => {
