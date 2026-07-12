@@ -82,7 +82,7 @@ Some tools work but others return 403. The WordPress user lacks required capabil
 
 ### Bearer Token Not Working
 
-Works with username/password but not with `MAINWP_TOKEN`. Check that the token was generated correctly in MainWP Dashboard, the token hasn't expired, and you're using the correct environment variable (`MAINWP_TOKEN`, not `MAINWP_APP_PASSWORD`). When in doubt, use Application Password authentication instead.
+Bearer authentication with `MAINWP_TOKEN` is expected to fail against the WordPress Abilities API, which uses native WordPress authentication. Configure `MAINWP_USER` and `MAINWP_APP_PASSWORD` with a WordPress Application Password instead.
 
 ---
 

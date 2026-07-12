@@ -78,7 +78,7 @@ function extractStatusCode(error: unknown): number | null {
     // "Failed to fetch: 503", or a status-line-style message starting with
     // the code ("503 Service Unavailable")
     const statusMatch = message.match(
-      /(?:^|\bHTTP\s+|\bstatus(?:\s+code)?\s*:?\s*|:\s*)([45]\d{2})\b/i
+      /(?:^|\bHTTP\s+|\bstatus(?:\s+code)?\s*:?\s*|\b(?:failed to fetch|gateway timeout|rate limited)\s*:\s*)([45]\d{2})\b/i
     );
     if (statusMatch) {
       return parseInt(statusMatch[1], 10);

@@ -75,6 +75,12 @@ export function clearToolsCache(): void {
   cachedToolsFingerprint = null;
 }
 
+/** Return whether a tool is permitted by the configured allow/block lists. */
+export function isToolAllowed(config: Config, toolName: string): boolean {
+  if (config.blockedTools?.includes(toolName)) return false;
+  return !config.allowedTools?.length || config.allowedTools.includes(toolName);
+}
+
 /**
  * Fetch all MainWP abilities and convert them to MCP tools
  *
@@ -115,16 +121,7 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
-  if (config.allowedTools && config.allowedTools.length > 0) {
-    const allowedSet = new Set(config.allowedTools);
-    tools = tools.filter(tool => allowedSet.has(tool.name));
-  }
-
-  // Apply blocklist filter (blacklist)
-  if (config.blockedTools && config.blockedTools.length > 0) {
-    const blockedSet = new Set(config.blockedTools);
-    tools = tools.filter(tool => !blockedSet.has(tool.name));
-  }
+  tools = tools.filter(tool => isToolAllowed(config, tool.name));
 
   // Log if tools were filtered
   if (tools.length !== originalCount && logger) {
@@ -142,7 +139,7 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   if (config.schemaVerbosity !== 'standard' && logger) {
     logger.info('Schema verbosity mode active', {
       verbosity: config.schemaVerbosity,
-      note: 'Reduces token usage by ~30% with minimal descriptions',
+      note: 'Uses minimal descriptions to reduce token usage',
     });
   }
 
@@ -181,6 +178,10 @@ export async function executeTool(
     // Check for cancellation before starting
     if (options?.signal?.aborted) {
       throw McpErrorFactory.cancelled();
+    }
+
+    if (!isToolAllowed(config, toolName)) {
+      throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
     }
 
     // Validate input before forwarding to API

@@ -14,7 +14,7 @@ import {
   initRateLimiter,
   type Ability,
 } from './abilities.js';
-import { readLimitedBody } from './http-client.js';
+import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
@@ -1157,6 +1157,64 @@ describe('executeAbility', () => {
     expect(url).toContain('input[page]=2');
   });
 
+  it('preserves one-level object and scalar-array query encoding', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+      filters: { status: 'active', count: 2 },
+      ids: [1, 'two'],
+    });
+
+    const url = mockFetch.mock.calls[1][0] as string;
+    expect(url).toContain('input[filters][status]=active');
+    expect(url).toContain('input[filters][count]=2');
+    expect(url).toContain('input[ids][]=1');
+    expect(url).toContain('input[ids][]=two');
+  });
+
+  it('rejects objects nested deeper than one level and names the offending key', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+        filters: { status: { value: 'active' } },
+      })
+    ).rejects.toMatchObject({
+      code: MCP_ERROR_CODES.INVALID_PARAMS,
+      message: expect.stringContaining('filters'),
+    });
+  });
+
+  it('rejects arrays containing objects and names the offending key', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+        filters: [{ status: 'active' }],
+      })
+    ).rejects.toMatchObject({
+      code: MCP_ERROR_CODES.INVALID_PARAMS,
+      message: expect.stringContaining('filters'),
+    });
+  });
+
   it('should throw when GET URL exceeds 8000 characters', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1169,6 +1227,86 @@ describe('executeAbility', () => {
     await expect(
       executeAbility(baseConfig, 'mainwp/list-sites-v1', { filter: longValue })
     ).rejects.toThrow(/URL exceeds 8000 characters/);
+  });
+
+  it('logs destructive previews as previewed and never executed', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ preview: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    await executeAbility(
+      baseConfig,
+      'mainwp/delete-site-v1',
+      { site_id: 1, dry_run: true },
+      mockLogger,
+      sampleAbilities[1]
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith('AUDIT: destructive operation previewed', {
+      abilityName: 'mainwp/delete-site-v1',
+    });
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('does not log destructive operations as executed after a 5xx failure', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('failure', { status: 500 }));
+    await expect(
+      executeAbility(
+        baseConfig,
+        'mainwp/delete-site-v1',
+        { site_id: 1 },
+        mockLogger,
+        sampleAbilities[1]
+      )
+    ).rejects.toThrow(/Ability execution failed/);
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('does not log destructive operations as executed after cancellation', async () => {
+    mockFetch.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      executeAbility(
+        baseConfig,
+        'mainwp/delete-site-v1',
+        { site_id: 1 },
+        mockLogger,
+        sampleAbilities[1],
+        controller.signal
+      )
+    ).rejects.toThrow();
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('logs a successful destructive execution exactly once', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    await executeAbility(
+      baseConfig,
+      'mainwp/delete-site-v1',
+      { site_id: 1 },
+      mockLogger,
+      sampleAbilities[1]
+    );
+    expect(mockLogger.info).toHaveBeenCalledTimes(1);
+    expect(mockLogger.info).toHaveBeenCalledWith('AUDIT: destructive operation executed', {
+      abilityName: 'mainwp/delete-site-v1',
+    });
   });
 });
 
@@ -1290,6 +1428,65 @@ describe('onCacheRefresh', () => {
     await fetchAbilities(baseConfig, true);
 
     expect(callback).toHaveBeenCalled();
+  });
+
+  it('notifies when a same-named ability changes schema and annotations', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    const original = sampleAbilities[0];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [original],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...original,
+          description: 'Changed description',
+          input_schema: {
+            type: 'object',
+            properties: { page: { type: 'integer' } },
+          },
+          meta: {
+            ...original.meta,
+            annotations: { ...original.meta?.annotations, readonly: false },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies when a same-named ability changes label or category', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    const original = sampleAbilities[0];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [original],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    // label becomes the MCP annotation title; category becomes the standard-mode
+    // description prefix — both affect tool conversion, so a change must notify.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ ...original, label: 'Renamed Label', category: 'mainwp-renamed' }],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1449,5 +1646,79 @@ describe('readLimitedBody', () => {
 
     const result = await readLimitedBody(mockResponse, 1000);
     expect(result).toBe('{"key":"value"}');
+  });
+
+  it('surfaces ETIMEDOUT when the request deadline expires during a body read', async () => {
+    mockFetch.mockImplementationOnce((_url, options: RequestInit) => {
+      const signal = options.signal as AbortSignal;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('partial'));
+          signal.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(new Response(stream));
+    });
+    const customFetch = createFetch(makeBaseConfig({ requestTimeout: 20 }));
+
+    const response = await customFetch('https://test.local/stalled');
+
+    await expect(readLimitedBody(response, 1000)).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+  });
+
+  it('preserves AbortError for external cancellation during a body read', async () => {
+    mockFetch.mockImplementationOnce((_url, options: RequestInit) => {
+      const signal = options.signal as AbortSignal;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('partial'));
+          signal.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(new Response(stream));
+    });
+    const externalController = new AbortController();
+    const customFetch = createFetch(makeBaseConfig({ requestTimeout: 1000 }));
+    const response = await customFetch('https://test.local/cancelled', {
+      signal: externalController.signal,
+    });
+
+    externalController.abort();
+
+    await expect(readLimitedBody(response, 1000)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('paginateApi', () => {
+  it('does not warn when all 50 reported pages are fetched', async () => {
+    const logger = makeMockLogger();
+    const customFetch = vi.fn(
+      async () => new Response('[]', { headers: { 'X-WP-TotalPages': '50' } })
+    );
+
+    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+
+    expect(customFetch).toHaveBeenCalledTimes(50);
+    expect(logger.warning).not.toHaveBeenCalled();
+  });
+
+  it('warns when reported pages exceed the 50-page cap', async () => {
+    const logger = makeMockLogger();
+    const customFetch = vi.fn(
+      async () => new Response('[]', { headers: { 'X-WP-TotalPages': '51' } })
+    );
+
+    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+
+    expect(customFetch).toHaveBeenCalledTimes(50);
+    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Pagination capped'));
   });
 });

@@ -181,6 +181,18 @@ describe('loadConfig', () => {
 
     expect(config.authType).toBe('bearer');
     expect(config.apiToken).toBe('mytoken123');
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Application Password'));
+  });
+
+  it('should warn when bearer auth is selected with only a partial basic auth pair', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_TOKEN = 'mytoken123';
+
+    const config = loadConfig();
+
+    expect(config.authType).toBe('bearer');
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Application Password'));
   });
 
   it('should prefer basic auth over bearer auth', () => {
@@ -383,23 +395,20 @@ describe('loadConfig', () => {
       expect(loadConfig().requireUserConfirmation).toBe(false);
     });
 
-    it('warns and falls back to default on unrecognized values', () => {
+    it('throws on an unrecognized value instead of falling back to the default', () => {
       baseEnv();
       process.env.MAINWP_SAFE_MODE = 'maybe';
 
-      const config = loadConfig();
-
-      expect(config.safeMode).toBe(false);
-      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('MAINWP_SAFE_MODE'));
+      expect(() => loadConfig()).toThrow(/MAINWP_SAFE_MODE.*maybe/);
     });
 
-    it('falls back to settings file value on unrecognized env value', () => {
+    it('throws when a malformed env value overrides a permissive settings-file value', () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ safeMode: true }));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ allowHttp: true }));
       baseEnv();
-      process.env.MAINWP_SAFE_MODE = 'garbage';
+      process.env.MAINWP_ALLOW_HTTP = 'flase';
 
-      expect(loadConfig().safeMode).toBe(true);
+      expect(() => loadConfig()).toThrow(/MAINWP_ALLOW_HTTP.*flase/);
     });
   });
 

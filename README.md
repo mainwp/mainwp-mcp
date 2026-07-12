@@ -455,11 +455,11 @@ Configuration loads from `./settings.json` or `~/.config/mainwp-mcp/settings.jso
 
 ## Optimizing Token Usage
 
-You have access to around 60 tools (the exact count varies by Dashboard version), which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
+You have access to around 60 tools (the exact count varies by Dashboard version), which consume roughly 13,000 tokens in your AI's context window in standard mode (measured against a 62-tool catalog; actual counts vary by tokenizer). Two settings help reduce this footprint.
 
 ### Compact Schema Mode
 
-A single setting reduces token usage by roughly 30%:
+A single setting reduces token usage by roughly 20% (about 13,000 → 10,000 tokens on the measured catalog):
 
 ```json
 {

@@ -15,6 +15,7 @@ import { trackSessionData } from './session.js';
 import {
   buildInvalidParameterResponse,
   buildConflictingParametersResponse,
+  buildNoPreviewAvailableResponse,
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
@@ -142,6 +143,8 @@ export async function handleConfirmationFlow(
   const schemaProps = ability.input_schema?.properties;
   const hasConfirmParam =
     schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
+  const hasDryRunParam =
+    schemaProps !== null && typeof schemaProps === 'object' && 'dry_run' in schemaProps;
 
   // Validation: user_confirmed on tools without confirm parameter
   if (!hasConfirmParam && args.user_confirmed === true) {
@@ -187,17 +190,30 @@ export async function handleConfirmationFlow(
   if (args.confirm === true && args.user_confirmed !== true) {
     cleanupExpiredPreviews();
 
-    // Execute preview with dry_run: true and the confirm flag removed
-    const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
-    delete previewArgs.confirm;
-    const previewResult = await executeAbility(
-      config,
-      abilityName,
-      previewArgs,
-      logger,
-      ability,
-      signal
-    );
+    // Abilities without a declared dry_run parameter get no upstream preview
+    // call — fabricating dry_run against a schema that doesn't declare it
+    // could execute for real if upstream ignores unknown input. The two-phase
+    // gate still applies: a token is issued below so the confirmed follow-up
+    // call can proceed.
+    let previewResult: unknown = null;
+    if (hasDryRunParam) {
+      // Execute preview with dry_run: true and the confirm flag removed
+      const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
+      delete previewArgs.confirm;
+      previewResult = await executeAbility(
+        config,
+        abilityName,
+        previewArgs,
+        logger,
+        ability,
+        signal
+      );
+    } else {
+      logger.warning('Preview unavailable - ability does not support dry_run', {
+        toolName,
+        abilityName,
+      });
+    }
 
     // Store preview for later validation
     const previewKey = getPreviewKey(toolName, args);
@@ -215,9 +231,16 @@ export async function handleConfirmationFlow(
     const token = crypto.randomUUID();
     tokenIndex.set(token, previewKey);
 
-    logger.info('Preview generated for confirmation', { toolName });
+    logger.info(
+      hasDryRunParam
+        ? 'Preview generated for confirmation'
+        : 'Confirmation required without preview',
+      { toolName }
+    );
 
-    const confirmationResponse = buildConfirmationRequiredResponse(ctx, previewResult, token);
+    const confirmationResponse = hasDryRunParam
+      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
+      : buildNoPreviewAvailableResponse(ctx, token);
     const previewResponse = formatJson(config, confirmationResponse);
 
     trackSessionData(previewResponse, config, logger, 'during preview');
@@ -322,10 +345,13 @@ export async function handleConfirmationFlow(
   }
 
   // Default case: no confirm or user_confirmed provided
-  // Log warning but proceed to maintain backward compatibility
   logger.warning('Destructive tool called without confirmation parameters', {
     toolName,
     abilityName,
   });
-  return { action: 'skip' };
+  return {
+    action: 'respond',
+    response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+    isError: true,
+  };
 }

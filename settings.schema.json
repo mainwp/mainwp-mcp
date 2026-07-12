@@ -25,7 +25,7 @@
     },
     "apiToken": {
       "type": "string",
-      "description": "MainWP REST API Bearer token. Alternative to username+appPassword authentication. Only used if username+appPassword are not set (Basic Auth takes precedence when both are provided)."
+      "description": "MainWP REST API Bearer token retained for compatibility. The WordPress Abilities API is expected to reject it; use username+appPassword with a WordPress Application Password. Only used without a complete username+appPassword pair."
     },
     "skipSslVerify": {
       "type": "boolean",
