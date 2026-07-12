@@ -359,18 +359,26 @@ export async function fetchAbilities(
         });
       }
 
-      // Check if abilities have changed (compare names against the not-yet-
-      // replaced cache)
-      const oldNames =
-        abilitiesCache.data
-          ?.map(a => a.name)
-          .sort()
-          .join(',') ?? '';
-      const newNames = newAbilities
-        .map(a => a.name)
-        .sort()
-        .join(',');
-      const hasChanged = oldNames !== newNames;
+      // Detect changes to every field that affects MCP tool conversion, not
+      // only names, so clients refresh schemas and safety annotations too.
+      const fingerprint = (abilities: Ability[] | null): string =>
+        JSON.stringify(
+          (abilities ?? [])
+            .map(ability => ({
+              name: ability.name,
+              label: ability.label,
+              category: ability.category,
+              description: ability.description,
+              input_schema: ability.input_schema,
+              output_schema: ability.output_schema,
+              annotations: ability.meta?.annotations,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      const oldFingerprint = fingerprint(abilitiesCache.data);
+      const newFingerprint = fingerprint(newAbilities);
+      const hasChanged = oldFingerprint !== newFingerprint;
+      const hadCachedAbilities = abilitiesCache.data !== null;
 
       // Build indices into local variables first; they're committed together
       // with the cache write. If the collision throw fires mid-loop the
@@ -409,7 +417,7 @@ export async function fetchAbilities(
             byToolName: newToolNameIndex,
           });
           // Notify callbacks if abilities changed
-          if (hasChanged && oldNames !== '') {
+          if (hasChanged && hadCachedAbilities) {
             notifyCacheRefresh(logger);
           }
         },
@@ -492,11 +500,21 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
     if (Array.isArray(value)) {
       // Arrays: input[key][]=val1&input[key][]=val2
       for (const item of value) {
+        if (item !== null && typeof item === 'object') {
+          throw McpErrorFactory.invalidParams(
+            `Unsupported nested query parameter at "${key}": arrays may contain only scalar values`
+          );
+        }
         params.push(`input[${encodeURIComponent(key)}][]=${encodeURIComponent(String(item))}`);
       }
     } else if (typeof value === 'object' && value !== null) {
       // Nested objects: input[key][subkey]=val
       for (const [subKey, subVal] of Object.entries(value)) {
+        if (subVal !== null && typeof subVal === 'object') {
+          throw McpErrorFactory.invalidParams(
+            `Unsupported nested query parameter at "${key}": objects may be only one level deep`
+          );
+        }
         params.push(
           `input[${encodeURIComponent(key)}][${encodeURIComponent(subKey)}]=${encodeURIComponent(String(subVal))}`
         );
@@ -553,13 +571,6 @@ export async function executeAbility(
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
-
-  // Audit: fires only when a destructive operation actually reaches execution
-  // (safe-mode blocks never get here); logs operation name only, no sensitive
-  // parameters. The matching "requested" event lives in executeTool.
-  if (isDestructive) {
-    logger?.info('AUDIT: destructive operation executed', { abilityName });
-  }
 
   /**
    * Fetch and validate response in a single operation.
@@ -645,8 +656,9 @@ export async function executeAbility(
   };
 
   // Apply retry logic only for read-only operations when enabled
+  let result: unknown;
   if (config.retryEnabled && isReadonly) {
-    return await withRetry(fetchAndValidate, {
+    result = await withRetry(fetchAndValidate, {
       maxRetries: config.maxRetries,
       baseDelay: config.retryBaseDelay,
       maxDelay: config.retryMaxDelay,
@@ -655,11 +667,18 @@ export async function executeAbility(
     });
   } else {
     // No retry: execute directly with synthetic context
-    return await fetchAndValidate({
+    result = await fetchAndValidate({
       remainingBudget: config.requestTimeout,
       attempt: 0,
     });
   }
+
+  if (isDestructive) {
+    const action = input?.dry_run === true ? 'previewed' : 'executed';
+    logger?.info(`AUDIT: destructive operation ${action}`, { abilityName });
+  }
+
+  return result;
 }
 
 /**

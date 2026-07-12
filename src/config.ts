@@ -338,10 +338,8 @@ const FALSY_VALUES = new Set(['false', '0', 'no', 'off']);
 
 /**
  * Get boolean value with precedence: env var > settings file > default.
- * Unrecognized non-empty env values are ignored with a stderr warning rather
- * than silently coerced — several of these flags are security-relevant, and
- * "TRUE" or "1" quietly becoming false gave operators the opposite of what
- * they configured.
+ * Unrecognized non-empty env values fail startup rather than falling through
+ * to a file/default value — several of these flags are security-relevant.
  */
 function getBoolean(
   name: string,
@@ -357,10 +355,7 @@ function getBoolean(
     if (FALSY_VALUES.has(normalized)) {
       return false;
     }
-    console.error(
-      `[mainwp-mcp] WARNING: ${name}="${envVar}" is not a recognized boolean ` +
-        `(expected true/1/yes/on or false/0/no/off) — ignoring it.`
-    );
+    throw new Error(`${name} must be a boolean (true/1/yes/on or false/0/no/off), got "${envVar}"`);
   }
   if (fileValue !== undefined) {
     return fileValue;
@@ -671,6 +666,13 @@ export function loadConfig(): Config {
   if (!hasBasicAuth && !hasBearerAuth) {
     throw new Error(
       'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)'
+    );
+  }
+
+  if (hasBearerAuth && !hasBasicAuth) {
+    console.error(
+      'WARNING: MAINWP_TOKEN bearer authentication is expected to fail against the WordPress Abilities API. ' +
+        'Configure both MAINWP_USER and MAINWP_APP_PASSWORD with a WordPress Application Password.'
     );
   }
 

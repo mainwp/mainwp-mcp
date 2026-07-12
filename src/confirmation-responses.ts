@@ -66,6 +66,32 @@ export function buildConflictingParametersResponse(ctx: ConfirmationContext): ob
 }
 
 /**
+ * Response when a confirm-capable tool cannot generate a dry-run preview.
+ * Still a CONFIRMATION_REQUIRED workflow step — a token is issued so the
+ * confirmed follow-up call can proceed — but carries no preview payload.
+ */
+export function buildNoPreviewAvailableResponse(ctx: ConfirmationContext, token: string): object {
+  return {
+    status: 'CONFIRMATION_REQUIRED',
+    next_action: 'confirm_without_preview',
+    message:
+      'This ability does not support dry_run, so no preview is available. ' +
+      'Explicit user approval is required to proceed.',
+    preview: null,
+    confirmation_token: token,
+    instructions:
+      'Describe to the user exactly what this operation will do. If they explicitly approve, ' +
+      'call this tool again with user_confirmed: true and confirmation_token: "<token above>". ' +
+      'Do NOT set user_confirmed: true without explicit user consent.',
+    metadata: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      expiresIn: '5 minutes',
+    },
+  };
+}
+
+/**
  * Response when a preview is generated and confirmation is required
  */
 export function buildConfirmationRequiredResponse(

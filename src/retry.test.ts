@@ -61,6 +61,8 @@ describe('isRetryableError', () => {
     it('ignores unrelated numbers in error messages', () => {
       expect(isRetryableError(new Error('cannot process more than 500 items'))).toBe(false);
       expect(isRetryableError(new Error('connection idle for 503 seconds'))).toBe(false);
+      expect(isRetryableError(new Error('batch contains: 500 items'))).toBe(false);
+      expect(isRetryableError(new Error('validation failed: 503 records'))).toBe(false);
     });
 
     it('extracts status codes preceded by the word "status"', () => {

@@ -7,6 +7,7 @@
 
 import type { Prompt, GetPromptResult, PromptMessage } from '@modelcontextprotocol/sdk/types.js';
 import { isValidId } from './security.js';
+import { McpErrorFactory } from './errors.js';
 
 /**
  * Internal prompt definition with message generator
@@ -385,7 +386,7 @@ function validatePromptArgs(
     // also enforces the >= 1 and safe-integer bounds the old regexes missed.
     if (key === 'site_id') {
       if (value !== 'all' && !isValidId(value)) {
-        throw new Error(`Invalid site_id: must be a numeric value or "all"`);
+        throw McpErrorFactory.invalidParams(`Invalid site_id: must be a numeric value or "all"`);
       }
       sanitized[key] = value;
     } else if (key === 'site_ids') {
@@ -397,18 +398,22 @@ function validatePromptArgs(
       } else {
         const ids = value.split(',').map(part => part.trim());
         if (!ids.every(isValidId)) {
-          throw new Error(`Invalid site_ids: must be "all" or comma-separated numeric IDs`);
+          throw McpErrorFactory.invalidParams(
+            `Invalid site_ids: must be "all" or comma-separated numeric IDs`
+          );
         }
         sanitized[key] = ids.join(',');
       }
     } else if (key === 'issue_type') {
       if (!VALID_ISSUE_TYPES.has(value)) {
-        throw new Error(`Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`);
+        throw McpErrorFactory.invalidParams(
+          `Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`
+        );
       }
       sanitized[key] = value;
     } else if (key === 'update_type') {
       if (!VALID_UPDATE_TYPES.has(value)) {
-        throw new Error(
+        throw McpErrorFactory.invalidParams(
           `Invalid update_type: must be one of ${[...VALID_UPDATE_TYPES].join(', ')}`
         );
       }

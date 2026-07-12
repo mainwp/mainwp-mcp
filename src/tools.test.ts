@@ -3,12 +3,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getTools, executeTool, clearToolsCache } from './tools.js';
+import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
-import { type Ability, clearCache, initRateLimiter } from './abilities.js';
+import {
+  type Ability,
+  clearCache,
+  fetchAbilities,
+  initRateLimiter,
+  onCacheRefresh,
+} from './abilities.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 // Mock fetch globally
@@ -196,6 +202,27 @@ describe('getTools', () => {
     const deleteTool = tools.find(t => t.name === 'delete_site_v1');
 
     expect(deleteTool?.inputSchema.properties).toHaveProperty('user_confirmed');
+  });
+
+  it('does not mutate cached schemas or notify on an identical forced refresh', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => structuredClone(sampleAbilities),
+      headers: new Headers(),
+    });
+
+    await getTools(baseConfig);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => structuredClone(sampleAbilities),
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).not.toHaveBeenCalled();
   });
 
   it('should handle schema verbosity modes - compact', async () => {
@@ -453,6 +480,18 @@ describe('getTools', () => {
   });
 });
 
+describe('isToolAllowed', () => {
+  it('gives the blocklist precedence over the allowlist', () => {
+    const config = {
+      ...baseConfig,
+      allowedTools: ['list_sites_v1'],
+      blockedTools: ['list_sites_v1'],
+    };
+
+    expect(isToolAllowed(config, 'list_sites_v1')).toBe(false);
+  });
+});
+
 describe('executeTool', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -487,6 +526,21 @@ describe('executeTool', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed).toContainEqual({ id: 1, name: 'Site 1' });
     expect(result.isError).toBeUndefined();
+  });
+
+  it('rejects a disallowed tool before lookup, preview, or execution', async () => {
+    const config = { ...baseConfig, blockedTools: ['delete_site_v1'] };
+
+    const result = await executeTool(
+      config,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Tool is not allowed: delete_site_v1');
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('should validate input before execution', async () => {
@@ -585,6 +639,72 @@ describe('executeTool', () => {
 
     // Preview is a successful workflow step, not a failed call
     expect(result.isError).toBeUndefined();
+  });
+
+  it('issues a confirmation token without calling upstream when the ability has confirm but no dry_run', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+
+    // Workflow step, not an error: token issued, no preview, no upstream call
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe('CONFIRMATION_REQUIRED');
+    expect(parsed.next_action).toBe('confirm_without_preview');
+    expect(parsed.preview).toBeNull();
+    expect(typeof parsed.confirmation_token).toBe('string');
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only
+
+    // The confirmed follow-up call executes — the gate is not a dead end
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmed = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: parsed.confirmation_token },
+      mockLogger
+    );
+    expect(confirmed.isError).toBeUndefined();
+    expect(confirmed.content[0].text).toContain('deleted');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires a preview for a bare destructive call with confirm support', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'delete_site_v1', { site_id: 1 }, mockLogger);
+
+    expect(result.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('should reject user_confirmed without prior preview', async () => {

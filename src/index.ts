@@ -10,12 +10,14 @@
  *
  * Environment Variables:
  *   - MAINWP_URL: Base URL of MainWP Dashboard (required)
- *   - MAINWP_TOKEN: Bearer token for authentication (required)
+ *   - MAINWP_USER + MAINWP_APP_PASSWORD: WordPress Application Password authentication
+ *   - MAINWP_TOKEN: Compatibility-only bearer token (expected to fail against Abilities API)
  *   - MAINWP_SKIP_SSL_VERIFY: Set to "true" to skip SSL verification (optional)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { pathToFileURL } from 'node:url';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -27,7 +29,7 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
-import { getTools, executeTool } from './tools.js';
+import { getTools, executeTool, isToolAllowed } from './tools.js';
 import { getSessionDataUsage } from './session.js';
 import {
   fetchAbilities,
@@ -42,7 +44,7 @@ import {
 import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { sanitizeError, isValidId, validateInput } from './security.js';
+import { sanitizeError, isValidId } from './security.js';
 import {
   formatErrorResponse,
   getErrorMessage,
@@ -114,7 +116,7 @@ function validateResourceUri(uri: string): {
 /**
  * Create and configure the MCP server
  */
-async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
+export async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
   const server = new Server(
     {
       name: SERVER_NAME,
@@ -262,6 +264,9 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       const parsed = validateResourceUri(uri);
 
       if (parsed.type === 'site' && parsed.params?.site_id) {
+        if (!isToolAllowed(config, 'get_site_v1')) {
+          throw McpErrorFactory.permissionDenied('Tool is not allowed: get_site_v1');
+        }
         const result = await executeAbility(
           config,
           'mainwp/get-site-v1',
@@ -301,13 +306,21 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
   server.setRequestHandler(GetPromptRequestSchema, async request => {
     const { name, arguments: args } = request.params;
     try {
-      // Validate prompt arguments before processing
+      // Prompt arguments are flat strings. Guard their transport-safe shape
+      // here; prompt-specific semantics belong to validatePromptArgs.
       if (args) {
-        validateInput(args as Record<string, unknown>);
+        for (const value of Object.values(args)) {
+          // eslint-disable-next-line no-control-regex
+          if (value.length > 200 || /[\x00-\x1f]/.test(value)) {
+            throw McpErrorFactory.invalidParams(
+              'Prompt arguments must be at most 200 characters and contain no control characters'
+            );
+          }
+        }
       }
       return getPrompt(name, args);
     } catch (error) {
-      // Preserve structured MCP errors (e.g., from validateInput)
+      // Preserve structured MCP errors from prompt validation
       if (error instanceof McpError) {
         throw error;
       }
@@ -331,6 +344,9 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       // For site_id arguments, try to fetch site list dynamically
       if ((argName === 'site_id' || argName === 'site_ids') && values.length === 0) {
+        if (!isToolAllowed(config, 'list_sites_v1')) {
+          throw McpErrorFactory.permissionDenied('Tool is not allowed: list_sites_v1');
+        }
         try {
           const abilities = await fetchAbilities(config, false, logger);
           const listSitesAbility = abilities.find(a => a.name === 'mainwp/list-sites-v1');
@@ -436,7 +452,7 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
       const authHint =
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
-          : 'Verify MAINWP_TOKEN (or apiToken in settings.json) is correct and has not expired.';
+          : 'Bearer tokens (MAINWP_TOKEN) are not accepted by the Abilities API, which authenticates through native WordPress. Use MAINWP_USER + MAINWP_APP_PASSWORD (a WordPress Application Password / Basic auth) instead.';
       throw new Error(`Authentication failed: Invalid credentials. ${authHint}`, {
         cause: error,
       });
@@ -563,5 +579,7 @@ async function main(): Promise<void> {
   }
 }
 
-// Run the server
-main();
+// Run only when invoked as the program entry point; tests import createServer.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

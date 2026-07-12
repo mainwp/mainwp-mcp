@@ -18,7 +18,7 @@ import { abilityNameToToolName } from './naming.js';
  * MCP's tool input schema (also JSON Schema based).
  */
 function convertInputSchema(ability: Ability): Tool['inputSchema'] {
-  const schema = ability.input_schema;
+  const schema = ability.input_schema ? structuredClone(ability.input_schema) : undefined;
 
   if (!schema) {
     // No input required
