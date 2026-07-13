@@ -5,8 +5,9 @@
  * Abilities API REST endpoints.
  */
 
+import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
-import { McpErrorFactory, createHttpError } from './errors.js';
+import { McpErrorFactory, createHttpError, getErrorMessage } from './errors.js';
 import { RateLimiter, sanitizeError } from './security.js';
 import { withRetry, type RetryContext } from './retry.js';
 import {
@@ -87,7 +88,7 @@ export interface Category {
 interface CacheSlot<T> {
   data: T | null;
   timestamp: number;
-  /** Cache signature (dashboard + namespaces) the cached data was built for */
+  /** Cache signature (dashboard + namespaces + auth identity) the cached data was built for */
   signature: string;
   /**
    * Bumped on every successful commit. Lets a failing refresh detect that a
@@ -123,13 +124,21 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Build a stable signature of the response-affecting config (dashboard URL +
- * namespace allowlist) so a config change forces a cache refresh instead of
- * serving data fetched from another dashboard or filtered for other
- * namespaces. Also keys in-flight de-duplication: callers may only join a
- * running fetch that targets the same dashboard with the same allowlist.
+ * namespace allowlist + authentication identity) so a config change forces a
+ * cache refresh instead of serving data fetched from another dashboard,
+ * filtered for other namespaces, or fetched as a different user — WordPress
+ * can expose different ability catalogs per user, and multiple
+ * createServer(config) instances may share this module-level cache in one
+ * process. The identity is a one-way hash so credentials never appear in the
+ * signature itself. Also keys in-flight de-duplication: callers may only join
+ * a running fetch for the same dashboard, allowlist, and identity.
  */
 function cacheSignature(config: Config): string {
-  return JSON.stringify([config.dashboardUrl, config.abilityNamespaces]);
+  const authIdentity = crypto
+    .createHash('sha256')
+    .update(JSON.stringify([config.authType, config.username, config.appPassword, config.apiToken]))
+    .digest('hex');
+  return JSON.stringify([config.dashboardUrl, config.abilityNamespaces, authIdentity]);
 }
 
 /**
@@ -183,7 +192,7 @@ function notifyCacheRefresh(logger?: Logger): void {
       // Fail soft — a broken listener must not poison the cache refresh —
       // but leave a trace instead of swallowing silently
       logger?.debug('Cache refresh callback failed', {
-        error: sanitizeError(String(error)),
+        error: sanitizeError(getErrorMessage(error)),
       });
     }
   }
@@ -271,7 +280,7 @@ async function getCachedOrRefresh<R, T>(opts: {
           throw error;
         }
         logger?.warning(`Failed to refresh ${label}, using cached data`, {
-          error: sanitizeError(String(error)),
+          error: sanitizeError(getErrorMessage(error)),
           cacheAgeMinutes,
         });
         return slot.data;
@@ -287,7 +296,7 @@ async function getCachedOrRefresh<R, T>(opts: {
         logger?.warning(`Discarding ${label} cache: config changed and refresh failed`, {
           cachedSignature: slot.signature,
           requestedSignature: signature,
-          error: sanitizeError(String(error)),
+          error: sanitizeError(getErrorMessage(error)),
         });
         slot.data = null;
       }

@@ -192,7 +192,7 @@ export async function executeTool(
     // and prefixed `{ns}__tool` names from non-primary namespaces.
     const ability = await getAbilityByToolName(config, toolName, reqLogger);
     if (!ability) {
-      throw new Error(`Ability not found for tool: ${toolName}`);
+      throw McpErrorFactory.toolNotFound(toolName);
     }
     abilityName = ability.name;
 

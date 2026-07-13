@@ -1,7 +1,31 @@
 # Changelog
 
 All notable changes to mainwp-mcp are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/).
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Added
+
+The server warns at startup when a bearer token (`MAINWP_TOKEN`) is configured without a complete username and application password pair. The WordPress Abilities API rejects bearer tokens, so a token-only setup fails with 401s at request time; the warning surfaces the problem at startup instead.
+
+### Changed
+
+Destructive tool calls now go through strict confirmation gating. A bare call to a confirm-capable tool, with no preview and no confirmation token, returns a `PREVIEW_REQUIRED` error instead of proceeding with a logged warning. **This is breaking for clients that relied on the old skip**: run the preview step first, then confirm. Abilities that require confirmation but expose no `dry_run` parameter no longer get a fabricated dry-run call; they return a token-issuing `CONFIRMATION_REQUIRED` response with `preview: null`, and execution proceeds once the client confirms with that token.
+
+Nested objects and arrays of objects in the input of GET/DELETE abilities are now rejected with an invalid-params error. They used to be serialized into the query string as `[object Object]`, which the Dashboard silently misread.
+
+Malformed boolean configuration now fails startup instead of logging a warning and falling back to the default. Accepted values are `true/1/yes/on` and `false/0/no/off`; anything else stops the server with an error naming the variable.
+
+### Fixed
+
+Passing `dry_run: true` to an ability that does not declare a `dry_run` parameter now returns an invalid-parameter error instead of skipping the confirmation flow. The server used to forward the parameter upstream, and a handler that ignores unknown input would have run the destructive operation without confirmation.
+
+Request timeouts and client cancellations are no longer conflated. The request timeout stays armed while the response body is read, and timing out surfaces as a retryable `ETIMEDOUT`; an abort from the caller surfaces as a cancellation rather than a timeout.
+
+Spurious `tool_list_changed` notifications after every cache refresh are gone. Tool schema enrichment was mutating the cached abilities in place, so each refresh compared a different fingerprint and notified clients even when nothing had changed. Enrichment now works on a copy.
+
+Error classification prefers the structured HTTP status from the API response (401, 403, 404, 429, 5xx) over parsing the error message text, so error codes stay correct when upstream wording changes.
 
 ## [1.0.0-beta.3] - 2026-06-10
 

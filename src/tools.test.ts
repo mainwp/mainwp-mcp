@@ -8,6 +8,7 @@ import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
+import { MCP_ERROR_CODES } from './errors.js';
 import {
   type Ability,
   clearCache,
@@ -528,6 +529,25 @@ describe('executeTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('passes tool arguments through to the ability request', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    await executeTool(baseConfig, 'list_sites_v1', { page: 2, per_page: 25 }, mockLogger);
+
+    const url = mockFetch.mock.calls[1][0] as string;
+    expect(url).toContain('input[page]=2');
+    expect(url).toContain('input[per_page]=25');
+  });
+
   it('rejects a disallowed tool before lookup, preview, or execution', async () => {
     const config = { ...baseConfig, blockedTools: ['delete_site_v1'] };
 
@@ -568,7 +588,8 @@ describe('executeTool', () => {
 
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.error.message).toContain('Ability not found for tool: no_such_tool_v1');
+    expect(parsed.error.code).toBe(MCP_ERROR_CODES.TOOL_NOT_FOUND);
+    expect(parsed.error.message).toContain('Tool not found: no_such_tool_v1');
   });
 
   it('should block destructive operations in safe mode', async () => {
@@ -588,6 +609,29 @@ describe('executeTool', () => {
 
     expect(result.content[0].text).toContain('SAFE_MODE_BLOCKED');
     expect(result.isError).toBe(true);
+  });
+
+  it('allows read-only tools in safe mode', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ sites: [] }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      { ...baseConfig, safeMode: true },
+      'list_sites_v1',
+      {},
+      mockLogger
+    );
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ sites: [] });
+    expect(result.isError).toBeUndefined();
   });
 
   it('should strip confirm parameter in safe mode', async () => {
@@ -693,6 +737,75 @@ describe('executeTool', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects injected dry_run on an ability that does not declare it', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    // Undeclared dry_run must not bypass confirmation: if upstream ignored
+    // the unknown parameter, the destructive operation would execute for real.
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, dry_run: true },
+      mockLogger
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBe('INVALID_PARAMETER');
+    expect(parsed.message).toContain('dry_run');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only, no /run
+  });
+
+  it('rejects injected dry_run even when combined with confirm: true', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    // Worst case: confirm: true rides along with the fabricated dry_run —
+    // a skip here would forward confirm: true upstream without any gate.
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, confirm: true, dry_run: true },
+      mockLogger
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBe('INVALID_PARAMETER');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only, no /run
+  });
+
   it('requires a preview for a bare destructive call with confirm support', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -741,6 +854,33 @@ describe('executeTool', () => {
 
     expect(result.content[0].text).toContain('CONFLICTING_PARAMETERS');
     expect(result.isError).toBe(true);
+  });
+
+  it('allows a declared explicit dry_run to bypass confirmation', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true, preview: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, dry_run: true },
+      mockLogger
+    );
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ dry_run: true, preview: true });
+    expect(result.isError).toBeUndefined();
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Explicit dry_run bypasses confirmation flow',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
   });
 
   it('should accept confirmation_token to resolve preview', async () => {
@@ -916,6 +1056,27 @@ describe('executeTool', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
+  it('returns an error result for upstream HTTP execution errors', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => JSON.stringify({ code: 'site_not_found', message: 'Site does not exist' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
+
+    expect(result.content[0].text).toContain('site_not_found');
+    expect(result.isError).toBe(true);
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
   it('should return compact JSON by default', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -956,6 +1117,70 @@ describe('executeTool', () => {
     expect(result.content[0].text).toContain('\n');
     const parsed = JSON.parse(result.content[0].text);
     expect(result.content[0].text).toBe(JSON.stringify(parsed, null, 2));
+  });
+
+  it('executes non-primary namespace tools against their original ability URL', async () => {
+    const abilities: Ability[] = [
+      {
+        name: 'acme/do-thing-v1',
+        label: 'Acme Do Thing',
+        description: 'Third-party readonly ability',
+        category: 'acme-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => abilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ result: 'pong' }),
+      headers: new Headers(),
+    });
+    const config = {
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+    };
+
+    const result = await executeTool(config, 'acme__do_thing_v1', { input: 'ping' }, mockLogger);
+
+    expect(mockFetch.mock.calls[1][0]).toContain('/abilities/acme/do-thing-v1/run');
+    expect(JSON.parse(result.content[0].text)).toEqual({ result: 'pong' });
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('round-trips a hyphenated namespace through execution', async () => {
+    const abilities: Ability[] = [
+      {
+        name: 'acme-corp/do-thing-v1',
+        label: 'Acme Corp Do Thing',
+        description: 'Hyphenated-namespace ability',
+        category: 'acme-corp-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => abilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true }),
+      headers: new Headers(),
+    });
+    const config = {
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme-corp'] as [string, ...string[]],
+    };
+
+    const result = await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
+
+    expect(mockFetch.mock.calls[1][0]).toContain('/abilities/acme-corp/do-thing-v1/run');
+    expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
+    expect(result.isError).toBeUndefined();
   });
 });
 
@@ -1207,8 +1432,7 @@ describe('confirmation flow - full cycle', () => {
 });
 
 describe('session data tracking', () => {
-  // Note: session data tracking is cumulative across all tests
-  // These tests verify the tracking mechanism exists
+  beforeEach(() => resetSessionData());
 
   it('should return usage object with used and limit', () => {
     const usage = getSessionDataUsage(baseConfig);

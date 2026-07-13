@@ -1,5 +1,5 @@
 {
-  "_comment": "MainWP MCP Server Settings - Copy this file to settings.json and customize. All fields are optional. Environment variables take precedence over settings file values. Use username+appPassword with a WordPress Application Password. apiToken is retained for compatibility but is expected to fail against the WordPress Abilities API; a complete username+appPassword pair takes precedence. Set schemaVerbosity to 'compact' to reduce token usage by ~30%.",
+  "_comment": "MainWP MCP Server Settings - Copy this file to settings.json and customize. All fields are optional. Environment variables take precedence over settings file values. Use username+appPassword with a WordPress Application Password. apiToken is retained for compatibility but is expected to fail against the WordPress Abilities API; a complete username+appPassword pair takes precedence. Set schemaVerbosity to 'compact' to reduce token usage by ~20%.",
 
   "dashboardUrl": "https://dashboard.example.com",
 

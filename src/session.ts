@@ -92,7 +92,8 @@ export function trackSessionData(
 }
 
 /**
- * Reset the cumulative session data counter to zero.
+ * Reset the cumulative session data counter to zero (for testing only).
+ * @internal
  */
 export function resetSessionData(): void {
   sessionDataBytes = 0;

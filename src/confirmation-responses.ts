@@ -49,6 +49,26 @@ export function buildInvalidParameterResponse(ctx: ConfirmationContext): object 
 }
 
 /**
+ * Response when dry_run is passed to a confirm-capable tool whose ability
+ * does not declare dry_run. Forwarding the fabricated parameter upstream
+ * could execute the operation for real if the handler ignores unknown input,
+ * so the call is rejected before any request is made.
+ */
+export function buildDryRunNotSupportedResponse(ctx: ConfirmationContext): object {
+  return {
+    error: 'INVALID_PARAMETER',
+    message: 'dry_run parameter not supported for this tool',
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      reason:
+        'This ability does not declare a dry_run parameter, so a preview cannot be guaranteed upstream',
+      resolution: 'Remove dry_run and call with confirm: true to start the confirmation flow',
+    },
+  };
+}
+
+/**
  * Response when user_confirmed and dry_run are both set (conflicting intent)
  */
 export function buildConflictingParametersResponse(ctx: ConfirmationContext): object {
