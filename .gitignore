@@ -28,6 +28,10 @@ test-results/
 # Local agent/review artifacts (generated)
 .context/
 
+# Local agent instructions (contain machine-specific paths)
+CLAUDE.md
+AGENTS.md
+
 # Override global gitignore for CI/CD
 !.github/
 

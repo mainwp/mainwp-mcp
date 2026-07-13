@@ -260,11 +260,12 @@ Keep all functionality while blocking deletions. A conservative choice for produ
 
 Just enough to check and apply updates. Pair with compact mode for minimal context usage.
 
-````json
+```json
 {
   "schemaVerbosity": "compact",
   "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
 }
+```
 
 ---
 
@@ -275,13 +276,13 @@ Control the detail level of tool descriptions sent to the AI. This affects token
 | Mode       | Description                                    | Token Impact            |
 | ---------- | ---------------------------------------------- | ----------------------- |
 | `standard` | Full descriptions, safety tags, usage hints    | Default, ~13,000 tokens |
-| `compact`  | Truncated descriptions (60 chars), no examples | ~25% reduction          |
+| `compact`  | Truncated descriptions (60 chars), no examples | ~20% reduction          |
 
 ```json
 {
   "schemaVerbosity": "compact"
 }
-````
+```
 
 Or via environment variable:
 

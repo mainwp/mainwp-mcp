@@ -436,6 +436,28 @@ describe('fetchAbilities', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
+  it('does not share cached abilities across authentication identities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Same dashboard and namespaces but a different user: WordPress can
+    // expose a different ability catalog per user, so this must refetch
+    // instead of serving the first user's cached list.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [sampleAbilities[0]],
+      headers: new Headers(),
+    });
+    const otherUserAbilities = await fetchAbilities({ ...baseConfig, username: 'bob' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(otherUserAbilities).toHaveLength(1);
+  });
+
   it('should handle fetch errors with cached fallback', async () => {
     // First successful fetch
     mockFetch.mockResolvedValueOnce({
@@ -940,111 +962,39 @@ describe('executeAbility', () => {
     expect(calls[1][1].method).toBe('GET');
   });
 
-  it('should use DELETE for destructive + idempotent abilities (delete_site_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
+  it.each([
+    ['mainwp/delete-site-v1', { site_id: 1, confirm: true }],
+    ['mainwp/delete-client-v1', { client_id_or_email: 1, confirm: true }],
+    ['mainwp/delete-tag-v1', { tag_id: 1, confirm: true }],
+    [
+      'mainwp/delete-site-plugins-v1',
+      { site_id_or_domain: 1, plugins: ['test-plugin/test-plugin.php'], confirm: true },
+    ],
+    [
+      'mainwp/delete-site-themes-v1',
+      { site_id_or_domain: 1, themes: ['twentytwentyfour'], confirm: true },
+    ],
+  ])(
+    'should use DELETE for destructive + idempotent abilities (%s)',
+    async (abilityName, input) => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => sampleAbilities,
+        headers: new Headers(),
+      });
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
 
-    await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, confirm: true });
+      await executeAbility(baseConfig, abilityName, input);
 
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_client_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-client-v1', {
-      client_id_or_email: 1,
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_tag_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-tag-v1', { tag_id: 1, confirm: true });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_site_plugins_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-site-plugins-v1', {
-      site_id_or_domain: 1,
-      plugins: ['test-plugin/test-plugin.php'],
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_site_themes_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-site-themes-v1', {
-      site_id_or_domain: 1,
-      themes: ['twentytwentyfour'],
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
+      const calls = mockFetch.mock.calls;
+      expect(calls[1][1].method).toBe('DELETE');
+    }
+  );
 
   it('should use POST for non-destructive write abilities', async () => {
     mockFetch.mockResolvedValueOnce({
@@ -1063,6 +1013,35 @@ describe('executeAbility', () => {
 
     const calls = mockFetch.mock.calls;
     expect(calls[1][1].method).toBe('POST');
+  });
+
+  it('should use POST for destructive non-idempotent abilities', async () => {
+    const destructiveNonIdempotentAbility: Ability = {
+      ...sampleAbilities[1],
+      meta: {
+        annotations: {
+          readonly: false,
+          destructive: true,
+          idempotent: false,
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [destructiveNonIdempotentAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, confirm: true });
+
+    const request = mockFetch.mock.calls[1][1];
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body as string)).toEqual({ input: { site_id: 1, confirm: true } });
   });
 
   it('should serialize input to query string for DELETE requests', async () => {
@@ -1343,6 +1322,22 @@ describe('clearCache', () => {
     });
 
     await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should clear cached categories', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleCategories,
+      headers: new Headers(),
+    });
+
+    await fetchCategories(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    clearCache();
+
+    await fetchCategories(baseConfig);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 

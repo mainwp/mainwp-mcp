@@ -14,6 +14,7 @@ import fs from 'fs';
 
 // Import test fixtures for validation tests
 import configFixture from '../tests/fixtures/config.json' with { type: 'json' };
+import { makeBaseConfig } from '../tests/helpers/config.js';
 
 // Mock fs module
 vi.mock('fs');
@@ -558,26 +559,13 @@ describe('loadConfig', () => {
 
 describe('getAbilitiesApiUrl', () => {
   it('should construct proper URL', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const url = getAbilitiesApiUrl(config);
 
@@ -587,28 +575,14 @@ describe('getAbilitiesApiUrl', () => {
 
 describe('getAuthHeaders', () => {
   it('should return Basic auth header', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
-      username: 'admin',
       appPassword: 'secret',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -617,27 +591,15 @@ describe('getAuthHeaders', () => {
   });
 
   it('should return Bearer auth header', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
       authType: 'bearer',
       apiToken: 'mytoken',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -645,26 +607,13 @@ describe('getAuthHeaders', () => {
   });
 
   it('should always include Content-Type', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -672,28 +621,15 @@ describe('getAuthHeaders', () => {
   });
 
   it('should encode Basic auth credentials correctly', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       username: 'user',
       appPassword: 'pass',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
     const encoded = headers['Authorization'].replace('Basic ', '');

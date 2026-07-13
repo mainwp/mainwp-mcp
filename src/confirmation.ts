@@ -14,6 +14,7 @@ import type { Logger } from './logging.js';
 import { trackSessionData } from './session.js';
 import {
   buildInvalidParameterResponse,
+  buildDryRunNotSupportedResponse,
   buildConflictingParametersResponse,
   buildNoPreviewAvailableResponse,
   buildConfirmationRequiredResponse,
@@ -180,8 +181,25 @@ export async function handleConfirmationFlow(
     };
   }
 
-  // Case 1: Explicit dry_run bypass - skip confirmation flow entirely
+  // Case 1: Explicit dry_run bypass - skip confirmation flow entirely.
+  // Only honored when the ability declares dry_run: forwarding a fabricated
+  // dry_run (possibly alongside confirm: true) would execute for real if
+  // upstream ignores unknown input, so undeclared dry_run is rejected
+  // before any upstream call.
   if (args.dry_run === true) {
+    if (!hasDryRunParam) {
+      logger.warning('Invalid parameter: dry_run on tool without dry_run support', {
+        toolName,
+        abilityName,
+      });
+      return {
+        action: 'respond',
+        response: [
+          { type: 'text', text: formatJson(config, buildDryRunNotSupportedResponse(ctx)) },
+        ],
+        isError: true,
+      };
+    }
     logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
     return { action: 'skip' };
   }

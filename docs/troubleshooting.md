@@ -138,9 +138,21 @@ For automation scripts, disable the confirmation flow:
 }
 ```
 
-The AI tried to execute a destructive operation with `user_confirmed: true` without first requesting a preview. The two-step confirmation flow requires the AI to show you a preview before executing. The AI skipped the preview step.
+The AI tried to execute a destructive operation without completing the two-step confirmation flow. This error covers three cases: calling with `user_confirmed: true` without first requesting a preview, calling with no confirmation parameters at all (the server rejects bare destructive calls rather than executing them), or confirming with a stale or mismatched `confirmation_token` (the token must come from a preview of the same tool with the same arguments).
 
 This is usually an AI behavior issue. Try rephrasing: "Show me what will be deleted first, then I'll confirm."
+
+### "CONFIRMATION_REQUIRED" with `preview: null`
+
+```json
+{
+  "status": "CONFIRMATION_REQUIRED",
+  "next_action": "confirm_without_preview",
+  "preview": null
+}
+```
+
+Not an error. The ability requires confirmation but doesn't support `dry_run`, so there is nothing to preview. The response still carries a `confirmation_token`; the AI should describe what the operation will do and, once you explicitly approve, call the tool again with `user_confirmed: true` and that token.
 
 ### "PREVIEW_EXPIRED"
 
@@ -173,7 +185,7 @@ The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneou
 }
 ```
 
-The AI tried to use `user_confirmed: true` on a non-destructive tool. Only `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1` support `user_confirmed`. Other tools don't need confirmation.
+The AI tried to use `user_confirmed: true` on a tool that doesn't participate in the confirmation flow. Only tools whose schema declares a `confirm` parameter (the deletion tools: `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) accept `user_confirmed`. Other tools don't need confirmation.
 
 ---
 

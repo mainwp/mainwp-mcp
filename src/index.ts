@@ -30,7 +30,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
 import { getTools, executeTool, isToolAllowed } from './tools.js';
-import { getSessionDataUsage } from './session.js';
+import { getSessionDataUsage, formatBytes } from './session.js';
 import {
   fetchAbilities,
   fetchCategories,
@@ -525,7 +525,7 @@ async function main(): Promise<void> {
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
     startupLogger.info(`Config source: ${config.configSource}`);
-    startupLogger.info(`Session data limit: ${(config.maxSessionData / 1048576).toFixed(1)}MB`);
+    startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
     if (config.skipSslVerify) {
       startupLogger.error('╔══════════════════════════════════════════════════════════════╗');
       startupLogger.error('║  WARNING: SSL verification disabled                          ║');

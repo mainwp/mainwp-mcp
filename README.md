@@ -405,23 +405,24 @@ For Windsurf and other hosts, use the same JSON configuration pattern shown abov
 
 ### Environment Variables
 
-| Variable                           | Required | Default    | Description                                              |
-| ---------------------------------- | -------- | ---------- | -------------------------------------------------------- |
-| `MAINWP_URL`                       | Yes      |            | Base URL of your MainWP Dashboard                        |
-| `MAINWP_USER`                      | Yes      |            | WordPress admin username                                 |
-| `MAINWP_APP_PASSWORD`              | Yes      |            | WordPress Application Password                           |
-| `MAINWP_SKIP_SSL_VERIFY`           | No       | `false`    | Skip SSL verification (dev only)                         |
-| `MAINWP_ALLOW_HTTP`                | No       | `false`    | Allow HTTP URLs (credentials sent in plain text)         |
-| `MAINWP_SAFE_MODE`                 | No       | `false`    | Block destructive operations                             |
-| `MAINWP_REQUIRE_USER_CONFIRMATION` | No       | `true`     | Require two-step confirmation for destructive operations |
-| `MAINWP_ALLOWED_TOOLS`             | No       |            | Whitelist of tools to expose                             |
-| `MAINWP_BLOCKED_TOOLS`             | No       |            | Blacklist of tools to hide                               |
-| `MAINWP_SCHEMA_VERBOSITY`          | No       | `standard` | `standard` or `compact`                                  |
-| `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
-| `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
-| `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
-| `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
-| `MAINWP_ABILITY_NAMESPACES`        | No       | `mainwp`   | Comma-separated ability namespace allowlist              |
+| Variable                           | Required       | Default    | Description                                                                                            |
+| ---------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| `MAINWP_URL`                       | Yes            |            | Base URL of your MainWP Dashboard                                                                      |
+| `MAINWP_USER`                      | For basic auth |            | WordPress admin username                                                                               |
+| `MAINWP_APP_PASSWORD`              | For basic auth |            | WordPress Application Password                                                                         |
+| `MAINWP_TOKEN`                     | No             |            | Compatibility only; the Abilities API is expected to reject bearer tokens. Use an Application Password |
+| `MAINWP_SKIP_SSL_VERIFY`           | No             | `false`    | Skip SSL verification (dev only)                                                                       |
+| `MAINWP_ALLOW_HTTP`                | No             | `false`    | Allow HTTP URLs (credentials sent in plain text)                                                       |
+| `MAINWP_SAFE_MODE`                 | No             | `false`    | Block destructive operations                                                                           |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No             | `true`     | Require two-step confirmation for destructive operations                                               |
+| `MAINWP_ALLOWED_TOOLS`             | No             |            | Whitelist of tools to expose                                                                           |
+| `MAINWP_BLOCKED_TOOLS`             | No             |            | Blacklist of tools to hide                                                                             |
+| `MAINWP_SCHEMA_VERBOSITY`          | No             | `standard` | `standard` or `compact`                                                                                |
+| `MAINWP_RETRY_ENABLED`             | No             | `true`     | Enable automatic retry for transient errors                                                            |
+| `MAINWP_MAX_RETRIES`               | No             | `2`        | Total retry attempts including initial request                                                         |
+| `MAINWP_RETRY_BASE_DELAY`          | No             | `1000`     | Base delay between retries in milliseconds                                                             |
+| `MAINWP_RETRY_MAX_DELAY`           | No             | `2000`     | Maximum delay between retries in milliseconds                                                          |
+| `MAINWP_ABILITY_NAMESPACES`        | No             | `mainwp`   | Comma-separated ability namespace allowlist                                                            |
 
 > **⚠️ Security Warning: SSL Verification**
 >
@@ -477,96 +478,7 @@ Compact mode truncates descriptions to 60 characters and removes examples while 
 
 ### Limiting Exposed Tools
 
-You can expose only the tools you need. These configurations cover common scenarios. Tool names from non-primary namespaces (added via `abilityNamespaces`) use the `{namespace}__{tool}` form — e.g. `acme__do_thing_v1` — so reference them that way in `allowedTools` / `blockedTools`.
-
-**Read-only monitoring** (17 tools, ~73% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_sites_v1",
-    "get_site_v1",
-    "get_site_plugins_v1",
-    "get_site_themes_v1",
-    "get_site_updates_v1",
-    "list_updates_v1",
-    "list_ignored_updates_v1",
-    "list_clients_v1",
-    "get_client_v1",
-    "count_clients_v1",
-    "count_client_sites_v1",
-    "get_client_sites_v1",
-    "get_client_costs_v1",
-    "list_tags_v1",
-    "get_tag_v1",
-    "get_tag_sites_v1",
-    "get_tag_clients_v1"
-  ]
-}
-```
-
-**Site management only** (30 tools, ~53% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_sites_v1",
-    "get_site_v1",
-    "count_sites_v1",
-    "get_sites_basic_v1",
-    "add_site_v1",
-    "update_site_v1",
-    "delete_site_v1",
-    "sync_sites_v1",
-    "check_site_v1",
-    "check_sites_v1",
-    "reconnect_site_v1",
-    "reconnect_sites_v1",
-    "disconnect_site_v1",
-    "disconnect_sites_v1",
-    "suspend_site_v1",
-    "suspend_sites_v1",
-    "unsuspend_site_v1",
-    "get_site_plugins_v1",
-    "get_site_themes_v1",
-    "activate_site_plugins_v1",
-    "deactivate_site_plugins_v1",
-    "delete_site_plugins_v1",
-    "activate_site_theme_v1",
-    "delete_site_themes_v1",
-    "get_abandoned_plugins_v1",
-    "get_abandoned_themes_v1",
-    "get_site_security_v1",
-    "get_site_client_v1",
-    "get_site_costs_v1",
-    "get_site_changes_v1"
-  ]
-}
-```
-
-**Updates only** (13 tools, ~80% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_updates_v1",
-    "run_updates_v1",
-    "update_all_v1",
-    "get_site_updates_v1",
-    "update_site_core_v1",
-    "update_site_plugins_v1",
-    "update_site_themes_v1",
-    "update_site_translations_v1",
-    "list_ignored_updates_v1",
-    "set_ignored_updates_v1",
-    "ignore_site_core_v1",
-    "ignore_site_plugins_v1",
-    "ignore_site_themes_v1"
-  ]
-}
-```
-
-**Hide destructive tools** (block deletions while keeping everything else):
+You can expose only the tools you need with `allowedTools`, or hide specific tools with `blockedTools`. For example, blocking the deletion tools while keeping everything else:
 
 ```json
 {
@@ -580,18 +492,9 @@ You can expose only the tools you need. These configurations cover common scenar
 }
 ```
 
-### Combining Settings
+Tool names from non-primary namespaces (added via `abilityNamespaces`) use the `{namespace}__{tool}` form (e.g. `acme__do_thing_v1`), so reference them that way in `allowedTools` / `blockedTools`.
 
-Compact mode and tool filtering work together. This configuration exposes just four tools with minimal descriptions, well-suited for focused automation:
-
-```json
-{
-  "schemaVerbosity": "compact",
-  "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
-}
-```
-
-For all configuration options, see the [Configuration Guide](docs/configuration.md).
+Filtering stacks with compact mode: a read-only monitoring preset cuts token usage by ~73%, and a focused four-tool automation config by over 90%. Ready-made presets (read-only monitoring, site management, updates only, minimal automation) live in the [Configuration Guide](docs/configuration.md#tool-filtering).
 
 ---
 
@@ -612,10 +515,10 @@ sequenceDiagram
     AI->>Server: delete_site_v1(site_id: 3, confirm: true)
     Server->>MainWP: dry_run preview request
     MainWP-->>Server: site details
-    Server-->>AI: PREVIEW with site info
+    Server-->>AI: CONFIRMATION_REQUIRED<br/>(preview + confirmation_token)
     AI->>User: Shows: "Example Site (https://example.com)<br/>Confirm deletion?"
     User->>AI: Yes, proceed
-    AI->>Server: delete_site_v1(site_id: 3, user_confirmed: true)
+    AI->>Server: delete_site_v1(site_id: 3, user_confirmed: true,<br/>confirmation_token: "...")
     Server->>MainWP: execute deletion
     MainWP-->>Server: success
     Server-->>AI: deletion complete
@@ -645,6 +548,10 @@ These destructive tools require two-step confirmation:
 - `delete_tag_v1` - Delete a tag
 - `delete_site_plugins_v1` - Delete plugins from a site
 - `delete_site_themes_v1` - Delete themes from a site
+
+The gate is strict. Calling one of these tools with neither `confirm` nor `user_confirmed` returns a `PREVIEW_REQUIRED` error; the server never executes a bare destructive call. A confirmation must reference a preview of the same tool with the same arguments taken within the last 5 minutes. The preview response includes a `confirmation_token` the AI passes back with `user_confirmed: true`.
+
+Abilities that require confirmation but don't support `dry_run` still go through the two-step gate: the server returns `CONFIRMATION_REQUIRED` with `preview: null` and a token, and the AI must describe the operation and get your explicit approval before confirming.
 
 ### Disabling for Automation
 
@@ -1004,12 +911,14 @@ Operations with more than 50 sites are automatically queued for background proce
 
 These resources are available for inspection:
 
-| URI                   | Description                                   |
-| --------------------- | --------------------------------------------- |
-| `mainwp://abilities`  | Full list of available abilities with schemas |
-| `mainwp://categories` | List of ability categories                    |
-| `mainwp://status`     | Current connection status                     |
-| `mainwp://help`       | Tool documentation and safety conventions     |
+| URI                              | Description                                   |
+| -------------------------------- | --------------------------------------------- |
+| `mainwp://abilities`             | Full list of available abilities with schemas |
+| `mainwp://categories`            | List of ability categories                    |
+| `mainwp://status`                | Current connection status                     |
+| `mainwp://help`                  | Tool documentation and safety conventions     |
+| `mainwp://site/{site_id}`        | Details for a single site by ID               |
+| `mainwp://help/tool/{tool_name}` | Documentation for a specific tool             |
 
 ---
 

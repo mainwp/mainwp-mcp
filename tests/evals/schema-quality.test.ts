@@ -211,36 +211,4 @@ describe('Schema Quality', () => {
       expect(violations, `Compact mode drops items: ${violations.join(', ')}`).toEqual([]);
     });
   });
-
-  describe('fixture staleness', () => {
-    it('should warn if ability count diverges from reference doc', async () => {
-      // Count section headings in abilities-reference.md
-      const fs = await import('fs');
-      const path = await import('path');
-      const refPath = path.resolve(import.meta.dirname, '../../.mwpdev/abilities-reference.md');
-
-      let refCount = 0;
-      if (fs.existsSync(refPath)) {
-        const content = fs.readFileSync(refPath, 'utf8');
-        // Count ### headings that match ability names (e.g., ### list_sites_v1)
-        const headings = content.match(/^### \w+_v\d+/gm);
-        refCount = headings?.length ?? 0;
-      }
-
-      const fixtureCount = abilitiesFixture.filter((a: { name: string }) =>
-        a.name.startsWith('mainwp/')
-      ).length;
-
-      if (refCount > 0 && fixtureCount !== refCount) {
-        console.warn(
-          `\n⚠ Fixture staleness: fixture has ${fixtureCount} abilities, ` +
-            `reference doc has ${refCount} headings. ` +
-            `Consider re-capturing the fixture.\n`
-        );
-      }
-
-      // This test always passes — it's a warning, not a failure
-      expect(true).toBe(true);
-    });
-  });
 });
