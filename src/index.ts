@@ -45,6 +45,7 @@ import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId } from './security.js';
+import { abilityNameToToolName } from './naming.js';
 import {
   formatErrorResponse,
   getErrorMessage,
@@ -264,8 +265,14 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
       const parsed = validateResourceUri(uri);
 
       if (parsed.type === 'site' && parsed.params?.site_id) {
-        if (!isToolAllowed(config, 'get_site_v1')) {
-          throw McpErrorFactory.permissionDenied('Tool is not allowed: get_site_v1');
+        // Derive the exposed tool name so allow/block lists keyed on
+        // namespaced names (non-mainwp primary namespace) still apply
+        const getSiteToolName = abilityNameToToolName(
+          'mainwp/get-site-v1',
+          config.abilityNamespaces[0]
+        );
+        if (!isToolAllowed(config, getSiteToolName)) {
+          throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
         }
         const result = await executeAbility(
           config,
@@ -344,8 +351,12 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
 
       // For site_id arguments, try to fetch site list dynamically
       if ((argName === 'site_id' || argName === 'site_ids') && values.length === 0) {
-        if (!isToolAllowed(config, 'list_sites_v1')) {
-          throw McpErrorFactory.permissionDenied('Tool is not allowed: list_sites_v1');
+        const listSitesToolName = abilityNameToToolName(
+          'mainwp/list-sites-v1',
+          config.abilityNamespaces[0]
+        );
+        if (!isToolAllowed(config, listSitesToolName)) {
+          throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${listSitesToolName}`);
         }
         try {
           const abilities = await fetchAbilities(config, false, logger);
@@ -362,7 +373,7 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
         } catch (error) {
           // Fail soft — completions are best-effort — but leave a trace so
           // config/auth problems here aren't invisible in production
-          logger.debug('Site-id completion lookup failed', {
+          logger.info('Site-id completion lookup failed', {
             error: sanitizeError(getErrorMessage(error)),
           });
         }

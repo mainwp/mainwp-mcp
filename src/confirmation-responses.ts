@@ -137,9 +137,14 @@ export function buildConfirmationRequiredResponse(
 }
 
 /**
- * Response when user_confirmed is set but no preview was requested first
+ * Response when confirmed execution is impossible because no valid preview
+ * exists. Default reason covers the user_confirmed-without-preview case;
+ * pass a specific reason for other paths (e.g. no confirmation parameters).
  */
-export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
+export function buildPreviewRequiredResponse(
+  ctx: ConfirmationContext,
+  reason = 'user_confirmed: true requires a prior preview request'
+): object {
   return {
     error: 'PREVIEW_REQUIRED',
     next_action: 'request_preview_first',
@@ -147,7 +152,7 @@ export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
-      reason: 'user_confirmed: true requires a prior preview request',
+      reason,
       resolution:
         'Call the tool with confirm: true (without user_confirmed) to generate a preview first.',
     },
