@@ -369,7 +369,18 @@ export async function handleConfirmationFlow(
   });
   return {
     action: 'respond',
-    response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+    response: [
+      {
+        type: 'text',
+        text: formatJson(
+          config,
+          buildPreviewRequiredResponse(
+            ctx,
+            'Destructive tools require confirmation parameters; neither confirm nor user_confirmed was provided'
+          )
+        ),
+      },
+    ],
     isError: true,
   };
 }

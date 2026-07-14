@@ -135,7 +135,7 @@ function parseArgs(): CliOptions {
         break;
       case '--plugin-slug':
         opts.pluginSlug = args[++i];
-        if (!opts.pluginSlug) {
+        if (!opts.pluginSlug || opts.pluginSlug.startsWith('--')) {
           console.error('Invalid --plugin-slug: value required');
           process.exit(1);
         }
@@ -166,7 +166,7 @@ Usage:
   npm run test:manual -- --verbose             Print response bodies
 
 Plugin lifecycle tests (activate/deactivate/delete) only auto-discover
-throwaway plugins (hello-dolly, akismet). Anything else requires --plugin-slug.
+throwaway plugins (hello-dolly). Anything else requires --plugin-slug.
 `);
         process.exit(0);
         break;
@@ -475,10 +475,12 @@ function buildTestCatalog(): TestScenario[] {
 /**
  * Plugins the lifecycle tests (activate → deactivate → delete) may touch
  * without asking. The delete test permanently removes the plugin from the
- * child site, so only throwaway plugins qualify. A run once auto-picked
- * WooCommerce and deleted it — never widen this to "first plugin found".
+ * child site, so only throwaway plugins qualify — Akismet doesn't (its
+ * uninstall drops the configured API key); pass it via --plugin-slug if you
+ * mean it. A run once auto-picked WooCommerce and deleted it — never widen
+ * this to "first plugin found".
  */
-const SAFE_TEST_PLUGIN_SLUGS = ['hello.php', 'hello-dolly/hello.php', 'akismet/akismet.php'];
+const SAFE_TEST_PLUGIN_SLUGS = ['hello.php', 'hello-dolly/hello.php'];
 
 async function discover(config: Config, opts: CliOptions): Promise<DiscoveryContext> {
   const ctx: DiscoveryContext = {
@@ -531,8 +533,9 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
         const data = result.body as { plugins?: Array<{ slug: string; active: boolean }> };
         if (data.plugins) {
           const candidates = data.plugins.filter(p => SAFE_TEST_PLUGIN_SLUGS.includes(p.slug));
-          // Prefer inactive so activate → deactivate restores the original state
-          const candidate = candidates.find(p => !p.active) ?? candidates[0];
+          // Only pick an inactive plugin so activate → deactivate restores the
+          // original state; an active one would end the run deactivated
+          const candidate = candidates.find(p => !p.active);
           if (candidate) {
             ctx.pluginSlug = candidate.slug;
             console.log(
@@ -540,7 +543,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
             );
           } else {
             console.log(
-              '  No throwaway plugin (hello-dolly, akismet) found — plugin lifecycle tests will be skipped.'
+              '  No throwaway plugin (hello-dolly) found — plugin lifecycle tests will be skipped.'
             );
             console.log(
               '  Install Hello Dolly on the child site, or pass --plugin-slug to pick one explicitly.'

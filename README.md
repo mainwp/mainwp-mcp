@@ -634,6 +634,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **reconnect_site_v1** - Reconnect a disconnected site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -686,6 +687,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **activate_site_theme_v1** - Activate a theme on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -697,6 +699,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **get_abandoned_plugins_v1** - Get abandoned plugins on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -837,6 +840,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **suspend_client_v1** - Suspend a client
   - `client_id_or_email`: Client ID or email (string|number, required)
@@ -882,6 +886,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **get_tag_sites_v1** - Get sites associated with a tag
   - `tag_id`: Tag ID (number, required)
