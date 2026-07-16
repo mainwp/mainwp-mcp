@@ -279,46 +279,63 @@ export async function handleConfirmationFlow(
       );
     }
 
-    // Resolve preview key: prefer token-based lookup, fall back to key-based
-    let previewKey: string;
+    // Confirmed execution is token-bound: the token proves the caller saw the
+    // preview response. A tool+args fallback would let a caller confirm a
+    // preview it never read, so no token means no execution.
     const confirmationToken =
       typeof args.confirmation_token === 'string' ? args.confirmation_token : undefined;
 
-    if (confirmationToken) {
-      const tokenPreviewKey = tokenIndex.get(confirmationToken);
-      if (!tokenPreviewKey) {
-        logger.warning('Confirmation failed - invalid confirmation token', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      // Verify token belongs to this tool (prevent cross-tool reuse)
-      if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
-        tokenIndex.delete(confirmationToken);
-        logger.warning('Confirmation failed - token belongs to different tool', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      // Verify token matches current arguments (prevent arg-swap)
-      const currentPreviewKey = getPreviewKey(toolName, args);
-      if (currentPreviewKey !== tokenPreviewKey) {
-        tokenIndex.delete(confirmationToken);
-        logger.warning('Confirmation failed - arguments do not match preview', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      previewKey = tokenPreviewKey;
-    } else {
-      previewKey = getPreviewKey(toolName, args);
+    if (!confirmationToken) {
+      logger.warning('Confirmation failed - confirmation_token missing', { toolName });
+      return {
+        action: 'respond',
+        response: [
+          {
+            type: 'text',
+            text: formatJson(
+              config,
+              buildPreviewRequiredResponse(
+                ctx,
+                'user_confirmed: true requires the confirmation_token issued by the preview response'
+              )
+            ),
+          },
+        ],
+        isError: true,
+      };
     }
+
+    const tokenPreviewKey = tokenIndex.get(confirmationToken);
+    if (!tokenPreviewKey) {
+      logger.warning('Confirmation failed - invalid confirmation token', { toolName });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    // Verify token belongs to this tool (prevent cross-tool reuse)
+    if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
+      tokenIndex.delete(confirmationToken);
+      logger.warning('Confirmation failed - token belongs to different tool', { toolName });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    // Verify token matches current arguments (prevent arg-swap)
+    const currentPreviewKey = getPreviewKey(toolName, args);
+    if (currentPreviewKey !== tokenPreviewKey) {
+      tokenIndex.delete(confirmationToken);
+      logger.warning('Confirmation failed - arguments do not match preview', { toolName });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    const previewKey = tokenPreviewKey;
 
     // Check preview expiry BEFORE running cleanup for more helpful error messages
     const previewTimestamp = pendingPreviews.get(previewKey);
@@ -334,7 +351,7 @@ export async function handleConfirmationFlow(
 
     if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
       pendingPreviews.delete(previewKey);
-      if (confirmationToken) tokenIndex.delete(confirmationToken);
+      tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - preview expired', { toolName });
       return {
         action: 'respond',
@@ -345,7 +362,7 @@ export async function handleConfirmationFlow(
 
     // Preview is valid - proceed with execution
     pendingPreviews.delete(previewKey);
-    if (confirmationToken) tokenIndex.delete(confirmationToken);
+    tokenIndex.delete(confirmationToken);
     const previewAge = Date.now() - previewTimestamp;
     logger.info('User confirmation validated', { toolName, previewAge });
 

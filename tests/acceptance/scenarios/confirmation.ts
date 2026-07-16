@@ -45,6 +45,25 @@ export const fixtureConfirmationFlow: ScenarioDefinition = {
       throw new Error('delete_site_v1 preview did not issue a confirmation token');
     }
 
+    const tokenless = await ctx.client.callTool('delete_site_v1', {
+      ...args,
+      confirm: true,
+      user_confirmed: true,
+    });
+    const tokenlessData = parseToolJson(tokenless) as { error?: string };
+    ctx.assert.equal('tokenless confirm is rejected', tokenless.isError, true);
+    ctx.assert.equal(
+      'tokenless confirm requires the token',
+      tokenlessData.error,
+      'PREVIEW_REQUIRED'
+    );
+    const afterTokenless = await ctx.verifier.listSites();
+    ctx.assert.deepEqual(
+      'tokenless confirm does not change fixture sites',
+      afterTokenless.map(site => `${site.id}:${site.url}`).sort(),
+      before.map(site => `${site.id}:${site.url}`).sort()
+    );
+
     const forged = await ctx.client.callTool('delete_site_v1', {
       ...args,
       user_confirmed: true,
