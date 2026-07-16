@@ -1,0 +1,191 @@
+# Acceptance testing
+
+The acceptance harness tests the local working tree as an installed npm package and communicates with it through the real MCP stdio protocol. Its default packed mode creates a tarball, checks the published file list, installs that tarball in a fresh consumer project, and launches the installed `dist/index.js`.
+
+The deterministic suite covers MCP initialization, discovery, resources, prompts, site reads, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
+
+The harness does not prove every Dashboard ability, browser behavior, production performance, or compatibility with every MCP client. Fixture runs do not prove real Dashboard authentication, TLS, WordPress permissions, or changing live data. Agent runs add an end-to-end model check, but they do not replace the deterministic suite.
+
+## Architecture
+
+`tests/acceptance/run.ts` is a standalone `tsx` CLI. It selects scenarios, prepares credentials, starts the fixture when requested, launches one isolated MCP server process per scenario, and writes results.
+
+Packed mode uses these stages:
+
+1. `npm pack --json` creates the package tarball.
+2. `tar -tzf` proves required files are present and private source or settings files are absent.
+3. A fresh temporary consumer runs `npm init -y` and `npm install <tarball>` with its npm cache redirected to a temporary directory.
+4. Installed production dependencies are served from a temporary registry bound to `127.0.0.1`. They are packed from the repository's already installed dependency tree. This keeps the consumer install independent and deterministic without contacting an external registry.
+5. The harness resolves the installed entry point and both package bins.
+
+Each MCP launch gets a fresh empty working directory and a fresh `HOME`. The launch environment contains only the explicit runtime values needed by that scenario. `settings-file-config` is the deliberate exception: it writes fake fixture credentials to a mode-restricted temporary `settings.json` and passes no `MAINWP_*` credential variables.
+
+The fixture dashboard is a plain HTTP server on `127.0.0.1` with an operating-system-assigned port. It requires fake Basic authentication, serves `tests/evals/fixtures/abilities-full.json`, and reads deterministic site state from `tests/acceptance/fixtures/sites.json`.
+
+`tests/acceptance/lib/verify.ts` reads the Abilities API directly with independent HTTP requests. It does not call through the MCP server. It mirrors the production request method and PHP-style `input[...]` query serialization.
+
+## Prerequisites
+
+- Node.js 20.19 or newer
+- The dependencies already installed with `npm ci` or `npm install`
+- A completed `npm run build` before source mode or a fixture packed run
+- `tar`, `git`, and `npm` available on `PATH`
+- For live runs, a reachable MainWP Dashboard and a WordPress Application Password
+- For agent runs, the `claude` CLI with working model access
+
+The deterministic fixture suite needs no Dashboard credentials and contacts no host other than `127.0.0.1`.
+
+## Credentials and environment variables
+
+Live credentials are resolved in this order:
+
+1. `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` from the process environment
+2. The file named by `MAINWP_MCP_ACCEPTANCE_ENV`
+3. `~/github/dev-tools/network-testbed/.env`
+
+The env file maps `LLM_DASH_URL` to the Dashboard URL and reads `MAINWP_USER` and `MAINWP_APP_PASSWORD`. Values stay in memory. The harness never writes real credentials to a consumer project, settings file, command record, transcript, or result artifact.
+
+Live server and verifier requests accept the testbed's self-signed certificate. The server receives `MAINWP_SKIP_SSL_VERIFY=true`; the verifier uses a request-scoped undici dispatcher with certificate validation disabled.
+
+Additional controls:
+
+- `MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS`: comma-separated exact hostnames allowed for `--writes`, in addition to `localhost`, `127.0.0.1`, and hosts ending in `.local`
+- `MAINWP_MCP_ACCEPTANCE_TOGGLE_PLUGIN`: explicit plugin slug eligible for the reversible plugin scenario and preferred by the `agent-plugin-active` probe; the built-in safe slugs are `hello.php` and `hello-dolly/hello.php`
+
+## Commands
+
+Build before running the fixture suite:
+
+```bash
+npm run build
+npm run test:acceptance:fixture
+```
+
+Other entry points:
+
+```bash
+npm run test:acceptance
+npm run test:acceptance:fast
+npm run test:acceptance:writes
+npm run test:acceptance:agent
+```
+
+The default target is live and the default mode is packed. `test:acceptance:fast` uses the repository's existing `dist/index.js` and still launches the real MCP server.
+
+List or select deterministic scenarios:
+
+```bash
+npx tsx tests/acceptance/run.ts --list
+npx tsx tests/acceptance/run.ts --target fixture --scenario count-sites-consistency
+npx tsx tests/acceptance/run.ts --scenario startup-handshake --scenario discovery-tools
+```
+
+Preserve a packed consumer for inspection:
+
+```bash
+npx tsx tests/acceptance/run.ts --target fixture --keep-consumer
+```
+
+Select an agent scenario:
+
+```bash
+npx tsx tests/acceptance/agent-run.ts --list
+npx tsx tests/acceptance/agent-run.ts --scenario agent-count-sites
+```
+
+Write scenarios require both `--writes` and an allowed Dashboard host. Runs without both conditions report those scenarios as skipped. A skipped or unverified scenario is visible in the totals and is never counted as passed.
+
+## Correctness and evidence order
+
+Scenario assertions use evidence in this order:
+
+1. Direct Abilities API reads from the independent verifier establish current state.
+2. MCP calls exercise the installed server through JSON-RPC over stdio.
+3. Structured MCP response fields are parsed and compared with the independent state.
+4. A second direct read proves state preservation or the requested write.
+5. Prose is used only for diagnostics, never as the correctness oracle.
+
+For example, `list-sites-cross-check` compares both the site count and the complete set of site URLs. `not-found-input` requires an `isError` result, then calls `count_sites_v1` on the same client session to prove recovery. `confirmation-gate-no-token` checks the structured confirmation status and token, then independently proves that the site set did not change.
+
+Agent verdicts are also deterministic. A scenario must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. The model does not grade itself.
+
+## Artifacts
+
+Every run writes to:
+
+```text
+test-results/acceptance/<UTC timestamp>-<short SHA>[-dirty][-agent]/
+```
+
+The directory contains:
+
+- `manifest.json`: git branch, commit, dirty state, diff hash, package and runtime versions, flags, timing, and tarball integrity
+- `events.jsonl`: redacted MCP messages in both directions with scenario, ISO timestamp, and monotonic milliseconds
+- `commands.jsonl`: command argv, working directory, exit code, duration, and redacted output tails
+- `results.json`: scenario statuses and every named assertion with expected, actual, and pass fields
+- `summary.md`: compact human-readable totals and status table
+- `server-<scenario>.stderr.log`: redacted server diagnostics for each launch
+- `agent-transcript.jsonl`: redacted Claude stream events when running the agent layer
+
+The redactor is initialized with the username, application password with and without spaces, Dashboard origin, and Basic Authorization value. Every artifact write passes through it. Fixture credentials follow the same path so fixture runs test the redaction mechanism.
+
+## Adding a deterministic scenario
+
+Add a module under `tests/acceptance/scenarios/`, export it from `scenarios/index.ts`, and use the shared `ScenarioDefinition` type. State an objective purpose and record explicit pass criteria with `ctx.assert`.
+
+This complete example is the implementation shape used by `count-sites-consistency`:
+
+```ts
+import type { ScenarioDefinition } from './types.js';
+
+export const countSitesConsistency: ScenarioDefinition = {
+  id: 'count-sites-consistency',
+  purpose: 'Verify the MCP count-sites result equals an independent direct count.',
+  kind: 'read',
+  targets: ['live', 'fixture'],
+
+  async run(ctx) {
+    const { result, data } = await ctx.client.callToolJson('count_sites_v1');
+    const directCount = await ctx.verifier.countSites();
+
+    ctx.assert.equal('count_sites_v1 succeeds', result.isError, undefined);
+    ctx.assert.equal(
+      'MCP and independent counts match',
+      (data as { total: number }).total,
+      directCount
+    );
+  },
+};
+```
+
+Use `preconditions` for target-specific discovery or a non-default server launch. Return `skipped` when a documented external precondition is absent, such as no safe plugin being installed. Do not convert a failed assertion into a skip.
+
+For a write scenario, define `cleanup(ctx)` whenever the operation can leave state changed. Cleanup runs after success or failure while the same MCP session is still available.
+
+## Reproducing a failure
+
+1. Open `summary.md` and find the failed scenario.
+2. Read its failed assertions and error in `results.json`.
+3. Inspect that scenario's messages in `events.jsonl` and its stderr log.
+4. Check `manifest.json` for the exact commit, dirty state, diff hash, mode, target, package integrity, Node version, and npm version.
+5. Re-run only that scenario with the same target and mode.
+
+Example:
+
+```bash
+npx tsx tests/acceptance/run.ts \
+  --target fixture \
+  --mode packed \
+  --scenario count-sites-consistency \
+  --keep-consumer
+```
+
+`commands.jsonl` records the package and consumer commands needed to diagnose a packing or installation failure. The preserved consumer path printed by `--keep-consumer` can be used to inspect the installed package and bin links.
+
+## Deterministic and agent-driven runs
+
+The deterministic runner chooses each MCP operation itself and verifies structured values. It is suitable for CI and produces the same fixture result on every run.
+
+The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, and `${MAINWP_SKIP_SSL_VERIFY}` placeholders. Real values exist only in the spawned process environment. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
+
+Live Dashboard data can change between an MCP call and the independent read. Site sync can complete asynchronously. Installed plugins and available updates vary by site. Agent tool choice and wording can vary by model. These are known sources of nondeterminism. Fixture scenarios avoid them; live and agent artifacts preserve enough ordered evidence to explain them.

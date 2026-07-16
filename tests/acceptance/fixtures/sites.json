@@ -1,0 +1,82 @@
+[
+  {
+    "id": 1,
+    "url": "https://alpine.example.test",
+    "name": "Alpine Bakery",
+    "status": "connected",
+    "client_id": 101,
+    "wp_version": "6.8.1",
+    "php_version": "8.3.8",
+    "last_sync": "2026-07-15T12:00:00Z",
+    "admin_username": "alpine-admin",
+    "child_version": "5.4.0",
+    "notes": "Fixture site with active Hello Dolly",
+    "plugins": [
+      {
+        "slug": "hello.php",
+        "name": "Hello Dolly",
+        "version": "1.7.2",
+        "active": true,
+        "update_version": null
+      },
+      {
+        "slug": "akismet/akismet.php",
+        "name": "Akismet Anti-spam",
+        "version": "5.3.6",
+        "active": true,
+        "update_version": "5.3.7"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "url": "https://beacon.example.test",
+    "name": "Beacon Studio",
+    "status": "connected",
+    "client_id": null,
+    "wp_version": "6.8.1",
+    "php_version": "8.2.20",
+    "last_sync": "2026-07-15T12:05:00Z",
+    "admin_username": "beacon-admin",
+    "child_version": "5.4.0",
+    "notes": "Fixture site with inactive Hello Dolly",
+    "plugins": [
+      {
+        "slug": "hello-dolly/hello.php",
+        "name": "Hello Dolly",
+        "version": "1.7.2",
+        "active": false,
+        "update_version": null
+      },
+      {
+        "slug": "seo-pack/seo.php",
+        "name": "SEO Pack",
+        "version": "2.0.0",
+        "active": true,
+        "update_version": null
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "url": "https://cedar.example.test",
+    "name": "Cedar Nonprofit",
+    "status": "disconnected",
+    "client_id": 102,
+    "wp_version": "6.7.2",
+    "php_version": "8.1.28",
+    "last_sync": "2026-07-14T09:30:00Z",
+    "admin_username": "cedar-admin",
+    "child_version": "5.3.1",
+    "notes": "Disconnected fixture site",
+    "plugins": [
+      {
+        "slug": "forms/forms.php",
+        "name": "Fixture Forms",
+        "version": "3.1.0",
+        "active": true,
+        "update_version": "3.2.0"
+      }
+    ]
+  }
+]
