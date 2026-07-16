@@ -31,8 +31,19 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   // The abilities API uses JSON Schema, which is compatible with MCP
   // We just need to ensure it has the required structure
   // Cast to the expected MCP SDK type
-  const properties = (schema.properties || {}) as { [key: string]: Record<string, unknown> };
-  const required = (schema.required as string[]) || [];
+  //
+  // PHP dashboards serialize empty associative arrays as [] — an array-typed
+  // `properties` (or malformed `required`) invalidates the whole tools/list
+  // response for spec-compliant clients, so coerce anything non-conforming.
+  const rawProperties = schema.properties;
+  const properties = (
+    rawProperties && typeof rawProperties === 'object' && !Array.isArray(rawProperties)
+      ? rawProperties
+      : {}
+  ) as { [key: string]: Record<string, unknown> };
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((entry): entry is string => typeof entry === 'string')
+    : [];
 
   // Backfill missing descriptions from parameter names.
   // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
