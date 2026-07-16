@@ -49,6 +49,15 @@ export class AssertionRecorder {
     });
   }
 
+  lessThan(name: string, actual: number, expected: number): void {
+    this.results.push({
+      name,
+      expected,
+      actual,
+      pass: actual < expected,
+    });
+  }
+
   includes(name: string, values: unknown[], expected: unknown): void {
     this.results.push({
       name,

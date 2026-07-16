@@ -2,7 +2,7 @@
 
 The acceptance harness tests the local working tree as an installed npm package and communicates with it through the real MCP stdio protocol. Its default packed mode creates a tarball, checks the published file list, installs that tarball in a fresh consumer project, and launches the installed `dist/index.js`.
 
-The deterministic suite covers MCP initialization, discovery, resources, prompts, completions, site reads, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, transport limits, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
+The deterministic suite covers MCP initialization, discovery, resources, prompts, completions, site reads, check-site latency, theme and update inventories, client and tag listings, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, transport limits, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
 
 The harness does not prove every Dashboard ability, browser behavior, production performance, or compatibility with every MCP client. Fixture runs do not prove real Dashboard authentication, TLS, WordPress permissions, or changing live data. Agent runs add an end-to-end model check, but they do not replace the deterministic suite.
 

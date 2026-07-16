@@ -14,6 +14,7 @@ import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { IndependentVerifier, serializeToPhpQueryString } from './verify.js';
 import { scenarios } from '../scenarios/index.js';
+import { AssertionRecorder } from '../scenarios/types.js';
 
 describe('acceptance harness primitives', () => {
   it('redacts credentials, compact application passwords, authorization, and dashboard origins', () => {
@@ -167,9 +168,26 @@ MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
     ).toBeNull();
   });
 
-  it('registers completion and transport-limit acceptance scenarios', () => {
+  it('records numeric upper-bound assertions with the measured value', () => {
+    const recorder = new AssertionRecorder();
+
+    recorder.lessThan('fast result', 19_999, 20_000);
+    recorder.lessThan('slow result', 20_000, 20_000);
+
+    expect(recorder.results).toEqual([
+      { name: 'fast result', expected: 20_000, actual: 19_999, pass: true },
+      { name: 'slow result', expected: 20_000, actual: 20_000, pass: false },
+    ]);
+  });
+
+  it('registers broadened read, completion, and transport-limit acceptance scenarios', () => {
     const ids = scenarios.map(scenario => scenario.id);
 
+    expect(ids).toContain('check-site');
+    expect(ids).toContain('site-themes');
+    expect(ids).toContain('list-updates-cross-check');
+    expect(ids).toContain('clients-count-consistency');
+    expect(ids).toContain('list-tags-cross-check');
     expect(ids).toContain('prompt-completions');
     expect(ids).toContain('oversized-response-recovery');
     expect(ids).toContain('request-timeout-recovery');
