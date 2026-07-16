@@ -19,6 +19,10 @@ Malformed boolean configuration now fails startup instead of logging a warning a
 
 ### Fixed
 
+Confirmed execution of a destructive tool now always requires the `confirmation_token` issued by the preview. The server used to fall back to matching the pending preview by tool name and arguments, so `user_confirmed: true` with the same arguments executed without the token, letting a caller confirm a preview it never read. A tokenless confirmation now returns `PREVIEW_REQUIRED` and the issued token stays valid.
+
+A "site not found" error from a live Dashboard now surfaces with the resource-not-found error code. The Dashboard reports a nonexistent site as HTTP 403 with the `mainwp_site_not_found` error code, and the classifier trusted the status before the structured code, so clients received a permission-denied error and recovered down the wrong path. Structured not-found codes now classify first.
+
 Passing `dry_run: true` to an ability that does not declare a `dry_run` parameter now returns an invalid-parameter error instead of skipping the confirmation flow. The server used to forward the parameter upstream, and a handler that ignores unknown input would have run the destructive operation without confirmation.
 
 Request timeouts and client cancellations are no longer conflated. The request timeout stays armed while the response body is read, and timing out surfaces as a retryable `ETIMEDOUT`; an abort from the caller surfaces as a cancellation rather than a timeout.

@@ -1224,6 +1224,8 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const expiredToken = JSON.parse(previewResult.content[0].text as string)
+      .confirmation_token as string;
 
     // Step 2: Advance time beyond PREVIEW_EXPIRY_MS (5 minutes + 1ms)
     vi.setSystemTime(startTime + 5 * 60 * 1000 + 1);
@@ -1232,7 +1234,7 @@ describe('confirmation flow - full cycle', () => {
     const expiredResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: expiredToken },
       mockLogger
     );
 
@@ -1243,15 +1245,73 @@ describe('confirmation flow - full cycle', () => {
       expect.objectContaining({ toolName: 'delete_site_v1' })
     );
 
-    // Step 4: Subsequent confirmation without new preview should require preview
+    // Step 4: Subsequent confirmation with the expired (now deleted) token should require preview
     const subsequentResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: expiredToken },
       mockLogger
     );
 
     expect(subsequentResult.content[0].text).toContain('PREVIEW_REQUIRED');
+  });
+
+  it('should reject confirmation without a token even when a matching preview is pending', async () => {
+    // Step 1: Generate a preview (creates a pending preview for these exact args)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: { site_id: 1, will_delete: true } }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const token = JSON.parse(previewResult.content[0].text as string).confirmation_token as string;
+    const fetchCallsAfterPreview = mockFetch.mock.calls.length;
+
+    // Step 2: user_confirmed with identical args but NO token must be rejected
+    // without any upstream call (a tool+args fallback would let a caller
+    // confirm a preview it never read)
+    const noTokenResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true, user_confirmed: true },
+      mockLogger
+    );
+
+    expect(noTokenResult.isError).toBe(true);
+    expect(noTokenResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(noTokenResult.content[0].text).toContain('confirmation_token');
+    expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterPreview);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - confirmation_token missing',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+
+    // Step 3: The issued token still works after the rejected attempt
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmedResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+    expect(confirmedResult.isError).toBeUndefined();
+    expect(confirmedResult.content[0].text).toContain('deleted');
   });
 
   it('should reject reuse of consumed confirmation_token', async () => {
@@ -1411,8 +1471,10 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const confirmationToken = JSON.parse(previewResult.content[0].text as string)
+      .confirmation_token as string;
 
-    // Step 2: Confirm execution
+    // Step 2: Confirm execution with the issued token
     // Note: abilities are already cached from step 1, so no need to mock abilities fetch again
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1423,7 +1485,7 @@ describe('confirmation flow - full cycle', () => {
     const confirmResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: confirmationToken },
       mockLogger
     );
 
