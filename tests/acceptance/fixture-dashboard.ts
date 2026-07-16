@@ -198,6 +198,21 @@ async function runAbility(
     return;
   }
 
+  if (abilityName === 'mainwp/check-site-v1') {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const online = site.status === 'connected';
+    const responseTime = 0.01;
+    json(response, 200, {
+      site_id: site.id,
+      response_time: responseTime,
+      checked: true,
+      site: { id: site.id, url: site.url, name: site.name },
+      status: { online, http_code: online ? 200 : 503, response_time: responseTime },
+    });
+    return;
+  }
+
   if (abilityName === 'mainwp/delete-site-v1') {
     const site = findSite(sites, input.site_id_or_domain);
     if (!site) return notFound(response, 'The requested MainWP site was not found.');

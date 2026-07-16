@@ -1,3 +1,4 @@
+import { abilityReadScenarios } from './ability-reads.js';
 import { configurationScenarios } from './configuration.js';
 import { completionScenarios } from './completions.js';
 import { confirmationScenarios } from './confirmation.js';
@@ -9,6 +10,7 @@ import { writeScenarios } from './writes.js';
 
 export const scenarios: ScenarioDefinition[] = [
   ...readScenarios,
+  ...abilityReadScenarios,
   ...completionScenarios,
   ...policyScenarios,
   ...configurationScenarios,
