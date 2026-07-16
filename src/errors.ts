@@ -235,6 +235,13 @@ export function toMcpErrorResponse(
   const message = getErrorMessage(error);
   const sanitizedMessage = sanitize ? sanitize(message) : message;
   const status = getHttpStatus(error);
+  const structuredCode =
+    error && typeof error === 'object' && 'code' in error
+      ? (error as { code: unknown }).code
+      : undefined;
+  const isStructuredNotFound =
+    typeof structuredCode === 'string' &&
+    (/(?:^|_)not_found$/.test(structuredCode) || structuredCode === 'rest_no_route');
   const normalizedMessage = message.toLowerCase();
 
   // Last-resort classifier for plain Errors that reached the MCP boundary
@@ -244,7 +251,9 @@ export function toMcpErrorResponse(
   // throwing McpErrorFactory errors at the source over extending this chain.
   let code: McpErrorCode = MCP_ERROR_CODES.INTERNAL_ERROR;
 
-  if (status === 401) {
+  if (isStructuredNotFound) {
+    code = MCP_ERROR_CODES.RESOURCE_NOT_FOUND;
+  } else if (status === 401) {
     code = MCP_ERROR_CODES.UNAUTHORIZED;
   } else if (status === 403) {
     code = MCP_ERROR_CODES.PERMISSION_DENIED;

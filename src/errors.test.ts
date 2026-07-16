@@ -166,6 +166,30 @@ describe('toMcpErrorResponse', () => {
     expect(response.error.code).toBe(expectedCode);
   });
 
+  it('maps a structured not-found error code before HTTP 403', () => {
+    const response = toMcpErrorResponse(
+      createHttpError(403, 'mainwp_site_not_found', 'Message without classification keywords')
+    );
+
+    expect(response.error.code).toBe(MCP_ERROR_CODES.RESOURCE_NOT_FOUND);
+  });
+
+  it('maps the structured rest_no_route code before HTTP 403', () => {
+    const response = toMcpErrorResponse(
+      createHttpError(403, 'rest_no_route', 'Message without classification keywords')
+    );
+
+    expect(response.error.code).toBe(MCP_ERROR_CODES.RESOURCE_NOT_FOUND);
+  });
+
+  it('keeps unrelated structured error codes classified by HTTP 403', () => {
+    const response = toMcpErrorResponse(
+      createHttpError(403, 'rest_forbidden', 'Message without classification keywords')
+    );
+
+    expect(response.error.code).toBe(MCP_ERROR_CODES.PERMISSION_DENIED);
+  });
+
   it('should preserve McpError code', () => {
     const error = new McpError(MCP_ERROR_CODES.TIMEOUT, 'Timed out');
     const response = toMcpErrorResponse(error);

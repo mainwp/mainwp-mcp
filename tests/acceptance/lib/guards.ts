@@ -18,8 +18,10 @@ export function isWriteHostAllowed(hostname: string, additionalHosts: string[]):
 export function getWriteGuardReason(
   dashboardUrl: string,
   writesEnabled: boolean,
-  configuredHosts: string | undefined
+  configuredHosts: string | undefined,
+  target: 'live' | 'fixture'
 ): string | null {
+  if (target === 'fixture') return null;
   if (!writesEnabled) return 'Write scenarios require --writes.';
   const hostname = new URL(dashboardUrl).hostname;
   if (!isWriteHostAllowed(hostname, parseWriteHosts(configuredHosts))) {

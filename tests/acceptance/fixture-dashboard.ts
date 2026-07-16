@@ -186,9 +186,18 @@ function runAbility(
       });
       return;
     }
+    if (input.confirm === true) {
+      sites.splice(sites.indexOf(site), 1);
+      json(response, 200, {
+        dry_run: false,
+        deleted: true,
+        site: publicSite(site),
+      });
+      return;
+    }
     json(response, 403, {
       code: 'fixture_write_disabled',
-      message: 'The fixture dashboard does not execute site deletion.',
+      message: 'The fixture dashboard requires confirm: true for site deletion.',
       data: { status: 403 },
     });
     return;

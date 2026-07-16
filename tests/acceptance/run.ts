@@ -188,7 +188,8 @@ async function runScenario(
     const reason = getWriteGuardReason(
       credentials.dashboardUrl,
       options.writes,
-      process.env.MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS
+      process.env.MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS,
+      options.target
     );
     if (reason) {
       return { ...base, status: 'skipped', durationMs: 0, assertions: [], reason };
