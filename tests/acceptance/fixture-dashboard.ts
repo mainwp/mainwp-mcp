@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 export const FIXTURE_USERNAME = 'fixture-user';
 export const FIXTURE_APP_PASSWORD = 'fixture app password';
+export const FIXTURE_OVERSIZED_SEARCH = '__mainwp_acceptance_oversized_response__';
+export const FIXTURE_DELAY_SEARCH = '__mainwp_acceptance_delayed_response__';
+
+const FIXTURE_OVERSIZED_BYTES = 256 * 1024;
+const FIXTURE_DELAY_MS = 750;
 
 interface FixturePlugin {
   slug: string;
@@ -112,12 +117,31 @@ function notFound(response: ServerResponse, message: string): void {
   });
 }
 
-function runAbility(
+export function getFixtureFaultMode(
+  abilityName: string,
+  input: Record<string, unknown>
+): 'oversized' | 'delay' | null {
+  if (abilityName !== 'mainwp/list-sites-v1') return null;
+  if (input.search === FIXTURE_OVERSIZED_SEARCH) return 'oversized';
+  if (input.search === FIXTURE_DELAY_SEARCH) return 'delay';
+  return null;
+}
+
+async function runAbility(
   abilityName: string,
   input: Record<string, unknown>,
   sites: FixtureSite[],
   response: ServerResponse
-): void {
+): Promise<void> {
+  const faultMode = getFixtureFaultMode(abilityName, input);
+  if (faultMode === 'oversized') {
+    json(response, 200, { payload: 'x'.repeat(FIXTURE_OVERSIZED_BYTES) });
+    return;
+  }
+  if (faultMode === 'delay') {
+    await new Promise(resolve => setTimeout(resolve, FIXTURE_DELAY_MS));
+  }
+
   if (abilityName === 'mainwp/list-sites-v1') {
     const page = typeof input.page === 'number' ? input.page : 1;
     const perPage = typeof input.per_page === 'number' ? input.per_page : 20;
@@ -240,7 +264,7 @@ export async function startFixtureDashboard(): Promise<FixtureDashboard> {
       if (url.pathname.startsWith(prefix) && url.pathname.endsWith(suffix)) {
         const abilityName = decodeURIComponent(url.pathname.slice(prefix.length, -suffix.length));
         const input = await parseInput(request, url);
-        runAbility(abilityName, input, sites, response);
+        await runAbility(abilityName, input, sites, response);
         return;
       }
 

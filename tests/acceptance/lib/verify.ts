@@ -9,6 +9,9 @@ interface AbilityAnnotations {
 
 interface AbilityDefinition {
   name: string;
+  input_schema?: {
+    properties?: Record<string, { items?: { enum?: unknown[] } }>;
+  };
   meta?: { annotations?: AbilityAnnotations };
 }
 
@@ -110,6 +113,18 @@ export class IndependentVerifier {
     }
     this.catalog = abilities;
     return this.catalog;
+  }
+
+  async getAbilityInputArrayEnum(abilityName: string, argumentName: string): Promise<string[]> {
+    const ability = (await this.fetchCatalog()).find(candidate => candidate.name === abilityName);
+    if (!ability) throw new Error(`Independent verifier could not find ability ${abilityName}`);
+    const values = ability.input_schema?.properties?.[argumentName]?.items?.enum;
+    if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) {
+      throw new Error(
+        `Independent verifier found no string enum for ${abilityName} argument ${argumentName}`
+      );
+    }
+    return values as string[];
   }
 
   async execute(abilityName: string, input: Record<string, unknown> = {}): Promise<unknown> {

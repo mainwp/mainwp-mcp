@@ -29,6 +29,7 @@
     "test:acceptance:fixture": "tsx tests/acceptance/run.ts --target fixture",
     "test:acceptance:writes": "tsx tests/acceptance/run.ts --writes",
     "test:acceptance:agent": "tsx tests/acceptance/agent-run.ts",
+    "test:acceptance:human": "npm run test:acceptance:fixture && npm run test:acceptance:writes && npm run test:acceptance:agent",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit -p tsconfig.eslint.json",

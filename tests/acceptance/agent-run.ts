@@ -5,17 +5,34 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createArtifacts } from './lib/artifacts.js';
+import {
+  evaluateConfirmationTranscript,
+  type RecordedAgentToolResult,
+  type RecordedAgentToolUse,
+} from './lib/agent-confirmation.js';
 import { CommandRunner } from './lib/commands.js';
-import { resolveAcceptanceCredentials } from './lib/env.js';
+import {
+  FIXTURE_APP_PASSWORD,
+  FIXTURE_USERNAME,
+  startFixtureDashboard,
+  type FixtureDashboard,
+} from './fixture-dashboard.js';
+import { resolveAcceptanceCredentials, type AcceptanceCredentials } from './lib/env.js';
 import { packAndInstall } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
 import { IndependentVerifier } from './lib/verify.js';
 
 interface AgentScenario {
   id: string;
+  target: 'live' | 'fixture';
   task(groundTruth: AgentGroundTruth): string;
   expectedTools: string[];
   groundTruth(verifier: IndependentVerifier): Promise<AgentGroundTruth>;
+  evaluate?: (
+    truth: AgentGroundTruth,
+    collected: CollectedAgentOutput,
+    verifier: IndependentVerifier
+  ) => Promise<{ evaluation: AgentEvaluation; reason?: string }>;
 }
 
 interface AgentGroundTruth {
@@ -27,6 +44,10 @@ interface AgentGroundTruth {
   pluginName?: string;
   pluginSlug?: string;
   updateSiteUrls?: string[];
+  beforeSiteCount?: number;
+  targetSiteId?: number;
+  targetSiteUrl?: string;
+  targetSiteName?: string;
 }
 
 interface EvaluationField {
@@ -47,12 +68,19 @@ interface AgentResult {
   id: string;
   status: 'passed' | 'failed' | 'unverified';
   model?: string;
-  toolUses: Array<{ name: string; input: unknown }>;
-  toolResults: unknown[];
+  toolUses: RecordedAgentToolUse[];
+  toolResults: RecordedAgentToolResult[];
   finalText: string;
   groundTruth?: AgentGroundTruth;
   evaluation?: AgentEvaluation;
   reason?: string;
+}
+
+interface CollectedAgentOutput {
+  toolUses: RecordedAgentToolUse[];
+  toolResults: RecordedAgentToolResult[];
+  finalText: string;
+  model?: string;
 }
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -60,12 +88,14 @@ const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const agentScenarios: AgentScenario[] = [
   {
     id: 'agent-count-sites',
+    target: 'live',
     task: () => 'How many sites are currently connected to my MainWP dashboard?',
     expectedTools: ['count_sites_v1', 'list_sites_v1'],
     groundTruth: async verifier => ({ count: await verifier.countSites() }),
   },
   {
     id: 'agent-updates',
+    target: 'live',
     task: () => 'Which of my sites need plugin updates?',
     expectedTools: ['list_updates_v1', 'list_sites_v1', 'get_site_plugins_v1'],
     groundTruth: async verifier => {
@@ -81,6 +111,7 @@ const agentScenarios: AgentScenario[] = [
   },
   {
     id: 'agent-plugin-active',
+    target: 'live',
     task: truth =>
       `Is the ${truth.pluginName} plugin active on ${truth.siteUrl}? Answer yes or no with the site name.`,
     expectedTools: ['get_site_plugins_v1', 'get_site_v1', 'list_sites_v1'],
@@ -107,6 +138,83 @@ const agentScenarios: AgentScenario[] = [
         }
       }
       throw new Error('No discoverable plugin was found for agent-plugin-active');
+    },
+  },
+  {
+    id: 'agent-confirm-delete-site',
+    target: 'fixture',
+    task: truth =>
+      `Delete the MainWP site named ${truth.targetSiteName} at ${truth.targetSiteUrl} (site ID ${truth.targetSiteId}). This deletion is explicitly authorized. Proceed through any confirmation step needed to complete it, then report the outcome.`,
+    expectedTools: ['delete_site_v1'],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const target = sites.find(site => site.id === 1) ?? sites[0];
+      if (!target) throw new Error('No fixture site was available for agent confirmation');
+      return {
+        beforeSiteCount: sites.length,
+        targetSiteId: target.id,
+        targetSiteUrl: target.url,
+        targetSiteName: target.name,
+      };
+    },
+    evaluate: async (truth, collected, verifier) => {
+      if (
+        truth.beforeSiteCount === undefined ||
+        truth.targetSiteId === undefined ||
+        !truth.targetSiteName
+      ) {
+        throw new Error('Fixture confirmation ground truth was incomplete');
+      }
+      const transcript = evaluateConfirmationTranscript(
+        collected.toolUses,
+        collected.toolResults,
+        truth.targetSiteId
+      );
+      const after = await verifier.listSites();
+      const deleteUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, ['delete_site_v1'])
+      );
+      const finalText = collected.finalText.toLowerCase();
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: deleteUses.length >= 2,
+          evidence: deleteUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass: transcript.pass,
+          evidence: {
+            targetSiteId: truth.targetSiteId,
+            confirmationToken: transcript.confirmationToken,
+            previewCallId: transcript.previewCallId,
+            confirmedCallId: transcript.confirmedCallId,
+          },
+        },
+        correctMcpResult: {
+          pass: transcript.pass,
+          evidence: transcript,
+        },
+        stateChange: {
+          pass:
+            after.length === truth.beforeSiteCount - 1 &&
+            !after.some(site => site.id === truth.targetSiteId),
+          evidence: {
+            beforeCount: truth.beforeSiteCount,
+            afterCount: after.length,
+            targetStillPresent: after.some(site => site.id === truth.targetSiteId),
+          },
+        },
+        faithfulFinalAnswer: {
+          pass:
+            finalText.includes(truth.targetSiteName.toLowerCase()) &&
+            /\b(deleted|removed)\b/.test(finalText),
+          evidence: collected.finalText,
+        },
+      };
+      return { evaluation, ...(transcript.reason ? { reason: transcript.reason } : {}) };
     },
   },
 ];
@@ -150,13 +258,7 @@ function contentBlocks(event: unknown): unknown[] {
   return [];
 }
 
-function collectEvent(
-  event: unknown,
-  accumulator: Pick<AgentResult, 'toolUses' | 'toolResults'> & {
-    model?: string;
-    finalText: string;
-  }
-): void {
+function collectEvent(event: unknown, accumulator: CollectedAgentOutput): void {
   if (!event || typeof event !== 'object') return;
   const record = event as Record<string, unknown>;
   if (typeof record.model === 'string') accumulator.model = record.model;
@@ -169,10 +271,18 @@ function collectEvent(
     const content = block as Record<string, unknown>;
     if (content.type === 'tool_use' && typeof content.name === 'string') {
       if (content.name.startsWith('mcp__mainwp__')) {
-        accumulator.toolUses.push({ name: content.name, input: content.input });
+        accumulator.toolUses.push({
+          ...(typeof content.id === 'string' ? { id: content.id } : {}),
+          name: content.name,
+          input: content.input,
+        });
       }
     } else if (content.type === 'tool_result') {
-      accumulator.toolResults.push(content);
+      accumulator.toolResults.push({
+        ...(typeof content.tool_use_id === 'string' ? { toolUseId: content.tool_use_id } : {}),
+        content: content.content,
+        ...((content.is_error === true || content.isError === true) && { isError: true }),
+      });
     } else if (content.type === 'text' && typeof content.text === 'string') {
       accumulator.finalText = content.text;
     }
@@ -245,7 +355,7 @@ function mcpResultsMatchTruth(truth: AgentGroundTruth, toolResults: unknown[]): 
 function evaluate(
   scenario: AgentScenario,
   truth: AgentGroundTruth,
-  collected: Pick<AgentResult, 'toolUses' | 'toolResults' | 'finalText'>
+  collected: Pick<CollectedAgentOutput, 'toolUses' | 'toolResults' | 'finalText'>
 ): AgentEvaluation {
   const appropriate = collected.toolUses.filter(tool =>
     toolFamilyMatches(tool.name, scenario.expectedTools)
@@ -351,53 +461,90 @@ async function main(): Promise<void> {
           return scenario;
         })
       : agentScenarios;
-  const credentials = resolveAcceptanceCredentials();
+  const needsLive = selected.some(scenario => scenario.target === 'live');
+  const needsFixture = selected.some(scenario => scenario.target === 'fixture');
+  const liveCredentials = needsLive ? resolveAcceptanceCredentials() : undefined;
+  let fixture: FixtureDashboard | undefined;
+  let fixtureCredentials: AcceptanceCredentials | undefined;
+  if (needsFixture) {
+    fixture = await startFixtureDashboard();
+    fixtureCredentials = {
+      dashboardUrl: fixture.url,
+      username: FIXTURE_USERNAME,
+      appPassword: FIXTURE_APP_PASSWORD,
+    };
+  }
+  const credentialsByTarget = new Map<'live' | 'fixture', AcceptanceCredentials>();
+  if (liveCredentials) credentialsByTarget.set('live', liveCredentials);
+  if (fixtureCredentials) credentialsByTarget.set('fixture', fixtureCredentials);
+  const firstCredentials = liveCredentials ?? fixtureCredentials;
+  if (!firstCredentials) throw new Error('No agent acceptance target was selected');
   const authorization = `Basic ${Buffer.from(
-    `${credentials.username}:${credentials.appPassword}`
+    `${firstCredentials.username}:${firstCredentials.appPassword}`
   ).toString('base64')}`;
-  const redactor = new Redactor({ ...credentials, authorization });
+  const redactor = new Redactor({ ...firstCredentials, authorization });
+  if (fixtureCredentials && fixtureCredentials !== firstCredentials) {
+    redactor.add({
+      ...fixtureCredentials,
+      authorization: `Basic ${Buffer.from(
+        `${fixtureCredentials.username}:${fixtureCredentials.appPassword}`
+      ).toString('base64')}`,
+    });
+  }
   const runner = new CommandRunner();
+  const artifactTarget = needsLive && needsFixture ? 'mixed' : needsFixture ? 'fixture' : 'live';
   const artifacts = await createArtifacts(
     REPO_ROOT,
     redactor,
     runner,
     'packed',
-    'live',
+    artifactTarget,
     { agent: true, scenarios: options.scenarioIds, keepConsumer: options.keepConsumer },
     '-agent'
   );
-  const verifier = new IndependentVerifier(credentials, true);
+  const verifiers = new Map<'live' | 'fixture', IndependentVerifier>();
+  if (liveCredentials) verifiers.set('live', new IndependentVerifier(liveCredentials, true));
+  if (fixtureCredentials) {
+    verifiers.set('fixture', new IndependentVerifier(fixtureCredentials, false));
+  }
   const results: AgentResult[] = [];
   let packed;
   try {
     packed = await packAndInstall(REPO_ROOT, runner, artifacts, options.keepConsumer);
     const configPath = path.join(packed.tempRoot, 'claude-mcp.json');
-    fs.writeFileSync(
-      configPath,
-      `${JSON.stringify(
-        {
-          mcpServers: {
-            mainwp: {
-              command: 'node',
-              args: [packed.installedEntry],
-              env: {
-                MAINWP_URL: '${MAINWP_URL}',
-                MAINWP_USER: '${MAINWP_USER}',
-                MAINWP_APP_PASSWORD: '${MAINWP_APP_PASSWORD}',
-                MAINWP_SKIP_SSL_VERIFY: '${MAINWP_SKIP_SSL_VERIFY}',
-              },
-            },
-          },
-        },
-        null,
-        2
-      )}\n`,
-      { mode: 0o600 }
-    );
     const which = await runner.run(['which', 'claude'], REPO_ROOT, { allowFailure: true });
     const claudeAvailable = which.exitCode === 0;
 
     for (const scenario of selected) {
+      const credentials = credentialsByTarget.get(scenario.target);
+      const verifier = verifiers.get(scenario.target);
+      if (!credentials || !verifier) {
+        throw new Error(`No ${scenario.target} credentials or verifier were prepared`);
+      }
+      fs.writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            mcpServers: {
+              mainwp: {
+                command: 'node',
+                args: [packed.installedEntry],
+                env: {
+                  MAINWP_URL: '${MAINWP_URL}',
+                  MAINWP_USER: '${MAINWP_USER}',
+                  MAINWP_APP_PASSWORD: '${MAINWP_APP_PASSWORD}',
+                  MAINWP_SKIP_SSL_VERIFY: '${MAINWP_SKIP_SSL_VERIFY}',
+                  MAINWP_ALLOW_HTTP: '${MAINWP_ALLOW_HTTP}',
+                  MAINWP_RATE_LIMIT: '0',
+                },
+              },
+            },
+          },
+          null,
+          2
+        )}\n`,
+        { mode: 0o600 }
+      );
       let truth: AgentGroundTruth;
       try {
         truth = await scenario.groundTruth(verifier);
@@ -440,11 +587,10 @@ async function main(): Promise<void> {
         });
         continue;
       }
-      const collected = { toolUses: [], toolResults: [], finalText: '' } as {
-        toolUses: Array<{ name: string; input: unknown }>;
-        toolResults: unknown[];
-        finalText: string;
-        model?: string;
+      const collected: CollectedAgentOutput = {
+        toolUses: [],
+        toolResults: [],
+        finalText: '',
       };
       const command = await runClaude(
         argv,
@@ -454,7 +600,8 @@ async function main(): Promise<void> {
           MAINWP_URL: credentials.dashboardUrl,
           MAINWP_USER: credentials.username,
           MAINWP_APP_PASSWORD: credentials.appPassword,
-          MAINWP_SKIP_SSL_VERIFY: 'true',
+          MAINWP_SKIP_SSL_VERIFY: scenario.target === 'live' ? 'true' : 'false',
+          MAINWP_ALLOW_HTTP: scenario.target === 'fixture' ? 'true' : 'false',
         },
         line => {
           try {
@@ -490,7 +637,10 @@ async function main(): Promise<void> {
         });
         continue;
       }
-      const evaluation = evaluate(scenario, truth, collected);
+      const evaluated = scenario.evaluate
+        ? await scenario.evaluate(truth, collected, verifier)
+        : { evaluation: evaluate(scenario, truth, collected) };
+      const evaluation = evaluated.evaluation;
       const pass = Object.values(evaluation).every(field => field.pass);
       results.push({
         id: scenario.id,
@@ -501,6 +651,7 @@ async function main(): Promise<void> {
         finalText: collected.finalText,
         groundTruth: truth,
         evaluation,
+        ...(!pass && evaluated.reason ? { reason: evaluated.reason } : {}),
       });
     }
     artifacts.writeJson('results.json', { scenarios: results });
@@ -515,7 +666,8 @@ async function main(): Promise<void> {
     );
   } finally {
     artifacts.finish();
-    await verifier.close();
+    await Promise.all([...verifiers.values()].map(verifier => verifier.close()));
+    await fixture?.close();
     packed?.cleanup();
   }
   for (const result of results)
