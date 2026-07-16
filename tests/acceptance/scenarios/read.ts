@@ -14,6 +14,12 @@ async function assertSessionRecovery(ctx: Parameters<ScenarioDefinition['run']>[
   ctx.assert.truthy('same-session follow-up returns a count', typeof data.total === 'number');
 }
 
+function getErrorCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) return undefined;
+  const code = (error as { code: unknown }).code;
+  return typeof code === 'number' ? code : undefined;
+}
+
 export const startupHandshake: ScenarioDefinition = {
   id: 'startup-handshake',
   purpose:
@@ -170,8 +176,9 @@ export const notFoundInput: ScenarioDefinition = {
   async run(ctx) {
     const result = await ctx.client.callTool('get_site_v1', { site_id_or_domain: 99999999 });
     ctx.assert.equal('not-found returns isError', result.isError, true);
-    const data = parseToolJson(result);
+    const data = parseToolJson(result) as { error?: { code?: number } };
     ctx.assert.truthy('not-found response is structured JSON', data && typeof data === 'object');
+    ctx.assert.equal('not-found uses resource-not-found code', data.error?.code, -32002);
     await assertSessionRecovery(ctx);
   },
 };
@@ -192,6 +199,14 @@ export const invalidArgs: ScenarioDefinition = {
     ctx.assert.truthy(
       'invalid input is rejected',
       protocolError !== undefined || result?.isError === true
+    );
+    const structuredError = result
+      ? (parseToolJson(result) as { error?: { code?: number } })
+      : undefined;
+    ctx.assert.equal(
+      'invalid input uses invalid-params code',
+      protocolError === undefined ? structuredError?.error?.code : getErrorCode(protocolError),
+      -32602
     );
     await assertSessionRecovery(ctx);
   },

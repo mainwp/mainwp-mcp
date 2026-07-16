@@ -1,4 +1,5 @@
 import { configurationScenarios } from './configuration.js';
+import { confirmationScenarios } from './confirmation.js';
 import { policyScenarios } from './policy.js';
 import { readScenarios } from './read.js';
 import type { ScenarioDefinition } from './types.js';
@@ -9,6 +10,7 @@ export const scenarios: ScenarioDefinition[] = [
   ...policyScenarios,
   ...configurationScenarios,
   ...writeScenarios,
+  ...confirmationScenarios,
 ];
 
 const duplicateIds = scenarios

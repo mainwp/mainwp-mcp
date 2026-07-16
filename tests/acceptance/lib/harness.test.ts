@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseAcceptanceEnv } from './env.js';
-import { isWriteHostAllowed } from './guards.js';
+import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { serializeToPhpQueryString } from './verify.js';
 
@@ -51,6 +51,10 @@ MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
     ['production.example', false],
   ])('evaluates write host %s against the built-in and explicit allowlists', (host, expected) => {
     expect(isWriteHostAllowed(host, ['approved.example'])).toBe(expected);
+  });
+
+  it('allows fixture-only write scenarios without --writes', () => {
+    expect(getWriteGuardReason('http://127.0.0.1:9123', false, undefined, 'fixture')).toBeNull();
   });
 
   it('serializes scalar, array, and one-level object input using WordPress PHP notation', () => {
