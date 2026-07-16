@@ -28,6 +28,10 @@ export class AcceptanceClient {
     return this.raw.listPrompts();
   }
 
+  complete(ref: { type: 'ref/prompt'; name: string }, name: string, value: string) {
+    return this.raw.complete({ ref, argument: { name, value } });
+  }
+
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<CallToolResult> {
     const result = await this.raw.callTool({ name, arguments: args });
     if (!Array.isArray((result as { content?: unknown }).content)) {

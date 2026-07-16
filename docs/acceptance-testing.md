@@ -2,7 +2,7 @@
 
 The acceptance harness tests the local working tree as an installed npm package and communicates with it through the real MCP stdio protocol. Its default packed mode creates a tarball, checks the published file list, installs that tarball in a fresh consumer project, and launches the installed `dist/index.js`.
 
-The deterministic suite covers MCP initialization, discovery, resources, prompts, site reads, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
+The deterministic suite covers MCP initialization, discovery, resources, prompts, completions, site reads, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, transport limits, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
 
 The harness does not prove every Dashboard ability, browser behavior, production performance, or compatibility with every MCP client. Fixture runs do not prove real Dashboard authentication, TLS, WordPress permissions, or changing live data. Agent runs add an end-to-end model check, but they do not replace the deterministic suite.
 
@@ -68,7 +68,10 @@ npm run test:acceptance
 npm run test:acceptance:fast
 npm run test:acceptance:writes
 npm run test:acceptance:agent
+npm run test:acceptance:human
 ```
+
+`test:acceptance:human` runs the packed fixture suite, guarded live write suite, and agent suite in that order. The command uses `&&`, so it stops at the first failing layer.
 
 The default target is live and the default mode is packed. `test:acceptance:fast` uses the repository's existing `dist/index.js` and still launches the real MCP server.
 
@@ -108,6 +111,16 @@ Scenario assertions use evidence in this order:
 For example, `list-sites-cross-check` compares both the site count and the complete set of site URLs. `not-found-input` requires an `isError` result, then calls `count_sites_v1` on the same client session to prove recovery. `confirmation-gate-no-token` checks the structured confirmation status and token, then independently proves that the site set did not change.
 
 Agent verdicts are also deterministic. A scenario must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. The model does not grade itself.
+
+The `agent-confirm-delete-site` scenario is the write exception in the agent layer. It points the packed MCP server at a newly started local fixture, asks in natural language for an explicitly authorized site deletion without naming a tool, and grades the transcript and state independently. The transcript must contain a `delete_site_v1` result with `CONFIRMATION_REQUIRED` and a token, followed by a confirmed `delete_site_v1` call using that token. A direct fixture read must then show exactly one fewer site and the target site absent. Refusing or stopping before confirmation is a failed scenario with the transcript reason preserved.
+
+## Completion and transport-limit coverage
+
+`prompt-completions` targets both live and fixture Dashboards. It requests the existing `update-workflow` prompt's `update_type` completion with the prefix `c`, requires a non-empty result, and checks every suggestion against the `mainwp/list-updates-v1` input enum read directly by the independent verifier. The scenario also launches with `list_sites_v1` blocked and verifies that the current site-ID completion path returns the permission-denied code.
+
+The fixture-only `oversized-response-recovery` scenario opts into a large `list_sites_v1` response with a reserved search value. It launches the packed server with a response limit above the fixture catalog size but below the fault response size, requires a structured error, and then proves that `count_sites_v1` succeeds on the same MCP session.
+
+The fixture-only `request-timeout-recovery` scenario opts into a delayed `list_sites_v1` response. It uses the existing `MAINWP_REQUEST_TIMEOUT` environment setting to launch the packed server with a short deadline, requires the structured timeout code, and then proves same-session recovery with `count_sites_v1`. Both fault modes are request-specific, so ordinary fixture scenarios are unchanged.
 
 ## Artifacts
 
@@ -186,6 +199,6 @@ npx tsx tests/acceptance/run.ts \
 
 The deterministic runner chooses each MCP operation itself and verifies structured values. It is suitable for CI and produces the same fixture result on every run.
 
-The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, and `${MAINWP_SKIP_SSL_VERIFY}` placeholders. Real values exist only in the spawned process environment. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
+The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, `${MAINWP_SKIP_SSL_VERIFY}`, and `${MAINWP_ALLOW_HTTP}` placeholders. Real values exist only in the spawned process environment. Live scenarios use resolved Dashboard credentials. The confirmation scenario uses only local fixture credentials, and selecting it by itself does not require live credentials. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
 
 Live Dashboard data can change between an MCP call and the independent read. Site sync can complete asynchronously. Installed plugins and available updates vary by site. Agent tool choice and wording can vary by model. These are known sources of nondeterminism. Fixture scenarios avoid them; live and agent artifacts preserve enough ordered evidence to explain them.
