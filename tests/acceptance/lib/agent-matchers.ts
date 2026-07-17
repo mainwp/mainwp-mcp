@@ -98,9 +98,11 @@ export function answerAvoidsKnownPluginNames(text: string, knownPluginNames: str
 export function matchesSafeModeRefusalAnswer(text: string): boolean {
   const answer = text.toLowerCase().replace(/\s+/g, ' ');
   // Reject only assertions that safe mode IS off ("safe mode is disabled"),
-  // not remedy suggestions ("restart the server with safe mode off").
+  // not remedy suggestions ("restart the server with safe mode off") or
+  // conditional remedies, which contain a copula ("once safe mode is off,
+  // re-run").
   if (
-    /\bsafe mode\b\s+(?:is|was|remains|appears(?: to be)?|seems(?: to be)?)\s+(?:currently\s+)?(?:disabled|off|inactive)\b/.test(
+    /(?<!\b(?:once|if|when|after|until|unless) )\bsafe mode\b\s+(?:is|was|remains|appears(?: to be)?|seems(?: to be)?)\s+(?:currently\s+)?(?:disabled|off|inactive)\b/.test(
       answer
     ) ||
     /\b(?:operation|action|deletion|delete request|request|it)\b.{0,20}\b(?:is not|isn't|was not|wasn't|not)\s+(?:blocked|prohibited|prevented|denied|refused)\b/.test(
