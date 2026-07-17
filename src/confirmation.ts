@@ -8,7 +8,7 @@
 
 import crypto from 'crypto';
 import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
-import { executeAbility, type Ability } from './abilities.js';
+import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
 import { trackSessionData } from './session.js';
@@ -107,8 +107,12 @@ function canonicalize(value: unknown): unknown {
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
  * from the key to ensure preview and execution calls match.
+ * Prefixed with the config identity hash: the preview maps are module-level,
+ * so without the scope a token issued against one dashboard/principal could
+ * confirm the same tool and arguments against another createServer(config)
+ * instance in the same process.
  */
-function getPreviewKey(toolName: string, args: Record<string, unknown>): string {
+function getPreviewKey(scope: string, toolName: string, args: Record<string, unknown>): string {
   const {
     confirm: _confirm,
     user_confirmed: _user_confirmed,
@@ -116,7 +120,7 @@ function getPreviewKey(toolName: string, args: Record<string, unknown>): string 
     confirmation_token: _confirmation_token,
     ...relevantArgs
   } = args;
-  return `${toolName}:${JSON.stringify(canonicalize(relevantArgs))}`;
+  return `${scope}:${toolName}:${JSON.stringify(canonicalize(relevantArgs))}`;
 }
 
 /**
@@ -261,7 +265,7 @@ export async function handleConfirmationFlow(
     }
 
     // Store preview for later validation
-    const previewKey = getPreviewKey(toolName, args);
+    const previewKey = getPreviewKey(configIdentityHash(config), toolName, args);
     pendingPreviews.set(previewKey, Date.now());
 
     // Clean up any existing token for this preview key before generating a new one
@@ -341,10 +345,13 @@ export async function handleConfirmationFlow(
         isError: true,
       };
     }
-    // Verify token belongs to this tool (prevent cross-tool reuse)
-    if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
+    // Verify token belongs to this tool AND this config identity (prevent
+    // cross-tool reuse and cross-dashboard/principal reuse alike)
+    if (!tokenPreviewKey.startsWith(`${configIdentityHash(config)}:${toolName}:`)) {
       tokenIndex.delete(confirmationToken);
-      logger.warning('Confirmation failed - token belongs to different tool', { toolName });
+      logger.warning('Confirmation failed - token belongs to a different tool or identity', {
+        toolName,
+      });
       return {
         action: 'respond',
         response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
@@ -352,7 +359,7 @@ export async function handleConfirmationFlow(
       };
     }
     // Verify token matches current arguments (prevent arg-swap)
-    const currentPreviewKey = getPreviewKey(toolName, args);
+    const currentPreviewKey = getPreviewKey(configIdentityHash(config), toolName, args);
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });

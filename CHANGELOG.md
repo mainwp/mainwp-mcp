@@ -25,6 +25,8 @@ The package no longer installs a global command named `mcp`. That name is too ge
 
 The installed `mainwp-mcp` command now starts when invoked through npm's bin symlink. The entry-point check compared the module URL against `process.argv[1]` without resolving symlinks, so the CLI exited silently with status 0 when run via `npx` or a `node_modules/.bin` link. The check now resolves the invoked path first.
 
+Confirmation previews and tokens are now scoped to the dashboard and principal that issued them. The preview state is module-level, so with multiple `createServer(config)` instances in one process a token issued against one dashboard could confirm the same tool and arguments against another. Preview keys now carry a config identity hash, matching the isolation the abilities cache already enforces.
+
 Confirmation preview keys now serialize nested arguments faithfully. The previous serialization dropped nested values (including keys named `__proto__` and objects inside arrays), so a confirmation call could swap nested argument values past the token binding. Arguments are canonicalized recursively onto null-prototype objects before keying.
 
 Tool schemas for destructive tools now declare the `confirmation_token` parameter, and the advertised confirmation flow names the token step. Clients that validate arguments against the schema could not send the token the server requires, and the described flow still matched the old tokenless behavior. Confirm-only abilities without `dry_run` no longer promise a preview in their description.
