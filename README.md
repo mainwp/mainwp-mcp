@@ -12,6 +12,8 @@
 
 _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
+**AI proposes the work. MainWP decides what's permitted, performs it, and reports what actually happened.**
+
 [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
 
 **Looking for the MainWP Control CLI instead?** [MainWP Control](https://github.com/mainwp/mainwp-control) is a CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. MainWP Control is for automation: AI automation, cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
@@ -19,6 +21,17 @@ _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 **Beta Release** — This project is under active development. APIs may change between versions.
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
+
+### How It Works
+
+MainWP MCP is a layered system, and each layer has a distinct job:
+
+- **AI interprets intent.** The assistant turns a natural-language request into a plan and selects the tools that match it.
+- **MCP applies the boundary.** The server exposes only the ability namespaces and tools you permit, and rechecks that policy when a tool is actually called, not just when tools are listed.
+- **The MainWP Dashboard is the authority.** It holds your managed sites, defines the available abilities, and performs the WordPress operation.
+- **You approve what matters.** Destructive operations stop at a confirmation gate before anything runs.
+
+The AI stays flexible where flexibility helps. The Dashboard stays deterministic where consequences live.
 
 ### What You Can Do
 
@@ -29,6 +42,8 @@ An MCP (Model Context Protocol) server that connects AI assistants to your MainW
 - **Bulk Operations**: Sync, reconnect, or check connectivity across dozens of sites at once
 
 Built for WordPress agencies and site managers who want AI assistance with their MainWP workflows.
+
+> **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set of abilities your workflow needs and widen from there. See [Limiting Exposed Tools](#limiting-exposed-tools).
 
 ---
 
@@ -418,6 +433,7 @@ For Windsurf and other hosts, use the same JSON configuration pattern shown abov
 | `MAINWP_ALLOWED_TOOLS`             | No             |            | Whitelist of tools to expose                                                                           |
 | `MAINWP_BLOCKED_TOOLS`             | No             |            | Blacklist of tools to hide                                                                             |
 | `MAINWP_SCHEMA_VERBOSITY`          | No             | `standard` | `standard` or `compact`                                                                                |
+| `MAINWP_RESPONSE_FORMAT`           | No             | `compact`  | Response JSON formatting: `compact` or `pretty`                                                        |
 | `MAINWP_RETRY_ENABLED`             | No             | `true`     | Enable automatic retry for transient errors                                                            |
 | `MAINWP_MAX_RETRIES`               | No             | `2`        | Total retry attempts including initial request                                                         |
 | `MAINWP_RETRY_BASE_DELAY`          | No             | `1000`     | Base delay between retries in milliseconds                                                             |
