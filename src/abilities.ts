@@ -150,6 +150,15 @@ function cacheSignature(config: Config): string {
 }
 
 /**
+ * Short one-way hash of the config identity, for callers that need to
+ * namespace their own per-identity state (e.g. confirmation previews) with
+ * the same identity definition the abilities cache uses.
+ */
+export function configIdentityHash(config: Config): string {
+  return crypto.createHash('sha256').update(cacheSignature(config)).digest('hex').slice(0, 16);
+}
+
+/**
  * Returns true if the ability's namespace is in the allowlist.
  */
 function isAllowedNamespace(abilityName: string, namespaces: string[]): boolean {

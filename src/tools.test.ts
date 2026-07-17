@@ -1423,7 +1423,7 @@ describe('confirmation flow - full cycle', () => {
     expect(crossToolResult.content[0].text).toContain('PREVIEW_REQUIRED');
     expect(crossToolResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
-      'Confirmation failed - token belongs to different tool',
+      'Confirmation failed - token belongs to a different tool or identity',
       expect.objectContaining({ toolName: 'delete_plugins_v1' })
     );
 
@@ -1435,6 +1435,49 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
     expect(reuseResult.content[0].text).toContain('PREVIEW_REQUIRED');
+  });
+
+  it('rejects a confirmation token issued under a different config identity', async () => {
+    // Preview against dashboard A
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, affected: [1] }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    const token = JSON.parse(previewResult.content[0].text).confirmation_token;
+    expect(token).toBeDefined();
+
+    // Confirm against dashboard B with the same tool and arguments: the
+    // module-level preview maps are shared, so without identity scoping this
+    // would execute against a dashboard that never previewed anything.
+    const otherDashboard = { ...baseConfig, dashboardUrl: 'https://other-dashboard.example' };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const crossIdentityResult = await executeTool(
+      otherDashboard,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+
+    expect(crossIdentityResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(crossIdentityResult.isError).toBe(true);
   });
 
   it('should reject confirmation when arguments differ from preview (arg-swap)', async () => {

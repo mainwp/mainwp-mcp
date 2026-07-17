@@ -1,0 +1,50 @@
+# CodeRabbit configuration.
+# The path_instructions below record deliberate design decisions so reviews
+# do not re-flag them. Each carries its rationale inline.
+
+reviews:
+  path_instructions:
+    - path: 'src/index.ts'
+      instructions: >-
+        Do not suggest filtering the static mainwp://abilities and
+        mainwp://help resources through allowedTools/blockedTools. This is a
+        documented policy decision (docs/security.md): the tool policy
+        governs listing and execution, while static resources describe the
+        full ability catalog so operators can see what a broader policy
+        would expose. Anything that resolves or executes an ability
+        (tool calls, completions, mainwp://site/{id}) is policy-gated.
+
+    - path: 'docs/troubleshooting.md'
+      instructions: >-
+        Do not suggest moving used/mismatched confirmation_token cases out of
+        the PREVIEW_REQUIRED section. The code (src/confirmation.ts) returns
+        PREVIEW_REQUIRED for unknown, already-used, cross-tool, and
+        argument-mismatched tokens; PREVIEW_EXPIRED only fires when the
+        pending preview still exists but is older than 5 minutes. The doc
+        matches the code.
+
+    - path: 'src/config.ts'
+      instructions: >-
+        Do not suggest restricting skipSslVerify to local-looking dashboard
+        hosts. Hostname-based classification is unreliable (internal DNS
+        names, LAN IPs, and public IPs with self-signed certificates are all
+        legitimate). The flag is opt-in, off by default, scoped to a
+        per-request undici dispatcher, and announced with a startup MITM
+        warning.
+
+    - path: 'src/session.ts'
+      instructions: >-
+        Do not suggest resetting the module-global sessionDataBytes counter
+        inside createServer(). Production runs one createServer per process
+        (stdio transport), so the counter starts at zero; resetting there
+        would zero the cap out from under a concurrently running instance
+        sharing the module. Tests reset explicitly via resetSessionData().
+
+    - path: 'src/http-client.ts'
+      instructions: >-
+        Do not suggest requiring error.name === 'AbortError' before
+        converting errors to ETIMEDOUT in readLimitedBody's catch. Undici
+        surfaces mid-stream aborts as varying error shapes (often TypeError
+        "terminated", not AbortError), so the deadline.timedOut flag is the
+        reliable signal there; the strict check is only safe in createFetch
+        where fetch() itself rejects.
