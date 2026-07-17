@@ -40,16 +40,28 @@ export async function startLocalDependencyRegistry(
     .filter(packagePath => fs.existsSync(path.join(packagePath, 'package.json')));
   const tarballDir = path.join(tempRoot, 'dependency-tarballs');
   fs.mkdirSync(tarballDir, { recursive: true });
+  // npm 10 runs a dependency's prepare/prepack scripts during `npm pack`
+  // despite --ignore-scripts (fixed in npm 11), and installed copies lack the
+  // dev tooling those scripts expect. Pack staged copies with the pack-time
+  // scripts stripped so the behavior does not depend on the npm version.
+  const stagingDir = path.join(tempRoot, 'dependency-staging');
+  const stagedPaths = packagePaths.map((packagePath, index) => {
+    const stagedPath = path.join(stagingDir, String(index));
+    fs.cpSync(packagePath, stagedPath, { recursive: true });
+    const manifestPath = path.join(stagedPath, 'package.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    if (manifest.scripts) {
+      delete manifest.scripts.prepare;
+      delete manifest.scripts.prepack;
+      delete manifest.scripts.postpack;
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    }
+    return stagedPath;
+  });
   const packedResult = await runner.run(
-    [
-      'npm',
-      'pack',
-      '--ignore-scripts',
-      '--json',
-      '--pack-destination',
-      tarballDir,
-      ...packagePaths,
-    ],
+    ['npm', 'pack', '--ignore-scripts', '--json', '--pack-destination', tarballDir, ...stagedPaths],
     repoRoot
   );
   const packed = JSON.parse(packedResult.stdout) as PackedDependency[];
