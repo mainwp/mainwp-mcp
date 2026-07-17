@@ -21,7 +21,7 @@ import {
   matchesSiteStatusAnswer,
   type AgentEvaluation,
 } from './lib/agent-matchers.js';
-import { CommandRunner, killProcessTree } from './lib/commands.js';
+import { awaitChildWithDeadline, CommandRunner } from './lib/commands.js';
 import {
   FIXTURE_APP_PASSWORD,
   FIXTURE_USERNAME,
@@ -891,8 +891,6 @@ async function runClaude(
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
   let pending = '';
-  let timedOut = false;
-  let spawnError: Error | undefined;
   child.stdout.on('data', chunk => {
     const buffer = Buffer.from(chunk);
     stdoutChunks.push(buffer);
@@ -902,24 +900,7 @@ async function runClaude(
     for (const line of lines) if (line.trim()) onLine(line);
   });
   child.stderr.on('data', chunk => stderrChunks.push(Buffer.from(chunk)));
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    killProcessTree(child);
-  }, 300_000);
-  const exitCode = await new Promise<number>(resolve => {
-    child.once('error', error => {
-      // A spawn failure never emits 'close', so resolve here or hang forever.
-      spawnError = error;
-      resolve(1);
-    });
-    // Bounded fallback: a surviving orphan (e.g. an MCP server the CLI
-    // spawned) can hold the pipes open after the group kill; 'exit' has
-    // still fired, so resolve shortly after instead of waiting on 'close'.
-    child.once('exit', () => {
-      if (timedOut) setTimeout(() => resolve(124), 2_000).unref();
-    });
-    child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
-  }).finally(() => clearTimeout(timeout));
+  const { exitCode, timedOut, spawnError } = await awaitChildWithDeadline(child, 300_000);
   if (spawnError) throw spawnError;
   if (pending.trim()) onLine(pending);
   return {

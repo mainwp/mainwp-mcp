@@ -43,6 +43,44 @@ function tail(value: string, maxLength = 12_000): string {
   return value.length <= maxLength ? value : value.slice(-maxLength);
 }
 
+export interface ChildCompletion {
+  exitCode: number;
+  timedOut: boolean;
+  spawnError?: Error;
+}
+
+/**
+ * Await a spawned child under a hard deadline. On timeout the whole process
+ * group is killed (spawn with detached: true), and a bounded fallback armed
+ * from the timeout callback itself resolves even when a descendant that
+ * escaped the group kill keeps the stdio pipes open — arming it from 'exit'
+ * would miss the case where the child exits before the deadline. Promise
+ * resolution is idempotent, so every path may safely resolve.
+ */
+export async function awaitChildWithDeadline(
+  child: ChildProcess,
+  timeoutMs: number,
+  fallbackMs = 2_000
+): Promise<ChildCompletion> {
+  let timedOut = false;
+  let spawnError: Error | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  const exitCode = await new Promise<number>(resolve => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child);
+      setTimeout(() => resolve(124), fallbackMs).unref();
+    }, timeoutMs);
+    child.once('error', error => {
+      // A spawn failure never emits 'close', so resolve here or hang forever.
+      spawnError = error;
+      resolve(1);
+    });
+    child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
+  }).finally(() => clearTimeout(timeout));
+  return { exitCode, timedOut, spawnError };
+}
+
 export class CommandRunner {
   readonly records: CommandRecord[] = [];
   onRecord?: (record: CommandRecord) => void;
@@ -73,27 +111,8 @@ export class CommandRunner {
     child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
     child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
 
-    let timedOut = false;
-    let spawnError: Error | undefined;
     const timeoutMs = options.timeoutMs ?? 300_000;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      killProcessTree(child);
-    }, timeoutMs);
-    const exitCode = await new Promise<number>(resolve => {
-      child.once('error', error => {
-        // A spawn failure never emits 'close', so resolve here or hang forever.
-        spawnError = error;
-        resolve(1);
-      });
-      // Bounded fallback: if an orphan survives the group kill and keeps a
-      // pipe open, 'exit' has still fired — resolve shortly after instead of
-      // waiting on 'close' forever.
-      child.once('exit', () => {
-        if (timedOut) setTimeout(() => resolve(124), 2_000).unref();
-      });
-      child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
-    }).finally(() => clearTimeout(timeout));
+    const { exitCode, timedOut, spawnError } = await awaitChildWithDeadline(child, timeoutMs);
     const stdoutText = Buffer.concat(stdout).toString('utf8');
     const capturedStderr = Buffer.concat(stderr).toString('utf8');
     const stderrText = [

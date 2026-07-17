@@ -20,7 +20,7 @@ import {
   getFixtureFaultMode,
 } from '../fixture-dashboard.js';
 import { parseAcceptanceEnv } from './env.js';
-import { CommandRunner } from './commands.js';
+import { awaitChildWithDeadline, CommandRunner } from './commands.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { BoundedPagination } from './pagination.js';
@@ -199,6 +199,19 @@ MAINWP_APP_PASSWORD='abcd $HOME ijkl' # application password
       { name: 'fast result', expected: 20_000, actual: 19_999, pass: true },
       { name: 'slow result', expected: 20_000, actual: 20_000, pass: false },
     ]);
+  });
+
+  it('resolves the deadline fallback even when close never fires', async () => {
+    // A descendant that escapes the group kill can hold the stdio pipes open
+    // so neither 'exit'-gated fallbacks nor 'close' ever run; the fallback
+    // must be armed from the timeout callback itself.
+    const { EventEmitter } = await import('node:events');
+    const fake = new EventEmitter() as unknown as import('node:child_process').ChildProcess;
+    Object.assign(fake, { pid: undefined, kill: () => true });
+
+    const completion = await awaitChildWithDeadline(fake, 20, 20);
+
+    expect(completion).toMatchObject({ exitCode: 124, timedOut: true });
   });
 
   it('fails unverified totals while allowing legitimately skipped scenarios', () => {
