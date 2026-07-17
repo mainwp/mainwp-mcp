@@ -65,6 +65,13 @@ export function matchesNotFoundSiteAnswer(text: string): boolean {
     return false;
   }
 
+  // Relaying the structured error code is faithful absence reporting
+  // regardless of surrounding phrasing (the guard above already rejected
+  // answers that claim the site exists).
+  if (answer.includes('mainwp_site_not_found')) {
+    return true;
+  }
+
   // Gaps allow ~90 chars so a long quoted hostname (37+ chars plus backticks
   // and words like "named") fits between the subject and the verdict.
   return [
@@ -72,6 +79,8 @@ export function matchesNotFoundSiteAnswer(text: string): boolean {
     /\b(?:site|domain|website)\b.{0,90}\b(?:does not|doesn't)\s+exist\b/,
     /\b(?:no|zero)\s+(?:matching\s+)?(?:site|domain|website)s?\b.{0,90}\b(?:found|registered|connected|exists?)\b/,
     /\b(?:could not|couldn't|cannot|can't|unable to)\s+(?:find|locate|identify)\b.{0,90}\b(?:site|domain|website)\b/,
+    /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:in|on|among|part of|listed (?:in|on))\b.{0,60}\b(?:dashboard|mainwp|network|managed sites|site list)\b/,
+    /\bno\s+(?:matching\s+)?(?:site|domain|website)s?\s+(?:named|called|matching|like|by that name)\b/,
   ].some(pattern => pattern.test(answer));
 }
 
