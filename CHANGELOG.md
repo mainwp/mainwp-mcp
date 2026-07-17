@@ -23,6 +23,20 @@ The package no longer installs a global command named `mcp`. That name is too ge
 
 ### Fixed
 
+The installed `mainwp-mcp` command now starts when invoked through npm's bin symlink. The entry-point check compared the module URL against `process.argv[1]` without resolving symlinks, so the CLI exited silently with status 0 when run via `npx` or a `node_modules/.bin` link. The check now resolves the invoked path first.
+
+Confirmation preview keys now serialize nested arguments faithfully. The previous serialization dropped nested values (including keys named `__proto__` and objects inside arrays), so a confirmation call could swap nested argument values past the token binding. Arguments are canonicalized recursively onto null-prototype objects before keying.
+
+Tool schemas for destructive tools now declare the `confirmation_token` parameter, and the advertised confirmation flow names the token step. Clients that validate arguments against the schema could not send the token the server requires, and the described flow still matched the old tokenless behavior. Confirm-only abilities without `dry_run` no longer promise a preview in their description.
+
+Passing `confirm: true` together with a declared `dry_run: true` no longer forwards `confirm` upstream. The dry-run call now goes out with `confirm` stripped, matching the preview path, so upstream handlers never see the ambiguous combination.
+
+A malformed ability entry in the Dashboard response (a null entry or a non-string name) is now skipped with a warning instead of throwing and failing the whole catalog refresh.
+
+A malformed property value inside an ability's input schema (a string or array where an object belongs) is now coerced to an empty object instead of crashing the whole tools/list response during description backfill.
+
+The abilities cache signature now includes `skipSslVerify` and `maxResponseSize`, so a strictly configured server instance never reuses data fetched by an instance with TLS verification disabled or a larger response cap.
+
 Confirmed execution of a destructive tool now always requires the `confirmation_token` issued by the preview. The server used to fall back to matching the pending preview by tool name and arguments, so `user_confirmed: true` with the same arguments executed without the token, letting a caller confirm a preview it never read. A tokenless confirmation now returns `PREVIEW_REQUIRED` and the issued token stays valid.
 
 A "site not found" error from a live Dashboard now surfaces with the resource-not-found error code. The Dashboard reports a nonexistent site as HTTP 403 with the `mainwp_site_not_found` error code, and the classifier trusted the status before the structured code, so clients received a permission-denied error and recovered down the wrong path. Structured not-found codes now classify first.

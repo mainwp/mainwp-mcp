@@ -227,6 +227,41 @@ describe('fetchAbilities', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('skips malformed ability entries instead of failing the whole refresh', async () => {
+    const hostileAbilities = [
+      null,
+      'junk',
+      { name: 42, label: 'Numeric name' },
+      { label: 'No name at all' },
+      ...sampleAbilities,
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => hostileAbilities,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig);
+
+    expect(abilities).toHaveLength(7);
+    expect(abilities.every(a => typeof a.name === 'string')).toBe(true);
+  });
+
+  it('does not share cache across configs that differ in transport-security settings', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await fetchAbilities(baseConfig);
+    // Same dashboard and identity, but TLS verification disabled: a strict
+    // instance must not serve data fetched by a lax one (or vice versa).
+    await fetchAbilities({ ...baseConfig, skipSslVerify: !baseConfig.skipSslVerify });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('should force refresh when requested', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

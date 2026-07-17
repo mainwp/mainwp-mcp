@@ -17,6 +17,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
   CallToolRequestSchema,
@@ -589,6 +590,18 @@ async function main(): Promise<void> {
 }
 
 // Run only when invoked as the program entry point; tests import createServer.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves the ESM main module to its real path while argv[1] keeps the
+// path as invoked, so npm's bin symlinks need argv[1] realpathed to match.
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   void main();
 }

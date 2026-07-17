@@ -71,6 +71,24 @@ describe('abilityToTool input schema sanitization', () => {
     expect(tool.inputSchema.required).toEqual(['site_id']);
   });
 
+  it('coerces primitive and array property values to empty objects', () => {
+    // A string-valued property is truthy and reaches the description
+    // backfill, which throws on primitives in strict-mode ESM and fails the
+    // whole tools/list response instead of isolating one bad property.
+    const ability = makeAbility({
+      input_schema: JSON.parse(
+        '{"type":"object","properties":{"site_id":"bogus","tags":[],"ok":{"type":"string"}}}'
+      ) as Record<string, unknown>,
+    });
+
+    const tool = abilityToTool(ability, 'mainwp');
+
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.site_id).toEqual({ description: 'Site ID.' });
+    expect(props.tags).toEqual({ description: 'Tags.' });
+    expect(props.ok).toEqual({ type: 'string', description: 'Ok.' });
+  });
+
   it('preserves well-formed object properties unchanged', () => {
     const ability = makeAbility({
       input_schema: {
@@ -86,5 +104,45 @@ describe('abilityToTool input schema sanitization', () => {
       site_id: { type: 'integer', description: 'Site ID.' },
     });
     expect(tool.inputSchema.required).toEqual(['site_id']);
+  });
+});
+
+describe('abilityToTool confirmation parameter injection', () => {
+  function makeDestructiveAbility(withDryRun: boolean): Ability {
+    const properties: Record<string, unknown> = {
+      site_id: { type: 'integer', description: 'Site ID.' },
+      confirm: { type: 'boolean', description: 'Confirm.' },
+    };
+    if (withDryRun) {
+      properties.dry_run = { type: 'boolean', description: 'Dry run.' };
+    }
+    return makeAbility({
+      name: 'mainwp/delete-site-v1',
+      input_schema: { type: 'object', properties },
+      meta: { annotations: { destructive: true, readonly: false, idempotent: false } },
+    });
+  }
+
+  it('declares confirmation_token so schema-validating clients can send it', () => {
+    const tool = abilityToTool(makeDestructiveAbility(true), 'mainwp');
+
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.user_confirmed).toBeDefined();
+    expect(props.confirmation_token).toMatchObject({ type: 'string' });
+  });
+
+  it('advertises the token-bound flow in the standard description', () => {
+    const tool = abilityToTool(makeDestructiveAbility(true), 'mainwp');
+
+    expect(tool.description).toContain('confirmation_token');
+    expect(tool.description).toContain('preview what will be affected');
+  });
+
+  it('does not promise a preview when the ability lacks dry_run', () => {
+    const tool = abilityToTool(makeDestructiveAbility(false), 'mainwp');
+
+    expect(tool.description).toContain('no preview available');
+    expect(tool.description).not.toContain('preview what will be affected');
+    expect(tool.description).toContain('confirmation_token');
   });
 });
