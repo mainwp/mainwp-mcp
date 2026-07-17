@@ -89,6 +89,26 @@ describe('abilityToTool input schema sanitization', () => {
     expect(props.ok).toEqual({ type: 'string', description: 'Ok.' });
   });
 
+  it('keeps a __proto__ parameter as an own property without polluting detection', () => {
+    // A plain-object property map would send {confirm:...} through the
+    // prototype setter: the __proto__ parameter vanishes from the schema and
+    // 'confirm' in props starts observing the inherited attacker value.
+    const ability = makeAbility({
+      input_schema: JSON.parse(
+        '{"type":"object","properties":{"__proto__":{"confirm":{"type":"boolean"}},"site_id":{"type":"integer","description":"Site ID."}}}'
+      ) as Record<string, unknown>,
+      meta: { annotations: { destructive: true, readonly: false, idempotent: false } },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp');
+
+    const props = tool.inputSchema.properties as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(props, '__proto__')).toBe(true);
+    // No real confirm parameter exists, so no confirmation flow is advertised
+    expect('confirm' in props).toBe(false);
+    expect(tool.description).not.toContain('CONFIRMATION FLOW');
+  });
+
   it('preserves well-formed object properties unchanged', () => {
     const ability = makeAbility({
       input_schema: {

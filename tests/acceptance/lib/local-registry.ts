@@ -104,7 +104,13 @@ export async function startLocalDependencyRegistry(
       return;
     }
 
-    const name = decodeURIComponent(url.pathname.slice(1));
+    let name: string;
+    try {
+      name = decodeURIComponent(url.pathname.slice(1));
+    } catch {
+      // Malformed percent-encoding must not take the registry down.
+      return json(response, 400, { error: 'malformed package name encoding' });
+    }
     const dependency = byName.get(name);
     if (!dependency) return json(response, 404, { error: `package ${name} not found` });
     const packageJson = JSON.parse(

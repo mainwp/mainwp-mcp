@@ -338,6 +338,14 @@ describe('agent acceptance matchers', () => {
         probe
       )
     ).toBe(false);
+    // A scheme fragment must not correlate with a URL-shaped probe.
+    expect(
+      scopedSearchProvesSiteAbsent(
+        [{ ...use, input: { search: 'https' } }],
+        () => emptyPage,
+        'https://nonexistent-acceptance-probe.invalid/'
+      )
+    ).toBe(false);
   });
 
   it('recognizes the not-found error code embedded in a sanitized error message', () => {

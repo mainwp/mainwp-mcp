@@ -99,12 +99,14 @@ export function scopedSearchProvesSiteAbsent(
   resultsForUse: (use: RecordedAgentToolUse) => RecordedAgentToolResult[],
   absentSiteQuery: string
 ): boolean {
-  const probe = absentSiteQuery.toLowerCase();
+  // Normalize to the hostname so a URL-shaped probe can never correlate with
+  // a generic scheme fragment like "https".
+  const probe = hostnameOf(absentSiteQuery).toLowerCase();
   return uses.some(use => {
     if (!use.input || typeof use.input !== 'object') return false;
     const search = (use.input as Record<string, unknown>).search;
     if (typeof search !== 'string') return false;
-    const term = search.trim().toLowerCase();
+    const term = hostnameOf(search.trim().toLowerCase());
     if (term.length < 5 || !probe.includes(term)) return false;
     return resultsForUse(use).some(result =>
       findNestedObjects(result.content).some(
