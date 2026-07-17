@@ -132,13 +132,21 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * process. The identity is a one-way hash so credentials never appear in the
  * signature itself. Also keys in-flight de-duplication: callers may only join
  * a running fetch for the same dashboard, allowlist, and identity.
+ * Transport-security settings are part of the identity too: an instance with
+ * strict TLS or a smaller body cap must not reuse data fetched by a laxer one.
  */
 function cacheSignature(config: Config): string {
   const authIdentity = crypto
     .createHash('sha256')
     .update(JSON.stringify([config.authType, config.username, config.appPassword, config.apiToken]))
     .digest('hex');
-  return JSON.stringify([config.dashboardUrl, config.abilityNamespaces, authIdentity]);
+  return JSON.stringify([
+    config.dashboardUrl,
+    config.abilityNamespaces,
+    authIdentity,
+    config.skipSslVerify,
+    config.maxResponseSize,
+  ]);
 }
 
 /**
@@ -343,6 +351,16 @@ export async function fetchAbilities(
       ),
     process: allAbilities => {
       const newAbilities = allAbilities.filter(a => {
+        // Hostile-input guard: a null entry or non-string name would throw
+        // below and poison the whole catalog refresh instead of being skipped.
+        if (
+          a === null ||
+          typeof a !== 'object' ||
+          typeof (a as { name?: unknown }).name !== 'string'
+        ) {
+          logger?.warning('Skipping malformed ability entry', { entryType: typeof a });
+          return false;
+        }
         if (!isAllowedNamespace(a.name, namespaces)) return false;
         // Defense in depth: drop abilities whose names fail the strict format
         // check before they reach the tool index. A malformed name (extra

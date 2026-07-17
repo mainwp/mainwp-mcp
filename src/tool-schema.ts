@@ -36,11 +36,21 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   // `properties` (or malformed `required`) invalidates the whole tools/list
   // response for spec-compliant clients, so coerce anything non-conforming.
   const rawProperties = schema.properties;
-  const properties = (
+  const rawPropertyMap = (
     rawProperties && typeof rawProperties === 'object' && !Array.isArray(rawProperties)
       ? rawProperties
       : {}
-  ) as { [key: string]: Record<string, unknown> };
+  ) as Record<string, unknown>;
+  // Sanitize each property too: a primitive or array value would throw on the
+  // description backfill below, failing the whole tools/list response instead
+  // of isolating one malformed property.
+  const properties: { [key: string]: Record<string, unknown> } = {};
+  for (const [name, prop] of Object.entries(rawPropertyMap)) {
+    properties[name] =
+      prop !== null && typeof prop === 'object' && !Array.isArray(prop)
+        ? (prop as Record<string, unknown>)
+        : {};
+  }
   const required = Array.isArray(schema.required)
     ? schema.required.filter((entry): entry is string => typeof entry === 'string')
     : [];
@@ -48,7 +58,7 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   // Backfill missing descriptions from parameter names.
   // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
   for (const [name, prop] of Object.entries(properties)) {
-    if (prop && (!prop.description || String(prop.description).trim() === '')) {
+    if (!prop.description || String(prop.description).trim() === '') {
       prop.description = paramNameToDescription(name);
     }
   }
@@ -293,13 +303,19 @@ function buildStandardDescription(
     description += ` ${tags}`;
   }
 
-  // Append confirmation workflow for destructive tools with confirm parameter
+  // Append confirmation workflow for destructive tools with confirm parameter.
+  // Only promise a preview when the ability declares dry_run — confirm-only
+  // abilities issue a token without an upstream preview call.
   if (isDestructive && hasConfirm) {
     description +=
       '\n\nCONFIRMATION FLOW: ' +
-      '1) Call with confirm:true to preview what will be affected. ' +
-      '2) Show preview to user and ask for confirmation. ' +
-      '3) If confirmed, call again with user_confirmed:true to execute. ' +
+      (hasDryRun
+        ? '1) Call with confirm:true to preview what will be affected. ' +
+          '2) Show preview to user and ask for confirmation. '
+        : '1) Call with confirm:true to receive a confirmation token (no preview available). ' +
+          '2) Ask the user for confirmation. ') +
+      '3) If confirmed, call again with user_confirmed:true and the confirmation_token ' +
+      'from the first response to execute. ' +
       'Do NOT set user_confirmed:true without explicit user consent.';
   }
 
@@ -356,15 +372,25 @@ export function abilityToTool(
   const hasConfirm = 'confirm' in props;
   const isDestructive = meta?.destructive ?? false;
 
-  // Add user_confirmed parameter for destructive tools with confirm parameter
-  // This must happen BEFORE schema compression so it applies to all verbosity modes
+  // Add user_confirmed and confirmation_token parameters for destructive tools
+  // with a confirm parameter. Both must be declared: confirmed execution is
+  // token-bound, and a schema-validating client (or upstream
+  // additionalProperties: false) would otherwise reject the token it is
+  // required to send. This must happen BEFORE schema compression so it applies
+  // to all verbosity modes.
   if (isDestructive && hasConfirm) {
     const mutableProps = inputSchema.properties as Record<string, object>;
     mutableProps['user_confirmed'] = {
       type: 'boolean',
       description:
-        'Confirm execution after reviewing preview. ' +
-        'FLOW: 1) confirm:true for preview, 2) show user, 3) user_confirmed:true if approved.',
+        'Confirm execution after user approval. ' +
+        'FLOW: 1) confirm:true, 2) show result to user, ' +
+        '3) user_confirmed:true + confirmation_token if approved.',
+    };
+    mutableProps['confirmation_token'] = {
+      type: 'string',
+      description:
+        'Token issued by the confirm:true response; required alongside user_confirmed:true.',
     };
   }
 

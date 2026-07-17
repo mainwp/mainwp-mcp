@@ -224,7 +224,11 @@ export async function handleConfirmationFlow(
       };
     }
     logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
-    return { action: 'skip' };
+    // Strip confirm so upstream never sees the ambiguous confirm+dry_run
+    // combination — mirrors the Case 2 preview call, which sends dry_run
+    // with confirm removed.
+    const { confirm: _dryRunConfirm, ...dryRunArgs } = effectiveArgs;
+    return { action: 'execute', effectiveArgs: dryRunArgs };
   }
 
   // Case 2: Preview request (confirm: true without user_confirmed)

@@ -883,6 +883,34 @@ describe('executeTool', () => {
     );
   });
 
+  it('strips confirm from an explicit dry_run call before reaching upstream', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true, preview: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, dry_run: true, confirm: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBeUndefined();
+    // Upstream must never see the ambiguous confirm+dry_run combination
+    const [executionUrl, executionInit] = mockFetch.mock.calls[1] as [string, RequestInit];
+    const serialized = `${executionUrl} ${String(executionInit?.body ?? '')}`;
+    expect(serialized).toContain('dry_run');
+    expect(serialized).not.toContain('confirm=');
+    expect(serialized).not.toContain('"confirm"');
+  });
+
   it('should accept confirmation_token to resolve preview', async () => {
     // Step 1: Generate preview
     mockFetch.mockResolvedValueOnce({
