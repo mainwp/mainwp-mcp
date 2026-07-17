@@ -113,7 +113,7 @@ function selectedSite(state: Record<string, unknown>): VerifiedSite {
   return site;
 }
 
-async function verifierListAll<T>(
+export async function verifierListAll<T>(
   verifier: IndependentVerifier,
   abilityName: string
 ): Promise<T[]> {

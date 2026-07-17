@@ -110,9 +110,23 @@ Scenario assertions use evidence in this order:
 
 For example, `list-sites-cross-check` compares both the site count and the complete set of site URLs. `not-found-input` requires an `isError` result, then calls `count_sites_v1` on the same client session to prove recovery. `confirmation-gate-no-token` checks the structured confirmation status and token, then independently proves that the site set did not change.
 
-Agent verdicts are also deterministic. A scenario must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. The model does not grade itself.
+Agent verdicts are also deterministic. Generic scenarios must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. Custom evaluators enforce the expected error, multi-tool chain, or full-site coverage when the generic path is insufficient. The model does not grade itself.
 
-The `agent-confirm-delete-site` scenario is the write exception in the agent layer. It points the packed MCP server at a newly started local fixture, asks in natural language for an explicitly authorized site deletion without naming a tool, and grades the transcript and state independently. The transcript must contain a `delete_site_v1` result with `CONFIRMATION_REQUIRED` and a token, followed by a confirmed `delete_site_v1` call using that token. A direct fixture read must then show exactly one fewer site and the target site absent. Refusing or stopping before confirmation is a failed scenario with the transcript reason preserved.
+The agent layer contains nine scenarios:
+
+- `agent-count-sites`: count all connected sites.
+- `agent-updates`: identify sites with pending plugin updates.
+- `agent-plugin-active`: report whether a discovered plugin is active on its site.
+- `agent-nonexistent-site`: consult the Dashboard and report that a probe site is absent without repeating plugin names from real sites.
+- `agent-tags`: report the complete paginated tag count and names.
+- `agent-theme-chain`: find the single site with pending plugin updates, then report its active theme.
+- `agent-confirm-delete-site`: complete the fixture deletion confirmation flow.
+- `agent-safemode-refusal`: attempt a fixture deletion and require a correlated `SAFE_MODE_BLOCKED` result with unchanged state.
+- `agent-site-status`: check every live site and report the independently verified connectivity result.
+
+An agent scenario may define `serverEnv` for literal, non-secret server flags that apply only to that scenario. These values are merged into the temporary `claude-mcp.json` server environment. `agent-safemode-refusal` uses this field to set `MAINWP_SAFE_MODE=true`.
+
+The `agent-confirm-delete-site` scenario is the state-changing write exception in the agent layer. It points the packed MCP server at a newly started local fixture, asks in natural language for an explicitly authorized site deletion without naming a tool, and grades the transcript and state independently. The transcript must contain a `delete_site_v1` result with `CONFIRMATION_REQUIRED` and a token, followed by a confirmed `delete_site_v1` call using that token. A direct fixture read must then show exactly one fewer site and the target site absent. Refusing or stopping before confirmation is a failed scenario with the transcript reason preserved.
 
 ## Completion and transport-limit coverage
 
@@ -199,6 +213,6 @@ npx tsx tests/acceptance/run.ts \
 
 The deterministic runner chooses each MCP operation itself and verifies structured values. It is suitable for CI and produces the same fixture result on every run.
 
-The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, `${MAINWP_SKIP_SSL_VERIFY}`, and `${MAINWP_ALLOW_HTTP}` placeholders. Real values exist only in the spawned process environment. Live scenarios use resolved Dashboard credentials. The confirmation scenario uses only local fixture credentials, and selecting it by itself does not require live credentials. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
+The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, `${MAINWP_SKIP_SSL_VERIFY}`, and `${MAINWP_ALLOW_HTTP}` placeholders plus any literal scenario `serverEnv` flags. Real credential values exist only in the spawned process environment. Live scenarios use resolved Dashboard credentials. The confirmation and safe-mode scenarios use only local fixture credentials, and selecting either by itself does not require live credentials. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
 
 Live Dashboard data can change between an MCP call and the independent read. Site sync can complete asynchronously. Installed plugins and available updates vary by site. Agent tool choice and wording can vary by model. These are known sources of nondeterminism. Fixture scenarios avoid them; live and agent artifacts preserve enough ordered evidence to explain them.
