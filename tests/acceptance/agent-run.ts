@@ -739,7 +739,7 @@ function finalAnswerMatches(truth: AgentGroundTruth, text: string): boolean {
   }
   if (truth.updateSiteUrls) {
     if (truth.updateSiteUrls.length === 0) return /\b(no|none|zero|0)\b/i.test(text);
-    // Agents commonly name sites by hostname ("child6-4.local") rather than
+    // Agents commonly name sites by hostname ("site-two.example") rather than
     // full URL, so match on hostnames.
     const lower = text.toLowerCase();
     return truth.updateSiteUrls.every(url => lower.includes(hostnameOf(url).toLowerCase()));

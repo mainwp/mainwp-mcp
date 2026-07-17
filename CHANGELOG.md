@@ -17,6 +17,10 @@ Nested objects and arrays of objects in the input of GET/DELETE abilities are no
 
 Malformed boolean configuration now fails startup instead of logging a warning and falling back to the default. Accepted values are `true/1/yes/on` and `false/0/no/off`; anything else stops the server with an error naming the variable.
 
+### Removed
+
+The package no longer installs a global command named `mcp`. That name is too generic for a public package and collides with other MCP tooling. The command is `mainwp-mcp`, and `npx @mainwp/mcp` keeps working since the package now has a single bin entry.
+
 ### Fixed
 
 Confirmed execution of a destructive tool now always requires the `confirmation_token` issued by the preview. The server used to fall back to matching the pending preview by tool name and arguments, so `user_confirmed: true` with the same arguments executed without the token, letting a caller confirm a preview it never read. A tokenless confirmation now returns `PREVIEW_REQUIRED` and the issued token stays valid.
