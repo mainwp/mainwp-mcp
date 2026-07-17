@@ -1,4 +1,20 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+
+/**
+ * SIGKILL the child's whole process group (requires spawn with detached:
+ * true); falls back to the direct child when the group kill fails.
+ */
+export function killProcessTree(child: ChildProcess): void {
+  if (typeof child.pid === 'number') {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch {
+      // Group may already be gone or unavailable; fall through.
+    }
+  }
+  child.kill('SIGKILL');
+}
 
 export interface CommandRecord {
   argv: string[];
@@ -42,11 +58,15 @@ export class CommandRunner {
     options: { env?: NodeJS.ProcessEnv; allowFailure?: boolean; timeoutMs?: number } = {}
   ): Promise<CommandResult> {
     const started = performance.now();
+    // detached puts the child in its own process group so a timeout can kill
+    // the whole tree — SIGKILL on the direct child alone leaves grandchildren
+    // holding the stdio pipes, and 'close' never fires.
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
       env: options.env ?? process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
+      detached: true,
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -58,13 +78,19 @@ export class CommandRunner {
     const timeoutMs = options.timeoutMs ?? 300_000;
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killProcessTree(child);
     }, timeoutMs);
     const exitCode = await new Promise<number>(resolve => {
       child.once('error', error => {
         // A spawn failure never emits 'close', so resolve here or hang forever.
         spawnError = error;
         resolve(1);
+      });
+      // Bounded fallback: if an orphan survives the group kill and keeps a
+      // pipe open, 'exit' has still fired — resolve shortly after instead of
+      // waiting on 'close' forever.
+      child.once('exit', () => {
+        if (timedOut) setTimeout(() => resolve(124), 2_000).unref();
       });
       child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
     }).finally(() => clearTimeout(timeout));

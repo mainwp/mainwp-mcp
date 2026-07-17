@@ -43,8 +43,10 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   ) as Record<string, unknown>;
   // Sanitize each property too: a primitive or array value would throw on the
   // description backfill below, failing the whole tools/list response instead
-  // of isolating one malformed property.
-  const properties: { [key: string]: Record<string, unknown> } = {};
+  // of isolating one malformed property. Null prototype so a hostile
+  // __proto__ parameter stays an own property instead of polluting the map
+  // and leaking inherited keys into the confirm/dry_run detection.
+  const properties: { [key: string]: Record<string, unknown> } = Object.create(null);
   for (const [name, prop] of Object.entries(rawPropertyMap)) {
     properties[name] =
       prop !== null && typeof prop === 'object' && !Array.isArray(prop)
@@ -131,7 +133,9 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
   }
 
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  const compressedProperties: Record<string, Record<string, unknown>> = {};
+  // Null prototype for the same reason as convertInputSchema: a __proto__
+  // parameter must stay an own key through compression.
+  const compressedProperties: Record<string, Record<string, unknown>> = Object.create(null);
 
   for (const [key, prop] of Object.entries(properties)) {
     if (!prop || typeof prop !== 'object') {

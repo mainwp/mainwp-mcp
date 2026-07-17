@@ -35,7 +35,7 @@ Passing `confirm: true` together with a declared `dry_run: true` no longer forwa
 
 A malformed ability entry in the Dashboard response (a null entry or a non-string name) is now skipped with a warning instead of throwing and failing the whole catalog refresh.
 
-A malformed property value inside an ability's input schema (a string or array where an object belongs) is now coerced to an empty object instead of crashing the whole tools/list response during description backfill.
+A malformed property value inside an ability's input schema (a string or array where an object belongs) is now coerced to an empty object instead of crashing the whole tools/list response during description backfill. Property maps are also built with null prototypes, so a hostile parameter named `__proto__` survives as a real schema property instead of polluting the map and skewing the confirm/dry_run detection.
 
 The abilities cache signature now includes `skipSslVerify` and `maxResponseSize`, so a strictly configured server instance never reuses data fetched by an instance with TLS verification disabled or a larger response cap.
 
