@@ -20,7 +20,6 @@ export interface PackChecks {
   forbiddenFilesAbsent: boolean;
   installedEntryPresent: boolean;
   mainwpBinPresent: boolean;
-  mcpBinPresent: boolean;
   installedVersionMatches: boolean;
 }
 
@@ -34,7 +33,6 @@ export interface PackedPackage {
   integrity: string;
   installedEntry: string;
   mainwpBin: string;
-  mcpBin: string;
   version: string;
   checks: PackChecks;
   cleanup(): void;
@@ -96,7 +94,6 @@ export async function packAndInstall(
   const packageDir = path.join(consumerDir, 'node_modules', '@mainwp', 'mcp');
   const installedEntry = fs.realpathSync(path.join(packageDir, 'dist', 'index.js'));
   const mainwpBin = path.join(consumerDir, 'node_modules', '.bin', 'mainwp-mcp');
-  const mcpBin = path.join(consumerDir, 'node_modules', '.bin', 'mcp');
   const installedPackage = JSON.parse(
     fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')
   ) as { version: string };
@@ -108,7 +105,6 @@ export async function packAndInstall(
     forbiddenFilesAbsent,
     installedEntryPresent: fs.existsSync(installedEntry),
     mainwpBinPresent: fs.existsSync(mainwpBin),
-    mcpBinPresent: fs.existsSync(mcpBin),
     installedVersionMatches: installedPackage.version === repoPackage.version,
   };
   if (Object.values(checks).some(check => !check)) {
@@ -126,7 +122,6 @@ export async function packAndInstall(
     integrity: packed.integrity,
     installedEntry,
     mainwpBin,
-    mcpBin,
     version: installedPackage.version,
     checks,
     cleanup: () => {
