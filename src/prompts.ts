@@ -27,7 +27,6 @@ interface PromptDefinition {
  * All available prompt definitions
  */
 const promptDefinitions: PromptDefinition[] = [
-  // === Site Troubleshooting ===
   {
     name: 'troubleshoot-site',
     description: 'Diagnose issues with a MainWP child site',
@@ -61,7 +60,6 @@ Provide a summary of:
     ],
   },
 
-  // === Maintenance Check ===
   {
     name: 'maintenance-check',
     description: 'Run a comprehensive maintenance check across all managed sites',
@@ -90,7 +88,6 @@ Generate a maintenance summary including:
     ],
   },
 
-  // === Update Workflow ===
   {
     name: 'update-workflow',
     description: 'Guide through safely updating WordPress sites',
@@ -136,7 +133,6 @@ Please start by checking the current update status.`,
     ],
   },
 
-  // === Site Report ===
   {
     name: 'site-report',
     description: 'Generate a detailed report for a specific site',
@@ -175,7 +171,6 @@ Format the report in a clear, scannable format.`,
     ],
   },
 
-  // === Network Summary ===
   {
     name: 'network-summary',
     description: 'Generate a summary report of all managed sites',
@@ -218,7 +213,6 @@ Present the data in a clear, executive-summary format.`,
     ],
   },
 
-  // === Security Audit ===
   {
     name: 'security-audit',
     description: 'Perform a security-focused audit of managed sites',
@@ -262,7 +256,6 @@ Start by gathering the site and update information, then provide the security as
     ],
   },
 
-  // === Backup Status ===
   {
     name: 'backup-status',
     description: 'Check backup status across managed sites',
@@ -303,7 +296,6 @@ Note: This analysis depends on the backup data available through MainWP. If back
     ],
   },
 
-  // === Performance Check ===
   {
     name: 'performance-check',
     description: 'Analyze site performance indicators',

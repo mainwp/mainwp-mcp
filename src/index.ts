@@ -538,11 +538,9 @@ async function main(): Promise<void> {
     startupLogger.info(`Config source: ${config.configSource}`);
     startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
     if (config.skipSslVerify) {
-      startupLogger.error('╔══════════════════════════════════════════════════════════════╗');
-      startupLogger.error('║  WARNING: SSL verification disabled                          ║');
-      startupLogger.error('║  Connection is vulnerable to man-in-the-middle attacks       ║');
-      startupLogger.error('║  Only use for local development with self-signed certs       ║');
-      startupLogger.error('╚══════════════════════════════════════════════════════════════╝');
+      startupLogger.error('WARNING: SSL verification disabled.');
+      startupLogger.error('The connection is vulnerable to man-in-the-middle attacks.');
+      startupLogger.error('Only use this for local development with self-signed certificates.');
     }
 
     // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
