@@ -80,6 +80,27 @@ export interface ConfirmationFlowParams {
 }
 
 /**
+ * Recursively sort object keys so serialization is deterministic at every
+ * depth. JSON.stringify's array-replacer form cannot be used here: it filters
+ * property names at all nesting levels, which drops nested values from the
+ * key and lets differing nested arguments collide.
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      sorted[key] = canonicalize(source[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
  * from the key to ensure preview and execution calls match.
@@ -92,8 +113,7 @@ function getPreviewKey(toolName: string, args: Record<string, unknown>): string 
     confirmation_token: _confirmation_token,
     ...relevantArgs
   } = args;
-  const sortedKeys = Object.keys(relevantArgs).sort();
-  return `${toolName}:${JSON.stringify(relevantArgs, sortedKeys)}`;
+  return `${toolName}:${JSON.stringify(canonicalize(relevantArgs))}`;
 }
 
 /**

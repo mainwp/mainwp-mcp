@@ -1449,6 +1449,50 @@ describe('confirmation flow - full cycle', () => {
     );
   });
 
+  it('should reject confirmation when nested arguments differ from preview (nested arg-swap)', async () => {
+    // Step 1: Generate preview with a nested argument value
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, site_id: 1 }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, settings: { role: 'viewer' }, confirm: true },
+      mockLogger
+    );
+    const parsed = JSON.parse(previewResult.content[0].text);
+    const token = parsed.confirmation_token;
+    expect(token).toBeDefined();
+
+    // Step 2: Confirm with the same top-level shape but a different nested value
+    const swapResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      {
+        site_id: 1,
+        settings: { role: 'admin' },
+        user_confirmed: true,
+        confirmation_token: token,
+      },
+      mockLogger
+    );
+
+    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.isError).toBe(true);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - arguments do not match preview',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
   it('should complete two-phase confirmation flow', async () => {
     // Step 1: Preview
     mockFetch.mockResolvedValueOnce({
