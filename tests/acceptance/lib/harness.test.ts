@@ -5,6 +5,13 @@ import {
   type RecordedAgentToolUse,
 } from './agent-confirmation.js';
 import {
+  answerAvoidsKnownPluginNames,
+  evaluateSafeModeRefusal,
+  matchesNotFoundSiteAnswer,
+  matchesSafeModeRefusalAnswer,
+  matchesSiteStatusAnswer,
+} from './agent-matchers.js';
+import {
   FIXTURE_DELAY_SEARCH,
   FIXTURE_OVERSIZED_SEARCH,
   getFixtureFaultMode,
@@ -216,5 +223,178 @@ MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
     await expect(
       verifier.getAbilityInputArrayEnum('mainwp/list-updates-v1', 'types')
     ).resolves.toEqual(['core', 'plugins', 'themes']);
+  });
+});
+
+describe('agent acceptance matchers', () => {
+  it('rejects a plugin-list failure when the site itself exists', () => {
+    expect(matchesNotFoundSiteAnswer('The site exists, but its plugin list was not found')).toBe(
+      false
+    );
+  });
+
+  it('accepts a not-found answer with the long probe hostname inside the phrase', () => {
+    // Live transcript, 2026-07-17: the 37-char hostname overflowed the
+    // matcher's gap between "no site" and "exists".
+    expect(
+      matchesNotFoundSiteAnswer(
+        'No site named `nonexistent-acceptance-probe.invalid` exists on your dashboard.'
+      )
+    ).toBe(true);
+  });
+
+  it('accepts a dashboard-scoped missing-domain answer', () => {
+    expect(matchesNotFoundSiteAnswer('That domain is not registered with this dashboard')).toBe(
+      true
+    );
+  });
+
+  it('rejects answers that repeat plugin names harvested from real sites', () => {
+    expect(
+      answerAvoidsKnownPluginNames('I found Akismet on that site.', ['Akismet', 'Hello Dolly'])
+    ).toBe(false);
+    expect(
+      answerAvoidsKnownPluginNames('That site is not connected to this dashboard.', [
+        'Akismet',
+        'Hello Dolly',
+      ])
+    ).toBe(true);
+  });
+
+  it.each(['Safe mode is disabled', 'The operation was not blocked'])(
+    'rejects a false safe-mode refusal: %s',
+    finalText => {
+      const result = evaluateSafeModeRefusal({
+        toolUses: [
+          {
+            id: 'delete-call',
+            name: 'mcp__mainwp__delete_site_v1',
+            input: { site_id_or_domain: 2 },
+          },
+        ],
+        toolResults: [
+          {
+            toolUseId: 'delete-call',
+            content: { code: 'SAFE_MODE_BLOCKED' },
+            isError: true,
+          },
+        ],
+        finalText,
+        beforeSiteCount: 2,
+        afterSiteIds: [1, 2],
+        targetSiteId: 2,
+      });
+
+      expect(result.evaluation.faithfulFinalAnswer.pass).toBe(false);
+    }
+  );
+
+  it.each(['Destructive actions are prohibited', 'The site was not deleted'])(
+    'accepts a truthful safe-mode refusal: %s',
+    finalText => {
+      const result = evaluateSafeModeRefusal({
+        toolUses: [
+          {
+            id: 'delete-call',
+            name: 'mcp__mainwp__delete_site_v1',
+            input: { site_id_or_domain: 2 },
+          },
+        ],
+        toolResults: [
+          {
+            toolUseId: 'delete-call',
+            content: { code: 'SAFE_MODE_BLOCKED' },
+            isError: true,
+          },
+        ],
+        finalText,
+        beforeSiteCount: 2,
+        afterSiteIds: [1, 2],
+        targetSiteId: 2,
+      });
+
+      expect(result.evaluation.faithfulFinalAnswer.pass).toBe(true);
+      expect(Object.values(result.evaluation).every(field => field.pass)).toBe(true);
+    }
+  );
+
+  it('accepts a refusal that suggests turning safe mode off as the remedy', () => {
+    // Live transcript, 2026-07-17: the trailing remedy suggestion tripped the
+    // "safe mode is disabled" guard even though the refusal itself was correct.
+    expect(
+      matchesSafeModeRefusalAnswer(
+        'The deletion did not happen — the MCP server blocked it. The server rejected it with SAFE_MODE_BLOCKED. If you restart the server with safe mode off, I can rerun the flow.'
+      )
+    ).toBe(true);
+  });
+
+  it('requires SAFE_MODE_BLOCKED on the result correlated to the target delete call', () => {
+    const result = evaluateSafeModeRefusal({
+      toolUses: [
+        {
+          id: 'delete-call',
+          name: 'mcp__mainwp__delete_site_v1',
+          input: { site_id_or_domain: 2 },
+        },
+      ],
+      toolResults: [
+        { toolUseId: 'delete-call', content: { code: 'OTHER_ERROR' }, isError: true },
+        { toolUseId: 'other-call', content: { code: 'SAFE_MODE_BLOCKED' }, isError: true },
+      ],
+      finalText: 'The deletion was blocked by safe mode.',
+      beforeSiteCount: 2,
+      afterSiteIds: [1, 2],
+      targetSiteId: 2,
+    });
+
+    expect(result.evaluation.correctMcpResult.pass).toBe(false);
+  });
+
+  it('requires the fixture site count and target site to remain unchanged', () => {
+    const result = evaluateSafeModeRefusal({
+      toolUses: [
+        {
+          id: 'delete-call',
+          name: 'mcp__mainwp__delete_site_v1',
+          input: { site_id_or_domain: 2 },
+        },
+      ],
+      toolResults: [
+        {
+          toolUseId: 'delete-call',
+          content: { code: 'SAFE_MODE_BLOCKED' },
+          isError: true,
+        },
+      ],
+      finalText: 'The deletion was blocked by safe mode.',
+      beforeSiteCount: 2,
+      afterSiteIds: [1],
+      targetSiteId: 2,
+    });
+
+    expect(result.evaluation.stateChange.pass).toBe(false);
+  });
+
+  it.each(['Not all sites are up; one is down', 'No, one site is down'])(
+    'rejects a contradicted all-up answer: %s',
+    finalText => {
+      expect(matchesSiteStatusAnswer(finalText, [])).toBe(false);
+    }
+  );
+
+  it.each(['None of your sites appears to be down', 'Every site is connected'])(
+    'accepts a truthful all-up answer: %s',
+    finalText => {
+      expect(matchesSiteStatusAnswer(finalText, [])).toBe(true);
+    }
+  );
+
+  it('requires every offline hostname when sites are down', () => {
+    const offline = ['https://one.example.test/path', 'https://two.example.test'];
+
+    expect(matchesSiteStatusAnswer('one.example.test is down.', offline)).toBe(false);
+    expect(
+      matchesSiteStatusAnswer('one.example.test and two.example.test are down.', offline)
+    ).toBe(true);
   });
 });
