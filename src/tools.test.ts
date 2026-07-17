@@ -1493,6 +1493,43 @@ describe('confirmation flow - full cycle', () => {
     );
   });
 
+  it('should reject confirmation when values nested under a __proto__ key differ from preview', async () => {
+    // JSON.parse creates __proto__ as an own property; a plain-object
+    // canonicalization target would silently drop it via the prototype setter,
+    // collapsing differing payloads onto one preview key.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, site_id: 1 }),
+      headers: new Headers(),
+    });
+
+    const previewArgs = JSON.parse(
+      '{"site_id":1,"settings":{"__proto__":{"role":"viewer"}},"confirm":true}'
+    ) as Record<string, unknown>;
+    const previewResult = await executeTool(baseConfig, 'delete_site_v1', previewArgs, mockLogger);
+    const parsed = JSON.parse(previewResult.content[0].text);
+    const token = parsed.confirmation_token;
+    expect(token).toBeDefined();
+
+    const confirmArgs = JSON.parse(
+      '{"site_id":1,"settings":{"__proto__":{"role":"admin"}},"user_confirmed":true}'
+    ) as Record<string, unknown>;
+    confirmArgs.confirmation_token = token;
+    const swapResult = await executeTool(baseConfig, 'delete_site_v1', confirmArgs, mockLogger);
+
+    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.isError).toBe(true);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - arguments do not match preview',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
   it('should complete two-phase confirmation flow', async () => {
     // Step 1: Preview
     mockFetch.mockResolvedValueOnce({
