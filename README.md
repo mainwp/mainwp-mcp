@@ -22,7 +22,7 @@ _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
-### How It Works
+## How It Works
 
 MainWP MCP is a layered system, and each layer has a distinct job:
 
@@ -33,7 +33,7 @@ MainWP MCP is a layered system, and each layer has a distinct job:
 
 The AI stays flexible where flexibility helps. The Dashboard stays deterministic where consequences live.
 
-### What You Can Do
+## What You Can Do
 
 - **Site Management**: List sites, check connection status, sync data, add or remove child sites
 - **Update Management**: See pending updates across all sites, apply core/plugin/theme updates

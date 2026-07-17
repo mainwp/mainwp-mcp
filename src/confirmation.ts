@@ -91,7 +91,10 @@ function canonicalize(value: unknown): unknown {
   }
   if (value !== null && typeof value === 'object') {
     const source = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
+    // Null prototype so hostile keys like __proto__ become own enumerable
+    // properties instead of hitting Object.prototype accessors and vanishing
+    // from the serialized key.
+    const sorted: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(source).sort()) {
       sorted[key] = canonicalize(source[key]);
     }
