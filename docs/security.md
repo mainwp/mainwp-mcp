@@ -117,7 +117,7 @@ Some abilities require confirmation but don't support `dry_run`, so there is not
 
 Example flow:
 
-```
+```text
 You: Delete the "staging" tag
 
 AI: [Calls delete_tag_v1(tag_id: 5, confirm: true)]

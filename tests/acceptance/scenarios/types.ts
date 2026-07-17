@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { AcceptanceClient } from '../lib/client.js';
 import type { AcceptanceCredentials } from '../lib/env.js';
 import type { PackedPackage } from '../lib/pack.js';
+import { BoundedPagination } from '../lib/pagination.js';
 import type { IndependentVerifier, VerifiedPluginResponse, VerifiedSite } from '../lib/verify.js';
 
 export type AcceptanceTarget = 'live' | 'fixture';
@@ -129,12 +130,15 @@ export interface ScenarioResult {
 export async function mcpListAllSites(client: AcceptanceClient): Promise<VerifiedSite[]> {
   const sites: VerifiedSite[] = [];
   let page = 1;
+  const pagination = new BoundedPagination('MCP list_sites_v1');
   for (;;) {
     const { result, data } = await client.callToolJson('list_sites_v1', { page, per_page: 100 });
     if (result.isError) throw new Error(`list_sites_v1 failed: ${JSON.stringify(data)}`);
     const response = data as { items: VerifiedSite[]; total: number };
     sites.push(...response.items);
-    if (sites.length >= response.total || response.items.length === 0) return sites;
+    const hasMore = sites.length < response.total && response.items.length > 0;
+    pagination.record(page, response.items, hasMore);
+    if (!hasMore) return sites;
     page += 1;
   }
 }
@@ -142,9 +146,15 @@ export async function mcpListAllSites(client: AcceptanceClient): Promise<Verifie
 export async function findSiteWithPlugins(
   verifier: IndependentVerifier
 ): Promise<{ site: VerifiedSite; plugins: VerifiedPluginResponse }> {
-  for (const site of await verifier.listSites()) {
-    const plugins = await verifier.getSitePlugins(site.id);
-    if (plugins.plugins.length > 0) return { site, plugins };
+  for (const site of (await verifier.listSites()).filter(
+    candidate => candidate.status === 'connected'
+  )) {
+    try {
+      const plugins = await verifier.getSitePlugins(site.id);
+      if (plugins.plugins.length > 0) return { site, plugins };
+    } catch {
+      // A later connected site may still be reachable and suitable.
+    }
   }
   throw new Error('No site with plugins was available for the scenario');
 }
@@ -156,12 +166,16 @@ export async function findHelloDolly(
   const safeSlugs = [preferredSlug, 'hello.php', 'hello-dolly/hello.php'].filter(
     (value): value is string => Boolean(value)
   );
-  const inventories = await Promise.all(
-    (await verifier.listSites()).map(async site => ({
-      site,
-      plugins: (await verifier.getSitePlugins(site.id)).plugins,
-    }))
-  );
+  const inventories: Array<{ site: VerifiedSite; plugins: VerifiedPluginResponse['plugins'] }> = [];
+  for (const site of (await verifier.listSites()).filter(
+    candidate => candidate.status === 'connected'
+  )) {
+    try {
+      inventories.push({ site, plugins: (await verifier.getSitePlugins(site.id)).plugins });
+    } catch {
+      // Continue to the next connected site when one inventory is unavailable.
+    }
+  }
   for (const slug of safeSlugs) {
     for (const inventory of inventories) {
       const plugin = inventory.plugins.find(candidate => candidate.slug === slug);

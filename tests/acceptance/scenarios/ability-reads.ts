@@ -1,4 +1,5 @@
 import type { AcceptanceClient } from '../lib/client.js';
+import { BoundedPagination } from '../lib/pagination.js';
 import type { IndependentVerifier, VerifiedSite } from '../lib/verify.js';
 import type {
   ScenarioDefinition,
@@ -118,13 +119,16 @@ export async function verifierListAll<T>(
   abilityName: string
 ): Promise<T[]> {
   const items: T[] = [];
+  const pagination = new BoundedPagination(`Independent verifier ${abilityName}`);
   for (let page = 1; ; page += 1) {
     const response = (await verifier.execute(abilityName, {
       page,
       per_page: 100,
     })) as PaginatedResponse<T>;
     items.push(...response.items);
-    if (items.length >= response.total || response.items.length === 0) return items;
+    const hasMore = items.length < response.total && response.items.length > 0;
+    pagination.record(page, response.items, hasMore);
+    if (!hasMore) return items;
   }
 }
 
@@ -133,12 +137,15 @@ async function mcpListAll<T>(
   toolName: string
 ): Promise<{ items: T[]; isError: boolean }> {
   const items: T[] = [];
+  const pagination = new BoundedPagination(`MCP ${toolName}`);
   for (let page = 1; ; page += 1) {
     const { result, data } = await client.callToolJson(toolName, { page, per_page: 100 });
     if (result.isError) return { items, isError: true };
     const response = data as PaginatedResponse<T>;
     items.push(...response.items);
-    if (items.length >= response.total || response.items.length === 0) {
+    const hasMore = items.length < response.total && response.items.length > 0;
+    pagination.record(page, response.items, hasMore);
+    if (!hasMore) {
       return { items, isError: false };
     }
   }
@@ -150,6 +157,7 @@ async function verifierListUpdates(
 ): Promise<UpdatesSnapshot> {
   const updates: Update[] = [];
   const errors: unknown[] = [];
+  const pagination = new BoundedPagination('Independent verifier list-updates-v1');
   for (let page = 1; ; page += 1) {
     const response = (await verifier.execute('mainwp/list-updates-v1', {
       site_ids_or_domains: [siteId],
@@ -158,7 +166,9 @@ async function verifierListUpdates(
     })) as UpdatesResponse;
     updates.push(...response.updates);
     errors.push(...(response.errors ?? []));
-    if (updates.length >= response.total || response.updates.length === 0) {
+    const hasMore = updates.length < response.total && response.updates.length > 0;
+    pagination.record(page, response.updates, hasMore);
+    if (!hasMore) {
       return { updates, errors };
     }
   }
@@ -170,6 +180,7 @@ async function mcpListUpdates(
 ): Promise<UpdatesSnapshot & { isError: boolean }> {
   const updates: Update[] = [];
   const errors: unknown[] = [];
+  const pagination = new BoundedPagination('MCP list_updates_v1');
   for (let page = 1; ; page += 1) {
     const { result, data } = await client.callToolJson('list_updates_v1', {
       site_ids_or_domains: [siteId],
@@ -180,7 +191,9 @@ async function mcpListUpdates(
     const response = data as UpdatesResponse;
     updates.push(...response.updates);
     errors.push(...(response.errors ?? []));
-    if (updates.length >= response.total || response.updates.length === 0) {
+    const hasMore = updates.length < response.total && response.updates.length > 0;
+    pagination.record(page, response.updates, hasMore);
+    if (!hasMore) {
       return { updates, errors, isError: false };
     }
   }

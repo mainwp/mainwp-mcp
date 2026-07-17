@@ -50,6 +50,100 @@ function hostnameOf(url: string): string {
   }
 }
 
+export function findNestedObjects(value: unknown): Record<string, unknown>[] {
+  if (typeof value === 'string') {
+    try {
+      return findNestedObjects(JSON.parse(value) as unknown);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(value)) return value.flatMap(findNestedObjects);
+  if (!value || typeof value !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  return [record, ...Object.values(record).flatMap(findNestedObjects)];
+}
+
+function normalizedSiteIdentifiers(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  const site = value as Record<string, unknown>;
+  return [site.url, site.site_url, site.domain]
+    .filter((identifier): identifier is string => typeof identifier === 'string')
+    .flatMap(identifier => [identifier, hostnameOf(identifier)])
+    .map(identifier => identifier.replace(/\/+$/, '').toLowerCase());
+}
+
+/**
+ * True when an error result names the upstream mainwp_site_not_found code.
+ * The server surfaces the upstream code inside the sanitized error message
+ * (the structured `code` field carries the numeric JSON-RPC code, -32002),
+ * so match the string anywhere in an error result rather than requiring a
+ * structured field the wire shape does not have.
+ */
+export function errorResultNamesSiteNotFound(results: RecordedAgentToolResult[]): boolean {
+  return results.some(
+    result =>
+      result.isError === true && JSON.stringify(result.content).includes('mainwp_site_not_found')
+  );
+}
+
+/**
+ * True when a dashboard-side scoped search for the probe returned zero
+ * matches. The search term must be a meaningful fragment of the probe (5+
+ * characters) so an unrelated or empty search cannot count as proof, and the
+ * correlated result must report an empty page with total 0 — the server
+ * itself asserting no site matches.
+ */
+export function scopedSearchProvesSiteAbsent(
+  uses: RecordedAgentToolUse[],
+  resultsForUse: (use: RecordedAgentToolUse) => RecordedAgentToolResult[],
+  absentSiteQuery: string
+): boolean {
+  const probe = absentSiteQuery.toLowerCase();
+  return uses.some(use => {
+    if (!use.input || typeof use.input !== 'object') return false;
+    const search = (use.input as Record<string, unknown>).search;
+    if (typeof search !== 'string') return false;
+    const term = search.trim().toLowerCase();
+    if (term.length < 5 || !probe.includes(term)) return false;
+    return resultsForUse(use).some(result =>
+      findNestedObjects(result.content).some(
+        record =>
+          result.isError !== true &&
+          Array.isArray(record.items) &&
+          record.items.length === 0 &&
+          record.total === 0
+      )
+    );
+  });
+}
+
+export function inventoryProvesSiteAbsent(
+  results: RecordedAgentToolResult[],
+  knownSiteUrls: string[],
+  absentSiteQuery: string
+): boolean {
+  if (results.some(result => result.isError === true)) return false;
+  const pages = results
+    .flatMap(result => findNestedObjects(result.content))
+    .filter(
+      (record): record is Record<string, unknown> & { items: unknown[]; total: number } =>
+        Array.isArray(record.items) &&
+        typeof record.total === 'number' &&
+        Number.isInteger(record.total) &&
+        record.total >= 0
+    );
+  if (pages.length === 0 || !pages.some(page => page.total === knownSiteUrls.length)) return false;
+
+  const inventory = new Set(pages.flatMap(page => page.items.flatMap(normalizedSiteIdentifiers)));
+  const knownSitesCovered = knownSiteUrls.every(url =>
+    [url, hostnameOf(url)].some(identifier =>
+      inventory.has(identifier.replace(/\/+$/, '').toLowerCase())
+    )
+  );
+  return knownSitesCovered && !inventory.has(absentSiteQuery.toLowerCase());
+}
+
 /**
  * Matches an answer that says the requested site or domain is absent from the
  * dashboard. This deliberately does not treat a missing plugin list as a
@@ -164,7 +258,7 @@ export function evaluateSafeModeRefusal({
   );
   const blockedCall = targetDeleteUses.find(toolUse => {
     const result = toolUse.id ? resultByCallId.get(toolUse.id) : undefined;
-    return result ? containsSafeModeBlocked(result.content) : false;
+    return result?.isError === true && containsSafeModeBlocked(result.content);
   });
   const stateUnchanged =
     afterSiteIds.length === beforeSiteCount && afterSiteIds.includes(targetSiteId);

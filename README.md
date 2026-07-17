@@ -528,13 +528,13 @@ sequenceDiagram
     participant MainWP
 
     User->>AI: Delete site 3
-    AI->>Server: delete_site_v1(site_id: 3, confirm: true)
+    AI->>Server: delete_site_v1(site_id_or_domain: 3, confirm: true)
     Server->>MainWP: dry_run preview request
     MainWP-->>Server: site details
     Server-->>AI: CONFIRMATION_REQUIRED<br/>(preview + confirmation_token)
     AI->>User: Shows: "Example Site (https://example.com)<br/>Confirm deletion?"
     User->>AI: Yes, proceed
-    AI->>Server: delete_site_v1(site_id: 3, user_confirmed: true,<br/>confirmation_token: "...")
+    AI->>Server: delete_site_v1(site_id_or_domain: 3, user_confirmed: true,<br/>confirmation_token: "...")
     Server->>MainWP: execute deletion
     MainWP-->>Server: success
     Server-->>AI: deletion complete

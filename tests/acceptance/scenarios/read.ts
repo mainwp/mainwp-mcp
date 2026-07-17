@@ -174,7 +174,9 @@ export const notFoundInput: ScenarioDefinition = {
   kind: 'read',
   targets: ['live', 'fixture'],
   async run(ctx) {
-    const result = await ctx.client.callTool('get_site_v1', { site_id_or_domain: 99999999 });
+    const result = await ctx.client.callTool('get_site_v1', {
+      site_id_or_domain: 'nonexistent-acceptance-probe.invalid',
+    });
     ctx.assert.equal('not-found returns isError', result.isError, true);
     const data = parseToolJson(result) as { error?: { code?: number } };
     ctx.assert.truthy('not-found response is structured JSON', data && typeof data === 'object');

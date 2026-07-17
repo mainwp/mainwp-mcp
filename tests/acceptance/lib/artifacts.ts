@@ -47,6 +47,7 @@ export class Artifacts {
   readonly runDir: string;
   readonly manifest: AcceptanceManifest;
   private readonly monotonicStart = performance.now();
+  private readonly serverStderrBuffers = new Map<string, string>();
 
   constructor(
     readonly repoRoot: string,
@@ -94,7 +95,19 @@ export class Artifacts {
 
   appendServerStderr(scenario: string, value: string): void {
     const filename = `server-${scenario.replace(/[^a-z0-9_-]/gi, '_')}.stderr.log`;
-    fs.appendFileSync(path.join(this.runDir, filename), this.redactor.redact(value), 'utf8');
+    const buffered = `${this.serverStderrBuffers.get(filename) ?? ''}${value}`;
+    const { output, remainder } = this.redactor.redactStream(buffered);
+    this.serverStderrBuffers.set(filename, remainder);
+    if (output) fs.appendFileSync(path.join(this.runDir, filename), output, 'utf8');
+  }
+
+  flushServerStderr(scenario: string): void {
+    const filename = `server-${scenario.replace(/[^a-z0-9_-]/gi, '_')}.stderr.log`;
+    const remainder = this.serverStderrBuffers.get(filename);
+    if (remainder) {
+      fs.appendFileSync(path.join(this.runDir, filename), this.redactor.redact(remainder), 'utf8');
+    }
+    this.serverStderrBuffers.delete(filename);
   }
 
   recordCommand(record: CommandRecord): void {

@@ -29,7 +29,10 @@ async function setPluginActive(
     // If the Dashboard still gates this tool, finish the flow instead of
     // leaving the toggle half-done (matters for cleanup reliability).
     const data = parseToolJson(result) as { status?: string; confirmation_token?: string } | null;
-    if (data && data.status === 'CONFIRMATION_REQUIRED' && data.confirmation_token) {
+    if (data?.status === 'CONFIRMATION_REQUIRED') {
+      if (!data.confirmation_token) {
+        throw new Error(`${tool} required confirmation but issued no token`);
+      }
       const confirmed = await ctx.client.callTool(tool, {
         ...args,
         user_confirmed: true,
@@ -69,14 +72,26 @@ export const syncSite: ScenarioDefinition = {
   kind: 'write',
   targets: ['live'],
   async run(ctx) {
-    const sites = await ctx.verifier.listSites();
-    if (sites.length === 0) throw new Error('No site was available to sync');
-    const before = await ctx.verifier.getSite(sites[0].id);
+    const sites = (await ctx.verifier.listSites()).filter(site => site.status === 'connected');
+    let before;
+    let siteId: number | undefined;
+    for (const site of sites) {
+      try {
+        before = await ctx.verifier.getSite(site.id);
+        siteId = site.id;
+        break;
+      } catch {
+        // Continue until a connected site also responds to a direct read.
+      }
+    }
+    if (!before || siteId === undefined) {
+      throw new Error('No connected, reachable site was available to sync');
+    }
     const result = await ctx.client.callTool('sync_sites_v1', {
-      site_ids_or_domains: [sites[0].id],
+      site_ids_or_domains: [siteId],
     });
     ctx.assert.equal('sync_sites_v1 succeeds', result.isError, undefined);
-    const after = await waitForSyncAdvance(ctx, sites[0].id, before.last_sync);
+    const after = await waitForSyncAdvance(ctx, siteId, before.last_sync);
     ctx.assert.truthy('last_sync advanced', after && after !== before.last_sync);
   },
 };

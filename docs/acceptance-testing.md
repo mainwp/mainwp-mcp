@@ -45,11 +45,12 @@ Live credentials are resolved in this order:
 
 The env file maps `LLM_DASH_URL` to the Dashboard URL and reads `MAINWP_USER` and `MAINWP_APP_PASSWORD`. Values stay in memory. The harness never writes real credentials to a consumer project, settings file, command record, transcript, or result artifact.
 
-Live server and verifier requests accept the testbed's self-signed certificate. The server receives `MAINWP_SKIP_SSL_VERIFY=true`; the verifier uses a request-scoped undici dispatcher with certificate validation disabled.
+Live server and verifier requests verify TLS certificates by default. The self-signed local network testbed requires the explicit `MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY=true` opt-in; that setting passes `MAINWP_SKIP_SSL_VERIFY=true` to the server and disables certificate validation only for the verifier's request-scoped undici dispatcher.
 
 Additional controls:
 
-- `MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS`: comma-separated exact hostnames allowed for `--writes`, in addition to `localhost`, `127.0.0.1`, and hosts ending in `.local`
+- `MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY`: set to exactly `true` only for a self-signed local testbed; TLS verification remains enabled otherwise
+- `MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS`: comma-separated exact hostnames allowed for `--writes`, in addition to loopback hosts and the Dashboard host auto-resolved from the operator's acceptance env file; every other host, including `.local` hosts, must be listed
 - `MAINWP_MCP_ACCEPTANCE_TOGGLE_PLUGIN`: explicit plugin slug eligible for the reversible plugin scenario and preferred by the `agent-plugin-active` probe; the built-in safe slugs are `hello.php` and `hello-dolly/hello.php`
 
 ## Commands

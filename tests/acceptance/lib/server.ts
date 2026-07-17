@@ -103,39 +103,70 @@ export async function launchServer(options: ServerLaunchOptions): Promise<Server
   const transport = new RecordingTransport(inner, options.scenario, options.artifacts);
   const rawClient = new Client({ name: 'mainwp-acceptance-harness', version: '1.0.0' });
 
+  const closeResources = async (): Promise<void> => {
+    let closeError: unknown;
+    try {
+      await rawClient.close();
+    } catch (error) {
+      closeError = error;
+    }
+    try {
+      await transport.close();
+    } catch (error) {
+      closeError ??= error;
+    }
+    if (closeError) throw closeError;
+  };
+
   try {
     await rawClient.connect(transport);
   } catch (error) {
-    options.runner.record({
-      argv: [process.execPath, options.entry],
-      cwd,
-      exitCode: 1,
-      durationMs: Math.round(performance.now() - commandStarted),
-      stdoutTail: '[MCP protocol stream; see events.jsonl]',
-      stderrTail: stderr.slice(-12_000),
-    });
-    fs.rmSync(isolationRoot, { recursive: true, force: true });
-    throw error;
-  }
-
-  let closed = false;
-  return {
-    client: new AcceptanceClient(rawClient),
-    cwd,
-    home,
-    close: async () => {
-      if (closed) return;
-      closed = true;
-      await rawClient.close();
+    try {
+      await closeResources();
+    } catch {
+      // Preserve the connection failure; both cleanup paths were attempted.
+    } finally {
+      options.artifacts.flushServerStderr(options.scenario);
       options.runner.record({
         argv: [process.execPath, options.entry],
         cwd,
-        exitCode: 0,
+        exitCode: 1,
         durationMs: Math.round(performance.now() - commandStarted),
         stdoutTail: '[MCP protocol stream; see events.jsonl]',
         stderrTail: stderr.slice(-12_000),
       });
       fs.rmSync(isolationRoot, { recursive: true, force: true });
+    }
+    throw error;
+  }
+
+  let closePromise: Promise<void> | undefined;
+  return {
+    client: new AcceptanceClient(rawClient),
+    cwd,
+    home,
+    close: async () => {
+      closePromise ??= (async () => {
+        let closeFailed = false;
+        try {
+          await closeResources();
+        } catch (error) {
+          closeFailed = true;
+          throw error;
+        } finally {
+          options.artifacts.flushServerStderr(options.scenario);
+          options.runner.record({
+            argv: [process.execPath, options.entry],
+            cwd,
+            exitCode: closeFailed ? 1 : 0,
+            durationMs: Math.round(performance.now() - commandStarted),
+            stdoutTail: '[MCP protocol stream; see events.jsonl]',
+            stderrTail: stderr.slice(-12_000),
+          });
+          fs.rmSync(isolationRoot, { recursive: true, force: true });
+        }
+      })();
+      await closePromise;
     },
   };
 }

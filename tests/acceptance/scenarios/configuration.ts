@@ -1,5 +1,14 @@
 import type { ScenarioDefinition } from './types.js';
 
+const REQUIRED_PACK_CHECKS = [
+  'requiredFilesPresent',
+  'forbiddenFilesAbsent',
+  'installedEntryPresent',
+  'mainwpBinPresent',
+  'installedBinStartsServer',
+  'installedVersionMatches',
+] as const;
+
 export const settingsFileConfig: ScenarioDefinition = {
   id: 'settings-file-config',
   purpose:
@@ -41,8 +50,9 @@ export const packedIntegrity: ScenarioDefinition = {
       : { status: 'skipped', reason: 'packed-integrity applies only to --mode packed.' },
   async run(ctx) {
     if (!ctx.packedPackage) throw new Error('Packed package metadata was unavailable');
-    for (const [name, value] of Object.entries(ctx.packedPackage.checks)) {
-      ctx.assert.equal(name, value, true);
+    for (const name of REQUIRED_PACK_CHECKS) {
+      ctx.assert.equal(`${name} check is present`, name in ctx.packedPackage.checks, true);
+      ctx.assert.equal(name, ctx.packedPackage.checks[name], true);
     }
     ctx.assert.truthy('tarball sha256 recorded', /^[a-f0-9]{64}$/.test(ctx.packedPackage.sha256));
     ctx.assert.truthy('npm integrity recorded', ctx.packedPackage.integrity.startsWith('sha512-'));

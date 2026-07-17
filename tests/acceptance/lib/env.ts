@@ -8,6 +8,10 @@ export interface AcceptanceCredentials {
   appPassword: string;
 }
 
+export interface ResolvedAcceptanceCredentials extends AcceptanceCredentials {
+  autoApprovedWriteHost?: string;
+}
+
 function stripInlineComment(value: string): string {
   const match = value.match(/^(.*?)(?:\s+#.*)?$/);
   return match?.[1]?.trim() ?? value.trim();
@@ -58,7 +62,7 @@ function expandHome(filePath: string): string {
 
 export function resolveAcceptanceCredentials(
   env: NodeJS.ProcessEnv = process.env
-): AcceptanceCredentials {
+): ResolvedAcceptanceCredentials {
   const fromEnvironment = {
     dashboardUrl: env.MAINWP_URL ?? '',
     username: env.MAINWP_USER ?? '',
@@ -80,5 +84,9 @@ export function resolveAcceptanceCredentials(
       { cause: error }
     );
   }
-  return parseAcceptanceEnv(content);
+  const credentials = parseAcceptanceEnv(content);
+  return {
+    ...credentials,
+    autoApprovedWriteHost: new URL(credentials.dashboardUrl).hostname,
+  };
 }

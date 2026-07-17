@@ -10,7 +10,11 @@ import {
   startFixtureDashboard,
   type FixtureDashboard,
 } from './fixture-dashboard.js';
-import { resolveAcceptanceCredentials, type AcceptanceCredentials } from './lib/env.js';
+import {
+  resolveAcceptanceCredentials,
+  type AcceptanceCredentials,
+  type ResolvedAcceptanceCredentials,
+} from './lib/env.js';
 import { getWriteGuardReason } from './lib/guards.js';
 import { packAndInstall, type PackedPackage } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
@@ -116,12 +120,15 @@ function baseServerEnv(
   target: AcceptanceTarget,
   credentials: AcceptanceCredentials
 ): Record<string, string> {
+  const skipSslVerify = process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true';
   return {
     MAINWP_URL: credentials.dashboardUrl,
     MAINWP_USER: credentials.username,
     MAINWP_APP_PASSWORD: credentials.appPassword,
     MAINWP_RATE_LIMIT: '0',
-    ...(target === 'fixture' ? { MAINWP_ALLOW_HTTP: 'true' } : { MAINWP_SKIP_SSL_VERIFY: 'true' }),
+    ...(target === 'fixture'
+      ? { MAINWP_ALLOW_HTTP: 'true' }
+      : { MAINWP_SKIP_SSL_VERIFY: skipSslVerify ? 'true' : 'false' }),
   };
 }
 
@@ -161,7 +168,7 @@ function summaryMarkdown(run: RunResults): string {
 async function runScenario(
   definition: (typeof scenarios)[number],
   options: CliOptions,
-  credentials: AcceptanceCredentials,
+  credentials: ResolvedAcceptanceCredentials,
   verifier: IndependentVerifier,
   entry: string,
   packageVersion: string,
@@ -189,7 +196,8 @@ async function runScenario(
       credentials.dashboardUrl,
       options.writes,
       process.env.MAINWP_MCP_ACCEPTANCE_WRITE_HOSTS,
-      options.target
+      options.target,
+      credentials.autoApprovedWriteHost
     );
     if (reason) {
       return { ...base, status: 'skipped', durationMs: 0, assertions: [], reason };
@@ -310,7 +318,7 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
     options.scenarioIds.length > 0 ? options.scenarioIds.map(id => byId.get(id)!) : scenarios;
 
   let fixture: FixtureDashboard | undefined;
-  let resolvedCredentials: AcceptanceCredentials;
+  let resolvedCredentials: ResolvedAcceptanceCredentials;
   if (options.target === 'fixture') {
     fixture = await startFixtureDashboard();
     resolvedCredentials = {
@@ -340,7 +348,10 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
       keepConsumer: options.keepConsumer,
     }
   );
-  const verifier = new IndependentVerifier(resolvedCredentials, options.target === 'live');
+  const verifier = new IndependentVerifier(
+    resolvedCredentials,
+    options.target === 'live' && process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true'
+  );
   let packedPackage: PackedPackage | null = null;
   let runResults: RunResults | undefined;
 
@@ -396,7 +407,11 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
   if (options.keepConsumer && packedPackage) {
     process.stdout.write(`Consumer preserved: ${packedPackage.consumerDir}\n`);
   }
-  return runResults.totals.failed > 0 ? 1 : 0;
+  return acceptanceExitCode(runResults.totals);
+}
+
+export function acceptanceExitCode(totals: RunResults['totals']): number {
+  return totals.failed > 0 || totals.unverified > 0 ? 1 : 0;
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
