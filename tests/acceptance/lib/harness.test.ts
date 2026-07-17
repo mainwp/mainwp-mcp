@@ -7,6 +7,9 @@ import {
 import {
   answerAvoidsKnownPluginNames,
   evaluateSafeModeRefusal,
+  errorResultNamesSiteNotFound,
+  inventoryProvesSiteAbsent,
+  scopedSearchProvesSiteAbsent,
   matchesNotFoundSiteAnswer,
   matchesSafeModeRefusalAnswer,
   matchesSiteStatusAnswer,
@@ -17,9 +20,12 @@ import {
   getFixtureFaultMode,
 } from '../fixture-dashboard.js';
 import { parseAcceptanceEnv } from './env.js';
+import { CommandRunner } from './commands.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
+import { BoundedPagination } from './pagination.js';
 import { IndependentVerifier, serializeToPhpQueryString } from './verify.js';
+import { acceptanceExitCode } from '../run.js';
 import { scenarios } from '../scenarios/index.js';
 import { AssertionRecorder } from '../scenarios/types.js';
 
@@ -48,28 +54,36 @@ describe('acceptance harness primitives', () => {
   });
 
   it('parses testbed environment files without expanding or persisting values', () => {
+    const environmentBefore = { ...process.env };
     const parsed = parseAcceptanceEnv(`
 # Network testbed
 export LLM_DASH_URL="https://dashboard.example.test/base" # dashboard
 MAINWP_USER='acceptance-user' # principal
-MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
+MAINWP_APP_PASSWORD='abcd $HOME ijkl' # application password
 `);
 
     expect(parsed).toEqual({
       dashboardUrl: 'https://dashboard.example.test/base',
       username: 'acceptance-user',
-      appPassword: 'abcd efgh ijkl',
+      appPassword: 'abcd $HOME ijkl',
     });
+    expect(process.env).toEqual(environmentBefore);
   });
 
   it.each([
     ['localhost', true],
     ['127.0.0.1', true],
-    ['dashboard.local', true],
+    ['127.0.0.2', true],
+    ['::1', true],
+    ['dashboard.local', false],
     ['approved.example', true],
     ['production.example', false],
   ])('evaluates write host %s against the built-in and explicit allowlists', (host, expected) => {
     expect(isWriteHostAllowed(host, ['approved.example'])).toBe(expected);
+  });
+
+  it('allows the dashboard host auto-resolved from the operator env file', () => {
+    expect(isWriteHostAllowed('dashboard.local', [], 'dashboard.local')).toBe(true);
   });
 
   it('allows fixture-only write scenarios without --writes', () => {
@@ -187,6 +201,45 @@ MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
     ]);
   });
 
+  it('fails unverified totals while allowing legitimately skipped scenarios', () => {
+    expect(acceptanceExitCode({ passed: 0, failed: 0, skipped: 1, unverified: 0 })).toBe(0);
+    expect(acceptanceExitCode({ passed: 0, failed: 0, skipped: 0, unverified: 1 })).toBe(1);
+  });
+
+  it('redacts a credential split across stream chunks before flushing', () => {
+    const redactor = new Redactor({ appPassword: 'split-secret-value' });
+    let buffered = '';
+    let output = '';
+    for (const chunk of ['before split-', 'secret-', 'value after']) {
+      const streamed = redactor.redactStream(`${buffered}${chunk}`);
+      output += streamed.output;
+      buffered = streamed.remainder;
+    }
+    output += redactor.redact(buffered);
+
+    expect(output).toBe('before <redacted:app-password> after');
+    expect(output).not.toContain('split-secret-value');
+  });
+
+  it('records and terminates a command that exceeds its deadline', async () => {
+    const runner = new CommandRunner();
+    const result = await runner.run(
+      [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+      process.cwd(),
+      { allowFailure: true, timeoutMs: 50 }
+    );
+
+    expect(result).toMatchObject({ exitCode: 124, timedOut: true });
+    expect(runner.records[0]).toMatchObject({ exitCode: 124, timedOut: true });
+  });
+
+  it('rejects repeated non-progressing pagination', () => {
+    const pagination = new BoundedPagination('fixture pagination');
+    pagination.record(1, [{ id: 1 }], true);
+
+    expect(() => pagination.record(2, [{ id: 1 }], true)).toThrow(/repeated page/);
+  });
+
   it('registers broadened read, completion, and transport-limit acceptance scenarios', () => {
     const ids = scenarios.map(scenario => scenario.id);
 
@@ -227,6 +280,83 @@ MAINWP_APP_PASSWORD=abcd efgh ijkl # application password
 });
 
 describe('agent acceptance matchers', () => {
+  it('requires a complete inventory before using it as site-absence proof', () => {
+    const knownSiteUrls = ['https://one.example.test', 'https://two.example.test'];
+    const incomplete = [
+      {
+        content: JSON.stringify({
+          items: [{ url: knownSiteUrls[0] }],
+          total: knownSiteUrls.length,
+        }),
+      },
+    ];
+    const complete = [
+      {
+        content: JSON.stringify({
+          items: knownSiteUrls.map(url => ({ url })),
+          total: knownSiteUrls.length,
+        }),
+      },
+    ];
+
+    expect(
+      inventoryProvesSiteAbsent(incomplete, knownSiteUrls, 'nonexistent-acceptance-probe.invalid')
+    ).toBe(false);
+    expect(
+      inventoryProvesSiteAbsent(complete, knownSiteUrls, 'nonexistent-acceptance-probe.invalid')
+    ).toBe(true);
+  });
+
+  it('accepts an empty dashboard-side scoped search as site-absence proof', () => {
+    // Pinned from a live transcript: the model searched a fragment of the
+    // probe hostname and the server reported zero matches.
+    const use = {
+      id: 'search-call',
+      name: 'mcp__mainwp__list_sites_v1',
+      input: { search: 'nonexistent-acceptance-probe' },
+    };
+    const emptyPage = [{ content: '{"items":[],"page":1,"per_page":20,"total":0}' }];
+    const probe = 'nonexistent-acceptance-probe.invalid';
+
+    expect(scopedSearchProvesSiteAbsent([use], () => emptyPage, probe)).toBe(true);
+    // A short or unrelated search term is not correlated proof.
+    expect(
+      scopedSearchProvesSiteAbsent([{ ...use, input: { search: 'abc' } }], () => emptyPage, probe)
+    ).toBe(false);
+    expect(
+      scopedSearchProvesSiteAbsent(
+        [{ ...use, input: { search: 'some-other-site' } }],
+        () => emptyPage,
+        probe
+      )
+    ).toBe(false);
+    // A populated result is not proof of absence.
+    expect(
+      scopedSearchProvesSiteAbsent(
+        [use],
+        () => [{ content: '{"items":[{"id":1}],"total":1}' }],
+        probe
+      )
+    ).toBe(false);
+  });
+
+  it('recognizes the not-found error code embedded in a sanitized error message', () => {
+    // Wire shape pinned from a live transcript: the structured code field is
+    // the numeric JSON-RPC code; the upstream ability code appears only in
+    // the message text.
+    const liveShape = [
+      {
+        isError: true,
+        content:
+          '{"error":{"code":-32002,"message":"Ability execution failed: mainwp_site_not_found - No site found matching \\"nonexistent-acceptance-probe.invalid\\"."}}',
+      },
+    ];
+    expect(errorResultNamesSiteNotFound(liveShape)).toBe(true);
+    // A successful result mentioning the code as data must not count.
+    const successShape = [{ content: '{"note":"docs mention mainwp_site_not_found"}' }];
+    expect(errorResultNamesSiteNotFound(successShape)).toBe(false);
+  });
+
   it('rejects a plugin-list failure when the site itself exists', () => {
     expect(matchesNotFoundSiteAnswer('The site exists, but its plugin list was not found')).toBe(
       false
@@ -392,6 +522,27 @@ describe('agent acceptance matchers', () => {
       toolResults: [
         { toolUseId: 'delete-call', content: { code: 'OTHER_ERROR' }, isError: true },
         { toolUseId: 'other-call', content: { code: 'SAFE_MODE_BLOCKED' }, isError: true },
+      ],
+      finalText: 'The deletion was blocked by safe mode.',
+      beforeSiteCount: 2,
+      afterSiteIds: [1, 2],
+      targetSiteId: 2,
+    });
+
+    expect(result.evaluation.correctMcpResult.pass).toBe(false);
+  });
+
+  it('rejects SAFE_MODE_BLOCKED when the correlated result is not classified as an error', () => {
+    const result = evaluateSafeModeRefusal({
+      toolUses: [
+        {
+          id: 'delete-call',
+          name: 'mcp__mainwp__delete_site_v1',
+          input: { site_id_or_domain: 2 },
+        },
+      ],
+      toolResults: [
+        { toolUseId: 'delete-call', content: { code: 'SAFE_MODE_BLOCKED' }, isError: false },
       ],
       finalText: 'The deletion was blocked by safe mode.',
       beforeSiteCount: 2,

@@ -7,6 +7,7 @@ export interface CommandRecord {
   durationMs: number;
   stdoutTail: string;
   stderrTail: string;
+  timedOut?: boolean;
 }
 
 export interface CommandResult extends CommandRecord {
@@ -38,7 +39,7 @@ export class CommandRunner {
   async run(
     argv: string[],
     cwd: string,
-    options: { env?: NodeJS.ProcessEnv; allowFailure?: boolean } = {}
+    options: { env?: NodeJS.ProcessEnv; allowFailure?: boolean; timeoutMs?: number } = {}
   ): Promise<CommandResult> {
     const started = performance.now();
     const child = spawn(argv[0], argv.slice(1), {
@@ -52,12 +53,30 @@ export class CommandRunner {
     child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
     child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
 
-    const exitCode = await new Promise<number>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', code => resolve(code ?? 1));
-    });
+    let timedOut = false;
+    let spawnError: Error | undefined;
+    const timeoutMs = options.timeoutMs ?? 300_000;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    const exitCode = await new Promise<number>(resolve => {
+      child.once('error', error => {
+        // A spawn failure never emits 'close', so resolve here or hang forever.
+        spawnError = error;
+        resolve(1);
+      });
+      child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
+    }).finally(() => clearTimeout(timeout));
     const stdoutText = Buffer.concat(stdout).toString('utf8');
-    const stderrText = Buffer.concat(stderr).toString('utf8');
+    const capturedStderr = Buffer.concat(stderr).toString('utf8');
+    const stderrText = [
+      capturedStderr,
+      ...(timedOut ? [`Command timed out after ${timeoutMs}ms`] : []),
+      ...(spawnError ? [spawnError.message] : []),
+    ]
+      .filter(Boolean)
+      .join('\n');
     const result: CommandResult = {
       argv,
       cwd,
@@ -67,6 +86,7 @@ export class CommandRunner {
       stderr: stderrText,
       stdoutTail: tail(stdoutText),
       stderrTail: tail(stderrText),
+      ...(timedOut ? { timedOut: true } : {}),
     };
     const record: CommandRecord = {
       argv: result.argv,
@@ -75,6 +95,7 @@ export class CommandRunner {
       durationMs: result.durationMs,
       stdoutTail: result.stdoutTail,
       stderrTail: result.stderrTail,
+      ...(result.timedOut ? { timedOut: true } : {}),
     };
     this.record(record);
 

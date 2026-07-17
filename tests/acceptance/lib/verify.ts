@@ -1,5 +1,6 @@
 import { Agent, request } from 'undici';
 import type { AcceptanceCredentials } from './env.js';
+import { BoundedPagination } from './pagination.js';
 
 interface AbilityAnnotations {
   readonly: boolean;
@@ -151,13 +152,16 @@ export class IndependentVerifier {
   async listSites(): Promise<VerifiedSite[]> {
     const sites: VerifiedSite[] = [];
     let page = 1;
+    const pagination = new BoundedPagination('Independent verifier list-sites-v1');
     for (;;) {
       const response = (await this.execute('mainwp/list-sites-v1', {
         page,
         per_page: 100,
       })) as { items: VerifiedSite[]; total: number };
       sites.push(...response.items);
-      if (sites.length >= response.total || response.items.length === 0) return sites;
+      const hasMore = sites.length < response.total && response.items.length > 0;
+      pagination.record(page, response.items, hasMore);
+      if (!hasMore) return sites;
       page += 1;
     }
   }
@@ -192,24 +196,31 @@ export class IndependentVerifier {
     method: 'GET' | 'POST' | 'DELETE',
     body?: string
   ): Promise<{ data: T; headers: Record<string, string | string[] | undefined> }> {
-    const response = await request(url, {
-      method,
-      headers: {
-        authorization: this.authorization,
-        'content-type': 'application/json',
-      },
-      ...(body ? { body } : {}),
-      ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
-    });
-    const responseBody = await response.body.text();
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(
-        `Independent verifier request failed with HTTP ${response.statusCode}: ${responseBody}`
-      );
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await request(url, {
+        method,
+        headers: {
+          authorization: this.authorization,
+          'content-type': 'application/json',
+        },
+        signal: controller.signal,
+        ...(body ? { body } : {}),
+        ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
+      });
+      const responseBody = await response.body.text();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new Error(
+          `Independent verifier request failed with HTTP ${response.statusCode}: ${responseBody}`
+        );
+      }
+      return {
+        data: JSON.parse(responseBody) as T,
+        headers: response.headers,
+      };
+    } finally {
+      clearTimeout(timeout);
     }
-    return {
-      data: JSON.parse(responseBody) as T,
-      headers: response.headers,
-    };
   }
 }

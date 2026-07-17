@@ -20,6 +20,7 @@ export interface PackChecks {
   forbiddenFilesAbsent: boolean;
   installedEntryPresent: boolean;
   mainwpBinPresent: boolean;
+  installedBinStartsServer: boolean;
   installedVersionMatches: boolean;
 }
 
@@ -38,13 +39,13 @@ export interface PackedPackage {
   cleanup(): void;
 }
 
-export async function packAndInstall(
+async function setupPackedPackage(
   repoRoot: string,
   runner: CommandRunner,
   artifacts: Artifacts,
-  keepConsumer: boolean
+  keepConsumer: boolean,
+  tempRoot: string
 ): Promise<PackedPackage> {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-acceptance-'));
   const packResult = await runner.run(
     ['npm', 'pack', '--json', '--pack-destination', tempRoot],
     repoRoot
@@ -100,11 +101,26 @@ export async function packAndInstall(
   const repoPackage = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
     version: string;
   };
+  const binProbe = await runner.run([mainwpBin], consumerDir, {
+    allowFailure: true,
+    timeoutMs: 10_000,
+    env: {
+      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      HOME: consumerDir,
+      MAINWP_URL: 'https://127.0.0.1:1',
+      MAINWP_USER: 'packaging-probe',
+      MAINWP_APP_PASSWORD: 'packaging probe password',
+      MAINWP_RATE_LIMIT: '0',
+      MAINWP_REQUEST_TIMEOUT: '1000',
+      MAINWP_RETRY_ENABLED: 'false',
+    },
+  });
   const checks: PackChecks = {
     requiredFilesPresent,
     forbiddenFilesAbsent,
     installedEntryPresent: fs.existsSync(installedEntry),
     mainwpBinPresent: fs.existsSync(mainwpBin),
+    installedBinStartsServer: binProbe.stderr.includes('MainWP MCP Server v'),
     installedVersionMatches: installedPackage.version === repoPackage.version,
   };
   if (Object.values(checks).some(check => !check)) {
@@ -128,4 +144,19 @@ export async function packAndInstall(
       if (!keepConsumer) fs.rmSync(tempRoot, { recursive: true, force: true });
     },
   };
+}
+
+export async function packAndInstall(
+  repoRoot: string,
+  runner: CommandRunner,
+  artifacts: Artifacts,
+  keepConsumer: boolean
+): Promise<PackedPackage> {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-acceptance-'));
+  try {
+    return await setupPackedPackage(repoRoot, runner, artifacts, keepConsumer, tempRoot);
+  } catch (error) {
+    if (!keepConsumer) fs.rmSync(tempRoot, { recursive: true, force: true });
+    throw error;
+  }
 }

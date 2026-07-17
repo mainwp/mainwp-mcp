@@ -71,15 +71,36 @@ export async function startLocalDependencyRegistry(
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (url.pathname.startsWith('/tarballs/')) {
-      const filename = path.basename(decodeURIComponent(url.pathname.slice('/tarballs/'.length)));
+      let filename: string;
+      try {
+        filename = path.basename(decodeURIComponent(url.pathname.slice('/tarballs/'.length)));
+      } catch {
+        return json(response, 404, { error: 'tarball not found' });
+      }
+      if (!filename || filename === '.' || filename === '..') {
+        return json(response, 404, { error: 'tarball not found' });
+      }
       const filePath = path.join(tarballDir, filename);
-      if (!fs.existsSync(filePath)) return json(response, 404, { error: 'tarball not found' });
-      const stat = fs.statSync(filePath);
+      let stat: fs.Stats | undefined;
+      try {
+        stat = fs.statSync(filePath, { throwIfNoEntry: false });
+      } catch {
+        return json(response, 404, { error: 'tarball not found' });
+      }
+      if (!stat?.isFile()) return json(response, 404, { error: 'tarball not found' });
       response.writeHead(200, {
         'content-type': 'application/octet-stream',
         'content-length': stat.size,
       });
-      fs.createReadStream(filePath).pipe(response);
+      fs.createReadStream(filePath)
+        .on('error', () => {
+          if (!response.headersSent) {
+            json(response, 500, { error: 'failed to stream tarball' });
+          } else {
+            response.end();
+          }
+        })
+        .pipe(response);
       return;
     }
 

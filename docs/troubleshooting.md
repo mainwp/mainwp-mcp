@@ -138,7 +138,7 @@ For automation scripts, disable the confirmation flow:
 }
 ```
 
-The AI tried to execute a destructive operation without completing the two-step confirmation flow. This error covers three cases: calling with `user_confirmed: true` without first requesting a preview, calling with no confirmation parameters at all (the server rejects bare destructive calls rather than executing them), or confirming with a stale or mismatched `confirmation_token` (the token must come from a preview of the same tool with the same arguments).
+The AI tried to execute a destructive operation without completing the two-step confirmation flow. This error covers calling with `user_confirmed: true` without first requesting a preview, calling with no confirmation parameters at all (the server rejects bare destructive calls rather than executing them), or confirming with a token that is unknown, already used (tokens are single-use), or bound to a different tool or different arguments.
 
 This is usually an AI behavior issue. Try rephrasing: "Show me what will be deleted first, then I'll confirm."
 
@@ -163,7 +163,7 @@ Not an error. The ability requires confirmation but doesn't support `dry_run`, s
 }
 ```
 
-You waited more than 5 minutes between seeing the preview and confirming the operation. Request a new preview—the AI will automatically do this if you just say "yes" or "proceed."
+You waited more than 5 minutes between seeing the preview and confirming the operation. Request a new preview—the AI will automatically do this if you just say "yes" or "proceed." (An already-used token produces `PREVIEW_REQUIRED` instead: tokens are single-use.)
 
 ### "CONFLICTING_PARAMETERS"
 

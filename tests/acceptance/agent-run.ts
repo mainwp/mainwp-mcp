@@ -13,6 +13,10 @@ import {
 import {
   answerAvoidsKnownPluginNames,
   evaluateSafeModeRefusal,
+  errorResultNamesSiteNotFound,
+  findNestedObjects,
+  inventoryProvesSiteAbsent,
+  scopedSearchProvesSiteAbsent,
   matchesNotFoundSiteAnswer,
   matchesSiteStatusAnswer,
   type AgentEvaluation,
@@ -156,9 +160,13 @@ const agentScenarios: AgentScenario[] = [
       if (sites.length === 0) throw new Error('No site is available for agent-plugin-active');
       for (const site of sites) {
         const plugins = (await verifier.getSitePlugins(site.id)).plugins;
+        // Never probe mainwp-child unless nothing else exists: its activity
+        // is implied by the site being connected (get_site even reports its
+        // version), so the model can answer without the plugin-list tool the
+        // scenario is meant to exercise.
         const plugin = preferred
           ? plugins.find(candidate => candidate.slug === preferred)
-          : plugins[0];
+          : (plugins.find(candidate => !candidate.slug.startsWith('mainwp-child')) ?? plugins[0]);
         if (plugin?.name) {
           return {
             siteId: site.id,
@@ -213,6 +221,21 @@ const agentScenarios: AgentScenario[] = [
         tool => tool.input !== null && typeof tool.input === 'object'
       );
       const lookupResults = toolResultsForUses(lookupUses, collected.toolResults);
+      const structuredNotFound = errorResultNamesSiteNotFound(lookupResults);
+      const inventoryResults = toolResultsForUses(
+        lookupUses.filter(tool => toolFamilyMatches(tool.name, ['list_sites_v1'])),
+        collected.toolResults
+      );
+      const completeInventoryExcludesProbe = inventoryProvesSiteAbsent(
+        inventoryResults,
+        truth.knownSiteUrls,
+        truth.absentSiteQuery
+      );
+      const emptyScopedSearch = scopedSearchProvesSiteAbsent(
+        lookupUses.filter(tool => toolFamilyMatches(tool.name, ['list_sites_v1'])),
+        use => toolResultsForUses([use], collected.toolResults),
+        truth.absentSiteQuery
+      );
       const answerMatches = matchesNotFoundSiteAnswer(collected.finalText);
       const avoidsKnownPlugins = answerAvoidsKnownPluginNames(
         collected.finalText,
@@ -232,10 +255,13 @@ const agentScenarios: AgentScenario[] = [
           evidence: lookupUses.map(tool => tool.input),
         },
         correctMcpResult: {
-          pass: lookupUses.length > 0 && lookupResults.length > 0,
+          pass: structuredNotFound || completeInventoryExcludesProbe || emptyScopedSearch,
           evidence: {
             lookupCount: lookupUses.length,
             resultCount: lookupResults.length,
+            structuredNotFound,
+            completeInventoryExcludesProbe,
+            emptyScopedSearch,
             absentSiteQuery: truth.absentSiteQuery,
             knownSiteUrls: truth.knownSiteUrls,
           },
@@ -777,10 +803,9 @@ function mcpResultsMatchTruth(truth: AgentGroundTruth, toolResults: unknown[]): 
     return truth.updateSiteUrls.every(url => text.includes(url));
   }
   if (truth.pluginActive !== undefined && truth.pluginSlug) {
-    const slug = truth.pluginSlug.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-    return new RegExp(`"slug"\\s*:\\s*"${slug}"[^}]*"active"\\s*:\\s*${truth.pluginActive}`).test(
-      text
-    );
+    return toolResults
+      .flatMap(findNestedObjects)
+      .some(record => record.slug === truth.pluginSlug && record.active === truth.pluginActive);
   }
   return false;
 }
@@ -846,7 +871,13 @@ async function runClaude(
   cwd: string,
   env: NodeJS.ProcessEnv,
   onLine: (line: string) => void
-): Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }> {
+): Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}> {
   const started = performance.now();
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
@@ -857,6 +888,8 @@ async function runClaude(
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
   let pending = '';
+  let timedOut = false;
+  let spawnError: Error | undefined;
   child.stdout.on('data', chunk => {
     const buffer = Buffer.from(chunk);
     stdoutChunks.push(buffer);
@@ -866,16 +899,26 @@ async function runClaude(
     for (const line of lines) if (line.trim()) onLine(line);
   });
   child.stderr.on('data', chunk => stderrChunks.push(Buffer.from(chunk)));
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', code => resolve(code ?? 1));
-  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, 300_000);
+  const exitCode = await new Promise<number>(resolve => {
+    child.once('error', error => {
+      // A spawn failure never emits 'close', so resolve here or hang forever.
+      spawnError = error;
+      resolve(1);
+    });
+    child.once('close', code => resolve(timedOut ? 124 : (code ?? 1)));
+  }).finally(() => clearTimeout(timeout));
+  if (spawnError) throw spawnError;
   if (pending.trim()) onLine(pending);
   return {
     exitCode,
     stdout: Buffer.concat(stdoutChunks).toString('utf8'),
     stderr: Buffer.concat(stderrChunks).toString('utf8'),
     durationMs: Math.round(performance.now() - started),
+    timedOut,
   };
 }
 
@@ -936,7 +979,15 @@ async function main(): Promise<void> {
     '-agent'
   );
   const verifiers = new Map<'live' | 'fixture', IndependentVerifier>();
-  if (liveCredentials) verifiers.set('live', new IndependentVerifier(liveCredentials, true));
+  if (liveCredentials) {
+    verifiers.set(
+      'live',
+      new IndependentVerifier(
+        liveCredentials,
+        process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true'
+      )
+    );
+  }
   if (fixtureCredentials) {
     verifiers.set('fixture', new IndependentVerifier(fixtureCredentials, false));
   }
@@ -1034,7 +1085,11 @@ async function main(): Promise<void> {
           MAINWP_URL: credentials.dashboardUrl,
           MAINWP_USER: credentials.username,
           MAINWP_APP_PASSWORD: credentials.appPassword,
-          MAINWP_SKIP_SSL_VERIFY: scenario.target === 'live' ? 'true' : 'false',
+          MAINWP_SKIP_SSL_VERIFY:
+            scenario.target === 'live' &&
+            process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true'
+              ? 'true'
+              : 'false',
           MAINWP_ALLOW_HTTP: scenario.target === 'fixture' ? 'true' : 'false',
         },
         line => {
@@ -1057,6 +1112,7 @@ async function main(): Promise<void> {
         durationMs: command.durationMs,
         stdoutTail: command.stdout.slice(-12_000),
         stderrTail: command.stderr.slice(-12_000),
+        ...(command.timedOut ? { timedOut: true } : {}),
       });
       if (command.exitCode !== 0) {
         results.push({

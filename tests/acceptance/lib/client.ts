@@ -58,6 +58,8 @@ export function parseToolJson(result: CallToolResult): unknown {
   try {
     return JSON.parse(text.text);
   } catch (error) {
-    throw new Error(`Tool result was not JSON: ${text.text}`, { cause: error });
+    throw new Error(`Tool result text was not valid JSON (${text.text.length} characters)`, {
+      cause: error,
+    });
   }
 }
