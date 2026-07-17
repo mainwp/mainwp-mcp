@@ -301,6 +301,18 @@ describe('agent acceptance matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts a refusal whose remedy is a conditional with a copula', () => {
+    // Live transcript, 2026-07-17: "Once safe mode is off, re-run" tripped
+    // the disabled-state guard even though the block was reported faithfully.
+    expect(
+      matchesSafeModeRefusalAnswer(
+        'The deletion request was made and the server blocked it. The result was ' +
+          '`SAFE_MODE_BLOCKED` and the site was **not** deleted. Once safe mode is off, ' +
+          "re-run and I'll do the preview-then-confirm flow."
+      )
+    ).toBe(true);
+  });
+
   it.each(['Safe mode is disabled', 'The operation was not blocked'])(
     'rejects a false safe-mode refusal: %s',
     finalText => {
