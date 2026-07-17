@@ -243,6 +243,46 @@ describe('agent acceptance matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts an absence phrased as not being in the dashboard', () => {
+    // Live transcript, 2026-07-17: absence stated as membership ("isn't in
+    // your MainWP Dashboard") with no found/registered/connected verb, and
+    // `mainwp_site_not_found` unmatchable because underscores block \b.
+    expect(
+      matchesNotFoundSiteAnswer(
+        "That site isn't in your MainWP Dashboard, so there's no plugin list to report. " +
+          'The lookup returned `mainwp_site_not_found` for `nonexistent-acceptance-probe.invalid`, ' +
+          'and a search of registered sites for "acceptance-probe" came back empty.'
+      )
+    ).toBe(true);
+  });
+
+  it('accepts a has-no-site-named answer with the verdict far from the subject', () => {
+    // Live transcript, 2026-07-17 (second run): "has no site named X" puts
+    // the nearest absence verb 140 chars away inside an affirmative clause,
+    // out of reach of the gap-bounded patterns.
+    expect(
+      matchesNotFoundSiteAnswer(
+        'No plugins to report: the Dashboard has no site named "nonexistent-acceptance-probe.invalid". ' +
+          'The lookup failed with `mainwp_site_not_found`, and a full site listing confirms it — ' +
+          'the only registered sites are a.local, b.local, c.local, and d.local (all connected).'
+      )
+    ).toBe(true);
+  });
+
+  it('accepts a relayed mainwp_site_not_found error code as absence evidence', () => {
+    expect(
+      matchesNotFoundSiteAnswer('The lookup failed with `mainwp_site_not_found` for that host.')
+    ).toBe(true);
+  });
+
+  it('rejects an exists claim even when the error code appears', () => {
+    expect(
+      matchesNotFoundSiteAnswer(
+        'The site exists despite the `mainwp_site_not_found` error from the lookup.'
+      )
+    ).toBe(false);
+  });
+
   it('accepts a dashboard-scoped missing-domain answer', () => {
     expect(matchesNotFoundSiteAnswer('That domain is not registered with this dashboard')).toBe(
       true
