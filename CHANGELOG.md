@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+Destructive abilities that declare no `confirm` parameter now fail closed. The confirmation flow used to return a skip decision for them, so a destructive-classified ability without a declared `confirm` parameter executed with no preview, token, or user approval even with `requireUserConfirmation` enabled. Such calls now return a `CONFIRMATION_UNSUPPORTED` error naming the missing confirm support. **This is a behavior change** for third-party or misannotated destructive abilities that never declared `confirm`; the built-in deletion tools all declare it and are unaffected. The former `INVALID_PARAMETER: user_confirmed not supported` response is folded into the new error.
+
+Dashboard-provided ability `instructions` are now sanitized before entering tool descriptions: control and format characters (newlines, ANSI, bidi marks) collapse to spaces and the text is capped at 300 characters. Remote metadata used to be forwarded verbatim and unbounded, giving a compromised Dashboard or extension a context-flooding channel into every tool description.
+
+Refreshed the dependency lockfile within declared ranges: `undici` to 7.28.0 and the MCP SDK's transitive HTTP-transport dependencies to patched versions, clearing all `npm audit` advisories (previously 4 high, 4 moderate on the production tree).
+
 ### Added
 
 The server warns at startup when a bearer token (`MAINWP_TOKEN`) is configured without a complete username and application password pair. The WordPress Abilities API rejects bearer tokens, so a token-only setup fails with 401s at request time; the warning surfaces the problem at startup instead.

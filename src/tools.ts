@@ -278,10 +278,7 @@ export async function executeTool(
           ? { content: confirmResult.response, isError: true }
           : { content: confirmResult.response };
       }
-      if (confirmResult.action === 'execute') {
-        effectiveArgs = confirmResult.effectiveArgs;
-      }
-      // 'skip' — proceed with original effectiveArgs
+      effectiveArgs = confirmResult.effectiveArgs;
     }
 
     const result = await executeAbility(

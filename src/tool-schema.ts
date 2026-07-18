@@ -204,11 +204,36 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
 }
 
 /**
+ * Remote ability `instructions` are Dashboard/extension-controlled text and
+ * must be treated as hostile: unbounded, they are a context-flooding and
+ * prompt-injection channel into every tool description. Cap keeps them a
+ * short usage hint, not a directive payload.
+ */
+const MAX_API_INSTRUCTIONS_LENGTH = 300;
+
+/**
+ * Flatten remote instruction text to a single bounded line: control and
+ * format characters (newlines, ANSI, bidi marks) collapse to spaces so the
+ * text cannot fake description structure, then hard-truncate.
+ */
+function sanitizeApiInstructions(raw: string): string {
+  const flattened = raw
+    .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (flattened.length <= MAX_API_INSTRUCTIONS_LENGTH) {
+    return flattened;
+  }
+  return flattened.slice(0, MAX_API_INSTRUCTIONS_LENGTH - 3) + '...';
+}
+
+/**
  * Generate contextual LLM instruction text from ability metadata.
  *
  * Produces safety guidance that tells the AI how to use a tool correctly:
  * preview-first workflows, dry-run suggestions, or read-only assurance.
- * API-provided instructions are prepended (they take priority).
+ * API-provided instructions come first in reading order but are sanitized
+ * and length-capped — remote metadata never outranks the built-in guidance.
  * @internal
  */
 export function generateInstructions(
@@ -218,10 +243,13 @@ export function generateInstructions(
 ): string {
   const parts: string[] = [];
 
-  // API-provided instructions take priority (ensure trailing punctuation for clean concatenation)
+  // Bounded, sanitized API-provided usage hint (ensure trailing punctuation
+  // for clean concatenation)
   if (meta?.instructions) {
-    const instr = meta.instructions;
-    parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
+    const instr = sanitizeApiInstructions(meta.instructions);
+    if (instr) {
+      parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
+    }
   }
 
   if (meta?.destructive) {

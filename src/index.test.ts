@@ -227,6 +227,28 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it('fails closed when a destructive tool declares no confirm parameter', async () => {
+    // End-to-end regression (2026-07-18 external audit): the delete-site-v1
+    // fixture is destructive but its schema declares no confirm parameter.
+    // This shape used to skip the confirmation flow and execute directly
+    // with no preview, token, or approval.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const result = await client.callTool({ name: 'delete_site_v1', arguments: { site_id: 1 } });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain('CONFIRMATION_UNSUPPORTED');
+    expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
   it('rejects a blocked tool call without leaking the ability name', async () => {
     const { client, server } = await connectedClient({
       ...makeBaseConfig(),

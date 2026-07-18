@@ -58,13 +58,13 @@ MAINWP_SAFE_MODE=true
 
 Safe mode blocks every tool the server classifies as destructive, including `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1`. Blocked calls return a `SAFE_MODE_BLOCKED` error without reaching the Dashboard. As a second layer, safe mode also strips the `confirm` parameter, so even a request that somehow bypassed the block would be rejected by the Abilities API.
 
-All read operations and non-destructive writes remain available: listing and viewing sites, clients, tags; running updates (reversible via backups); activating and deactivating plugins and themes; syncing sites; creating new clients and tags.
+Safe mode is not read-only. Operations that are not classified destructive remain available, and several of them can meaningfully change managed sites: running plugin, theme, and core updates; activating and deactivating plugins and themes; syncing sites; creating new clients and tags. An update can break a site, and a usable backup to roll back to is not guaranteed — safe mode does not protect against that.
 
-Safe mode is useful for training (let users explore without risk), development (test integrations without affecting real data), read-only access (when you only need reporting capabilities), demos (show capabilities without live changes), and first-time setup (familiarize yourself with the system safely).
+Safe mode is a guardrail against the most damaging operations, useful for development (test integrations without deletions), demos, training, and first-time setup. If you need genuinely read-only access — reporting dashboards, untrusted operators, exploratory use — use the `allowedTools` whitelist to expose only known read-only tools instead; see [Tool Filtering](configuration.md#tool-filtering).
 
-We recommend enabling Safe Mode when first installing mainwp-mcp. This lets you verify your credentials and connection work correctly, explore available tools without risk of data loss, and understand how the AI interacts with your MainWP Dashboard. Once comfortable, disable Safe Mode to enable full functionality.
+We recommend enabling Safe Mode when first installing mainwp-mcp. This lets you verify your credentials and connection work correctly and understand how the AI interacts with your MainWP Dashboard, while the destructive tool classes stay blocked. Once comfortable, disable Safe Mode to enable full functionality.
 
-The server classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard. Only a literal boolean `false` classifies as non-destructive: a missing annotation, or any malformed value (`0`, `""`, `"yes"`), is treated as destructive. The same classification gates the built-in `mainwp://site/{id}` resource and site-ID completions, which execute abilities directly; when the underlying ability classifies as destructive, the resource is denied and completions return no suggestions rather than executing. This default-deny stance means a new or misconfigured ability is blocked by safe mode and subject to the confirmation flow until the Dashboard annotates it properly; tool execution logs a warning when an ability cannot be reliably classified so the missing annotation can be fixed at the source, while the resource and completion paths apply the same fail-closed classification and deny without logging that warning. For stricter control, use `blockedTools` to explicitly block specific tools or `allowedTools` to whitelist only known-safe tools.
+The server classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard. Only a literal boolean `false` classifies as non-destructive: a missing annotation, or any malformed value (`0`, `""`, `"yes"`), is treated as destructive. The same classification gates the built-in `mainwp://site/{id}` resource and site-ID completions, which execute abilities directly; when the underlying ability classifies as destructive, the resource is denied and completions return no suggestions rather than executing. This default-deny stance means a new or misconfigured ability is blocked by safe mode until the Dashboard annotates it properly. Under the confirmation flow, a destructive-classified ability that declares a `confirm` parameter goes through the two-phase preview/token flow; one that declares no `confirm` parameter has no confirmation channel and fails closed with a `CONFIRMATION_UNSUPPORTED` error instead of executing. Tool execution logs a warning when an ability cannot be reliably classified so the missing annotation can be fixed at the source, while the resource and completion paths apply the same fail-closed classification and deny without logging that warning. For stricter control, use `blockedTools` to explicitly block specific tools or `allowedTools` to whitelist only known-safe tools.
 
 ---
 
@@ -146,14 +146,14 @@ AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true,
 
 ### Comparison with Safe Mode
 
-| Feature         | Safe Mode                           | Confirmation Flow                               |
-| --------------- | ----------------------------------- | ----------------------------------------------- |
-| Purpose         | Block all destructive operations    | Allow destructive operations with user approval |
-| Use Case        | Testing, read-only access, training | Production with trusted AI                      |
-| Destructive Ops | Completely blocked                  | Allowed after confirmation                      |
-| User Experience | AI says "I can't do that"           | AI shows preview and asks for approval          |
-| Automation      | Unsuitable                          | Can be disabled for scripts                     |
-| Default         | Disabled                            | Enabled                                         |
+| Feature         | Safe Mode                        | Confirmation Flow                               |
+| --------------- | -------------------------------- | ----------------------------------------------- |
+| Purpose         | Block all destructive operations | Allow destructive operations with user approval |
+| Use Case        | Testing, demos, training         | Production with trusted AI                      |
+| Destructive Ops | Completely blocked               | Allowed after confirmation                      |
+| User Experience | AI says "I can't do that"        | AI shows preview and asks for approval          |
+| Automation      | Unsuitable                       | Can be disabled for scripts                     |
+| Default         | Disabled                         | Enabled                                         |
 
 When both are configured, Safe Mode takes precedence. Previews expire after 5 minutes—if you wait too long to confirm, you'll need to request a new preview.
 
