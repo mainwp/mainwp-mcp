@@ -91,6 +91,124 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  // Fixture builder for the execution-stage gate tests: a get-site ability
+  // whose annotations vary per test. `annotations: undefined` omits meta
+  // entirely (the fail-closed default-destructive case).
+  const getSiteAbility = (annotations?: Record<string, unknown>) => ({
+    name: 'mainwp/get-site-v1',
+    label: 'Get Site',
+    description: 'Get details for one site',
+    category: 'mainwp-sites',
+    input_schema: { type: 'object', properties: { site_id: { type: 'integer' } } },
+    ...(annotations === undefined ? {} : { meta: { annotations } }),
+  });
+
+  const runUrls = () =>
+    mockFetch.mock.calls.map(call => String(call[0])).filter(url => url.includes('/run'));
+
+  it('blocks the site resource in safe mode when get-site is annotated destructive', async () => {
+    // Execution-stage gate regression (2026-07-17 adversarial review): the
+    // resource must classify the resolved ability, not just check allow/block.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [getSiteAbility({ readonly: false, destructive: true, idempotent: false })],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient({ ...makeBaseConfig(), safeMode: true });
+
+    const result = await client.readResource({ uri: 'mainwp://site/1' });
+
+    expect(result.contents[0]).toMatchObject({ text: expect.stringContaining('safe mode') });
+    expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
+  it('denies the site resource fail-closed when annotations are missing', async () => {
+    // Default config has requireUserConfirmation on; missing annotations
+    // classify destructive, and resources have no confirmation channel.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [getSiteAbility(undefined)],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const result = await client.readResource({ uri: 'mainwp://site/1' });
+
+    expect(result.contents[0]).toMatchObject({ text: expect.stringContaining('confirmation') });
+    expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
+  it('treats a malformed falsy destructive annotation as destructive on the site resource', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [getSiteAbility({ readonly: false, destructive: 0, idempotent: false })],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient({ ...makeBaseConfig(), safeMode: true });
+
+    const result = await client.readResource({ uri: 'mainwp://site/1' });
+
+    expect(result.contents[0]).toMatchObject({ text: expect.stringContaining('safe mode') });
+    expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
+  it('still serves the site resource for a readonly ability under safe mode', async () => {
+    // Over-blocking guard: safe mode only gates destructive classification.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [getSiteAbility({ readonly: true, destructive: false, idempotent: true })],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 1, name: 'Site 1' }),
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient({ ...makeBaseConfig(), safeMode: true });
+
+    const result = await client.readResource({ uri: 'mainwp://site/1' });
+
+    const text = (result.contents as Array<{ text: string }>)[0].text;
+    expect(JSON.parse(text)).toMatchObject({ id: 1, name: 'Site 1' });
+    expect(runUrls()).toHaveLength(1);
+    await client.close();
+    await server.close();
+  });
+
+  it('skips site-id completions instead of executing a destructive-annotated list-sites', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/list-sites-v1',
+          label: 'List Sites',
+          description: 'Get all managed sites',
+          category: 'mainwp-sites',
+          input_schema: { type: 'object', properties: {} },
+          meta: { annotations: { readonly: false, destructive: true, idempotent: false } },
+        },
+      ],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient({ ...makeBaseConfig(), safeMode: true });
+
+    const result = await client.complete({
+      ref: { type: 'ref/prompt', name: 'performance-check' },
+      argument: { name: 'site_id', value: '' },
+    });
+
+    expect(result.completion.values).toEqual([]);
+    expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
   it('blocks site completions before list-sites reaches /run', async () => {
     const { client, server } = await connectedClient({
       ...makeBaseConfig(),

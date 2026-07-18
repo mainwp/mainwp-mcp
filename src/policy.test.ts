@@ -172,15 +172,16 @@ describe('classifyDestructive', () => {
     expect(classifyDestructive(annotations)).toBe(expected);
   });
 
-  it('pins current truthiness semantics for hostile non-boolean values', () => {
-    // Remote annotations are hostile input. The pre-refactor behavior was
-    // `annotations?.destructive ?? true` used in boolean position: nullish
-    // falls back to destructive (fail-closed), any other value keeps its
-    // truthiness. classifyDestructive must not change this wire behavior.
+  it('classifies every non-boolean value as destructive (fail-closed)', () => {
+    // Remote annotations are hostile input. Only a literal boolean `false`
+    // is trusted as non-destructive; malformed values must not slip through.
+    // This supersedes the pre-refactor `?? true` truthiness (which let falsy
+    // non-booleans like 0 and '' classify as non-destructive) — deliberate
+    // tightening from the 2026-07-17 adversarial review.
     expect(classifyDestructive({ destructive: null as unknown as boolean })).toBe(true);
     expect(classifyDestructive({ destructive: 'yes' as unknown as boolean })).toBe(true);
-    expect(classifyDestructive({ destructive: 0 as unknown as boolean })).toBe(false);
-    expect(classifyDestructive({ destructive: '' as unknown as boolean })).toBe(false);
+    expect(classifyDestructive({ destructive: 0 as unknown as boolean })).toBe(true);
+    expect(classifyDestructive({ destructive: '' as unknown as boolean })).toBe(true);
   });
 });
 

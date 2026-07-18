@@ -54,17 +54,20 @@ export function decidePolicy(
 }
 
 /**
- * Fail-closed destructive classification: missing or nullish annotations mean
- * destructive. Nullish coalescing (never `||`) so an explicit
- * `destructive: false` is honored, while hostile non-boolean values keep the
- * exact pre-refactor truthiness behavior. The malformed-annotation warning
- * stays with the executor — this function only classifies.
+ * Fail-closed destructive classification: only a literal boolean `false` is
+ * non-destructive. Missing annotations, null, and malformed non-boolean
+ * values (a hostile or sloppy Dashboard emitting `0`, `''`, `'yes'`) all
+ * classify as destructive. This is strictly tighter than the pre-refactor
+ * `?? true` truthiness (2026-07-17 adversarial-review decision): falsy
+ * non-boolean values used to slip through as non-destructive. The
+ * malformed-annotation warning stays with the executor — this function only
+ * classifies.
  *
  * The parameter is typed structurally so this module stays free of
  * abilities.ts (and transitively SDK) imports.
  */
 export function classifyDestructive(annotations: { destructive?: boolean } | undefined): boolean {
-  return Boolean(annotations?.destructive ?? true);
+  return annotations?.destructive !== false;
 }
 
 /** Return whether a tool is permitted by the configured allow/block lists. */

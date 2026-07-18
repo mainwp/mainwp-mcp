@@ -19,6 +19,7 @@ import {
 } from './http-client.js';
 import type { Logger } from './logging.js';
 import { abilityNameToToolName } from './naming.js';
+import { classifyDestructive } from './policy.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
@@ -603,7 +604,9 @@ export async function executeAbility(
   }
 
   const isReadonly = ability.meta?.annotations?.readonly ?? false;
-  const isDestructive = ability.meta?.annotations?.destructive ?? true;
+  // Same strict fail-closed classifier as the policy gate, so HTTP method
+  // selection and audit logging can never diverge from the gate's decision.
+  const isDestructive = classifyDestructive(ability.meta?.annotations);
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;

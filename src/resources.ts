@@ -21,7 +21,7 @@ import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getSessionDataUsage } from './session.js';
 import { sanitizeError } from './security.js';
 import { abilityNameToToolName } from './naming.js';
-import { decidePolicy } from './policy.js';
+import { decidePolicy, classifyDestructive } from './policy.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory } from './errors.js';
 import type { Logger } from './logging.js';
 
@@ -177,14 +177,37 @@ export async function handleReadResource(
         'mainwp/get-site-v1',
         config.abilityNamespaces[0]
       );
+      // Listing-stage gate before ability resolution (no catalog probing) …
       if (decidePolicy(config, getSiteToolName) !== 'allow') {
         throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
+      }
+      // … then the execution-stage gate with the resolved ability's fail-closed
+      // destructive classification. Resources have no confirmation channel, so
+      // any non-allow decision denies: a Dashboard that annotates (or fails to
+      // annotate) get-site as destructive cannot run it through this surface
+      // while safe mode or confirmation gating is active.
+      const ability = await getAbilityByToolName(config, getSiteToolName, logger);
+      if (!ability) {
+        throw McpErrorFactory.abilityNotFound('mainwp/get-site-v1');
+      }
+      const decision = decidePolicy(
+        config,
+        getSiteToolName,
+        classifyDestructive(ability.meta?.annotations)
+      );
+      if (decision !== 'allow') {
+        throw McpErrorFactory.permissionDenied(
+          decision === 'safe-mode-blocked'
+            ? `Destructive operation blocked by safe mode: ${getSiteToolName}`
+            : `Tool requires confirmation and cannot run through resources: ${getSiteToolName}`
+        );
       }
       const result = await executeAbility(
         config,
         'mainwp/get-site-v1',
         { site_id: parsed.params.site_id },
-        logger
+        logger,
+        ability
       );
       return jsonResource(result);
     }

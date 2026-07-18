@@ -31,7 +31,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config } from './config.js';
 import { getTools, executeTool } from './tools.js';
-import { decidePolicy } from './policy.js';
+import { decidePolicy, classifyDestructive } from './policy.js';
 import { formatBytes } from './session.js';
 import {
   fetchAbilities,
@@ -209,14 +209,34 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
         try {
           const abilities = await fetchAbilities(config, false, logger);
           const listSitesAbility = abilities.find(a => a.name === 'mainwp/list-sites-v1');
-          if (listSitesAbility) {
-            const result = await executeAbility(config, 'mainwp/list-sites-v1', {}, logger);
+          // Execution-stage gate with fail-closed destructive classification.
+          // Completions are best-effort, so a non-allow decision skips the
+          // lookup (empty suggestions) instead of erroring the completion.
+          if (
+            listSitesAbility &&
+            decidePolicy(
+              config,
+              listSitesToolName,
+              classifyDestructive(listSitesAbility.meta?.annotations)
+            ) === 'allow'
+          ) {
+            const result = await executeAbility(
+              config,
+              'mainwp/list-sites-v1',
+              {},
+              logger,
+              listSitesAbility
+            );
             if (Array.isArray(result)) {
               // Filter to only valid site IDs
               values = result
                 .filter((site: { id: unknown }) => isValidId(site.id))
                 .map((site: { id: number }) => String(site.id));
             }
+          } else if (listSitesAbility) {
+            logger.info('Site-id completion skipped: policy blocks destructive execution', {
+              toolName: listSitesToolName,
+            });
           }
         } catch (error) {
           // Fail soft — completions are best-effort — but leave a trace so
