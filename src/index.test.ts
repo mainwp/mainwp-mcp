@@ -268,6 +268,36 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it('keeps the catalog when one ability carries a non-string instructions value', async () => {
+    // Regression (2026-07-18 external audit round 2): instructions: 42 threw
+    // TypeError inside abilityToTool, and the ListTools catch turned that
+    // into an empty tool catalog for the whole server.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          ...sampleAbilities[0],
+          meta: {
+            annotations: { readonly: true, destructive: false, idempotent: true, instructions: 42 },
+          },
+        },
+        sampleAbilities[1],
+      ],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const result = await client.listTools();
+
+    expect(result.tools.map(tool => tool.name)).toEqual(
+      expect.arrayContaining(['list_sites_v1', 'delete_site_v1'])
+    );
+    const listTool = result.tools.find(tool => tool.name === 'list_sites_v1');
+    expect(listTool?.description).not.toContain('42');
+    await client.close();
+    await server.close();
+  });
+
   it('omits blocked tools from tools/list', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

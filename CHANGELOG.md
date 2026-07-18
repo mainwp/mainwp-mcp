@@ -13,6 +13,14 @@ Dashboard-provided ability `instructions` are now sanitized before entering tool
 
 Refreshed the dependency lockfile within declared ranges: `undici` to 7.28.0 and the MCP SDK's transitive HTTP-transport dependencies to patched versions, clearing all `npm audit` advisories (previously 4 high, 4 moderate on the production tree).
 
+All remote free-text ability fields are now normalized at the fetch boundary: labels, categories, and descriptions get non-string values replaced, control/format characters stripped, and hard length caps (200/100/2000 chars) before reaching tool descriptions, resources, or help output; schema property descriptions are bounded to 500 chars recursively. Previously only the `instructions` field was capped — a hostile Dashboard could flood tool descriptions through the description field, and a non-string `instructions` value threw during tool conversion, which the ListTools handler turned into an empty tool catalog for the whole server.
+
+Tool discovery now uses the same fail-closed destructive classifier as the execution policy. An ability with missing or malformed `destructive` annotations used to be advertised as a plain write operation with no destructive hint (and, when it declared `confirm`, without the `user_confirmed`/`confirmation_token` parameters the executor requires) while execution treated it as destructive. Discovery now tags such tools DESTRUCTIVE, emits normalized MCP annotation hints (`destructiveHint` follows the classifier; positive hints require literal `true`; annotations are always present), and injects the confirmation parameters. **This is a behavior change** for unannotated abilities' advertised metadata; correctly annotated abilities are unaffected.
+
+The `safeMode` description in the shipped `settings.schema.json` no longer calls safe mode suitable for "read-only access"; it now states that non-destructive writes remain available and points to `allowedTools` for read-only setups.
+
+`prepublishOnly` additionally runs the production dependency audit (high severity and above) and the packed-package fixture acceptance suite.
+
 ### Added
 
 The server warns at startup when a bearer token (`MAINWP_TOKEN`) is configured without a complete username and application password pair. The WordPress Abilities API rejects bearer tokens, so a token-only setup fails with 401s at request time; the warning surfaces the problem at startup instead.

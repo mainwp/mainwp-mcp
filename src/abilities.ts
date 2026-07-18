@@ -58,6 +58,47 @@ export interface AbilityAnnotations {
 }
 
 /**
+ * Caps for remote free-text fields, applied once at the fetch boundary.
+ * Far above anything real abilities send; they exist to bound hostile or
+ * misconfigured Dashboard metadata before it reaches tool descriptions,
+ * resources, or help output.
+ */
+const MAX_LABEL_LENGTH = 200;
+const MAX_CATEGORY_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 2000;
+
+/**
+ * Normalize one remote text field: non-strings become '', control and format
+ * characters collapse to spaces (multiline mode preserves single newlines for
+ * legitimate prose), and the result is hard-capped. Runs at the fetch
+ * boundary so every downstream consumer sees bounded plain text.
+ */
+function normalizeRemoteText(
+  raw: unknown,
+  maxLength: number,
+  mode: 'flatten' | 'multiline'
+): string {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const cleaned =
+    mode === 'flatten'
+      ? raw
+          .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : raw
+          .replace(/[^\P{Cc}\n]|\p{Cf}/gu, ' ')
+          .replace(/[^\S\n]+/g, ' ')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  return cleaned.slice(0, maxLength - 3) + '...';
+}
+
+/**
  * Ability definition from the REST API
  */
 export interface Ability {
@@ -382,6 +423,31 @@ export async function fetchAbilities(
         }
         return true;
       });
+
+      // Normalize remote free-text at the boundary: every downstream surface
+      // (tool descriptions, mainwp:// resources, help documents) consumes
+      // these fields verbatim, so a non-string value must not throw later and
+      // hostile text is bounded once here instead of at each consumer. A
+      // non-string `instructions` is dropped rather than coerced — it is an
+      // optional hint, and tool-schema applies its own tighter cap.
+      for (const ability of newAbilities) {
+        ability.label = normalizeRemoteText(ability.label, MAX_LABEL_LENGTH, 'flatten');
+        ability.category = normalizeRemoteText(ability.category, MAX_CATEGORY_LENGTH, 'flatten');
+        ability.description = normalizeRemoteText(
+          ability.description,
+          MAX_DESCRIPTION_LENGTH,
+          'multiline'
+        );
+        const annotations: unknown = ability.meta?.annotations;
+        if (
+          annotations !== null &&
+          typeof annotations === 'object' &&
+          'instructions' in annotations &&
+          typeof (annotations as AbilityAnnotations).instructions !== 'string'
+        ) {
+          delete (annotations as AbilityAnnotations).instructions;
+        }
+      }
 
       // A misconfigured namespace allowlist boots a server that advertises
       // zero tools with no other symptom — warn loudly so the cause is in the

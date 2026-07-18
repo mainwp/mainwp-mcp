@@ -10,6 +10,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Ability, AbilityAnnotations } from './abilities.js';
 import type { SchemaVerbosity } from './config.js';
 import { abilityNameToToolName } from './naming.js';
+import { classifyDestructive } from './policy.js';
 
 /**
  * Convert an Ability's JSON Schema to MCP tool input schema format
@@ -57,9 +58,12 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
     ? schema.required.filter((entry): entry is string => typeof entry === 'string')
     : [];
 
-  // Backfill missing descriptions from parameter names.
-  // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
+  // Bound remote description text first (non-strings and hostile flooding
+  // become '' / capped), then backfill what is missing from parameter names.
+  // Some upstream abilities omit descriptions; LLMs need them for accurate
+  // tool use.
   for (const [name, prop] of Object.entries(properties)) {
+    boundSchemaDescriptions(prop);
     if (!prop.description || String(prop.description).trim() === '') {
       prop.description = paramNameToDescription(name);
     }
@@ -70,6 +74,41 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
     properties,
     required,
   };
+}
+
+/** Remote schema description fields are bounded to this length. */
+const MAX_SCHEMA_DESC_LENGTH = 500;
+
+/**
+ * Recursively bound `description` fields inside a remote schema node.
+ * Standard verbosity ships nested schemas uncompressed, so without this a
+ * hostile Dashboard could flood tool schemas with arbitrary text; compact
+ * mode's compressSchema truncates further but only after this safety bound.
+ */
+function boundSchemaDescriptions(node: Record<string, unknown>, depth = 0): void {
+  if (depth > 8) {
+    return;
+  }
+  if ('description' in node && node.description !== undefined) {
+    const bounded = flattenRemoteText(node.description, MAX_SCHEMA_DESC_LENGTH);
+    if (bounded) {
+      node.description = bounded;
+    } else {
+      delete node.description;
+    }
+  }
+  const nested = node.properties;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    for (const child of Object.values(nested)) {
+      if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+        boundSchemaDescriptions(child as Record<string, unknown>, depth + 1);
+      }
+    }
+  }
+  const items = node.items;
+  if (items && typeof items === 'object' && !Array.isArray(items)) {
+    boundSchemaDescriptions(items as Record<string, unknown>, depth + 1);
+  }
 }
 
 /**
@@ -212,19 +251,28 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
 const MAX_API_INSTRUCTIONS_LENGTH = 300;
 
 /**
- * Flatten remote instruction text to a single bounded line: control and
- * format characters (newlines, ANSI, bidi marks) collapse to spaces so the
- * text cannot fake description structure, then hard-truncate.
+ * Flatten remote text to a single bounded line: control and format
+ * characters (newlines, ANSI, bidi marks) collapse to spaces so the text
+ * cannot fake description structure, then hard-truncate. Non-strings return
+ * '' — remote metadata carries no type guarantees, and throwing here would
+ * fail the whole tools/list response over one malformed field.
  */
-function sanitizeApiInstructions(raw: string): string {
+function flattenRemoteText(raw: unknown, maxLength: number): string {
+  if (typeof raw !== 'string') {
+    return '';
+  }
   const flattened = raw
     .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (flattened.length <= MAX_API_INSTRUCTIONS_LENGTH) {
+  if (flattened.length <= maxLength) {
     return flattened;
   }
-  return flattened.slice(0, MAX_API_INSTRUCTIONS_LENGTH - 3) + '...';
+  return flattened.slice(0, maxLength - 3) + '...';
+}
+
+function sanitizeApiInstructions(raw: unknown): string {
+  return flattenRemoteText(raw, MAX_API_INSTRUCTIONS_LENGTH);
 }
 
 /**
@@ -252,13 +300,16 @@ export function generateInstructions(
     }
   }
 
-  if (meta?.destructive) {
+  // Same fail-closed classifier as the execution policy: advertised guidance
+  // must never present a tool as safer than the executor will treat it, so
+  // missing or malformed annotations read as destructive here too.
+  if (classifyDestructive(meta)) {
     if (hasConfirm && hasDryRun) {
       parts.push('Always preview with dry_run or confirm before executing. Show preview to user.');
     } else {
       parts.push('This is destructive. Confirm intent with user first.');
     }
-    if (!meta.idempotent) {
+    if (!meta?.idempotent) {
       parts.push('Not idempotent — repeating may cause different results.');
     }
   } else if (meta?.readonly) {
@@ -283,12 +334,16 @@ export function buildSafetyTags(
   hasConfirm: boolean,
   verbosity: SchemaVerbosity
 ): string {
+  // Fail-closed classification, matching the execution policy: a missing or
+  // malformed destructive annotation is tagged DESTRUCTIVE, never left bare.
+  const isDestructive = classifyDestructive(meta);
+
   if (verbosity === 'standard') {
-    if (meta?.destructive) {
+    if (isDestructive) {
       const hints: string[] = [];
       if (hasConfirm) hints.push('Requires two-step confirmation');
       if (hasDryRun) hints.push('Supports dry_run');
-      if (!meta.idempotent) hints.push('Not idempotent');
+      if (!meta?.idempotent) hints.push('Not idempotent');
       return hints.length > 0 ? `[DESTRUCTIVE, ${hints.join(', ')}]` : '[DESTRUCTIVE]';
     }
     const notes: string[] = [];
@@ -299,7 +354,7 @@ export function buildSafetyTags(
 
   // Compact mode — short tags
   const tags: string[] = [];
-  if (meta?.destructive) tags.push('destructive');
+  if (isDestructive) tags.push('destructive');
   if (hasConfirm) tags.push('confirm');
   if (hasDryRun) tags.push('dry_run');
   return tags.length > 0 ? `[${tags.join(', ')}]` : '';
@@ -402,7 +457,11 @@ export function abilityToTool(
   const props = (inputSchema.properties || {}) as Record<string, object>;
   const hasDryRun = 'dry_run' in props;
   const hasConfirm = 'confirm' in props;
-  const isDestructive = meta?.destructive ?? false;
+  // Fail-closed, same classifier as the execution policy. The old
+  // `meta?.destructive ?? false` default advertised unannotated abilities as
+  // non-destructive (and skipped their confirmation-parameter injection)
+  // while the executor treated the same abilities as destructive.
+  const isDestructive = classifyDestructive(meta);
 
   // Add user_confirmed and confirmation_token parameters for destructive tools
   // with a confirm parameter. Both must be declared: confirmed execution is
@@ -441,15 +500,18 @@ export function abilityToTool(
     name: toolName,
     description,
     inputSchema,
-    // MCP semantic annotations for client UI hints (always included regardless of verbosity)
-    annotations: meta
-      ? {
-          title: ability.label || undefined,
-          readOnlyHint: meta.readonly,
-          destructiveHint: meta.destructive,
-          idempotentHint: meta.idempotent,
-          openWorldHint: true,
-        }
-      : undefined,
+    // MCP semantic annotations for client UI hints (always included
+    // regardless of verbosity). Hints are normalized booleans driven by the
+    // same fail-closed classifier as execution: a missing or malformed
+    // annotation set must not advertise a benign hint the executor will
+    // contradict, so destructiveHint follows classifyDestructive and the
+    // positive hints require literal true.
+    annotations: {
+      title: ability.label || undefined,
+      readOnlyHint: meta?.readonly === true && !isDestructive,
+      destructiveHint: isDestructive,
+      idempotentHint: meta?.idempotent === true,
+      openWorldHint: true,
+    },
   };
 }
