@@ -12,7 +12,30 @@ reviews:
         describe the Dashboard connection, not the tool surface. Everything
         tool-shaped (tool calls, completions, mainwp://site/{id},
         mainwp://help/tool/{name}, mainwp://abilities, mainwp://help) is
-        already gated through decidePolicy in src/policy.ts.
+        already gated through decidePolicy in src/policy.ts. Also do not
+        suggest decoding or parsing static resource URIs before their
+        exact-equality dispatch: MCP clients use the URIs exactly as
+        advertised by ListResources, only dynamic URIs go through
+        validateResourceUri, and percent-encoded static URIs keep their
+        pre-existing error behavior.
+
+    - path: 'src/policy.ts'
+      instructions: >-
+        Do not suggest defensive non-boolean handling ("!== false") for
+        config.safeMode or config.requireUserConfirmation in decidePolicy.
+        Config is trusted operator input validated at load: getBoolean in
+        src/config.ts fails startup on malformed values and the Config type
+        declares both fields as non-optional booleans. Fail-closed hardening
+        applies to hostile remote annotations, which classifyDestructive
+        already handles strictly (only a literal false is non-destructive).
+
+    - path: 'src/credential-check.ts'
+      instructions: >-
+        Do not suggest replacing the "Credential validation failed:
+        ${message}" interpolation with a generic message. This error is
+        operator-facing startup stderr (main() exits afterwards; nothing
+        reaches MCP clients), and remote response text is already sanitized
+        at construction in http-client.ts createHttpError.
 
     - path: 'docs/troubleshooting.md'
       instructions: >-
