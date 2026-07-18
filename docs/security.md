@@ -198,7 +198,7 @@ For untrusted AI clients:
 
 This provides defense-in-depth: Safe Mode blocks destructive operations at runtime, and `blockedTools` prevents the tools from even appearing in the AI's tool list.
 
-Note that `allowedTools` and `blockedTools` control which tools are listed and executable. The informational resources (`mainwp://abilities`, `mainwp://help`) still describe the full ability catalog from the Dashboard; blocking a tool prevents execution everywhere, it does not redact its documentation.
+`allowedTools` and `blockedTools` apply everywhere a tool can be seen or used: listing, execution, completions, the `mainwp://site/{id}` resource, per-tool help (`mainwp://help/tool/{name}`), and the informational resources (`mainwp://abilities`, `mainwp://help`). A blocked tool is redacted from discovery and documentation, not just refused at execution. The `mainwp://categories` list and the `mainwp://status` ability count stay unfiltered by design: they describe the Dashboard connection, not the tool surface.
 
 ---
 

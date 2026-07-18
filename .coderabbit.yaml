@@ -4,15 +4,15 @@
 
 reviews:
   path_instructions:
-    - path: 'src/index.ts'
+    - path: 'src/resources.ts'
       instructions: >-
-        Do not suggest filtering the static mainwp://abilities and
-        mainwp://help resources through allowedTools/blockedTools. This is a
-        documented policy decision (docs/security.md): the tool policy
-        governs listing and execution, while static resources describe the
-        full ability catalog so operators can see what a broader policy
-        would expose. Anything that resolves or executes an ability
-        (tool calls, completions, mainwp://site/{id}) is policy-gated.
+        Do not suggest filtering the mainwp://categories resource or the
+        mainwp://status abilitiesCount through allowedTools/blockedTools.
+        This is a documented policy decision (docs/security.md): they
+        describe the Dashboard connection, not the tool surface. Everything
+        tool-shaped (tool calls, completions, mainwp://site/{id},
+        mainwp://help/tool/{name}, mainwp://abilities, mainwp://help) is
+        already gated through decidePolicy in src/policy.ts.
 
     - path: 'docs/troubleshooting.md'
       instructions: >-

@@ -11,6 +11,8 @@ The server warns at startup when a bearer token (`MAINWP_TOKEN`) is configured w
 
 ### Changed
 
+The `mainwp://abilities` and `mainwp://help` resources now respect `allowedTools`/`blockedTools`: blocked tools no longer appear in their payloads, and the per-tool help resource (`mainwp://help/tool/{name}`) returns a permission error for blocked tools instead of documenting them. **This is a behavior change** for clients that read the full catalog from these resources under a restrictive policy; they now see the same filtered set as `tools/list`. The `mainwp://categories` list and `mainwp://status` ability count remain unfiltered. Internally, every policy check now routes through a single pure decision function (`src/policy.ts`).
+
 Destructive tool calls now go through strict confirmation gating. A bare call to a confirm-capable tool, with no preview and no confirmation token, returns a `PREVIEW_REQUIRED` error instead of proceeding with a logged warning. **This is breaking for clients that relied on the old skip**: run the preview step first, then confirm. Abilities that require confirmation but expose no `dry_run` parameter no longer get a fabricated dry-run call; they return a token-issuing `CONFIRMATION_REQUIRED` response with `preview: null`, and execution proceeds once the client confirms with that token.
 
 Nested objects and arrays of objects in the input of GET/DELETE abilities are now rejected with an invalid-params error. They used to be serialized into the query string as `[object Object]`, which the Dashboard silently misread.

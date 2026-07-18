@@ -29,31 +29,24 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, Config, formatJson } from './config.js';
-import { getTools, executeTool, isToolAllowed } from './tools.js';
-import { getSessionDataUsage, formatBytes } from './session.js';
+import { loadConfig, Config } from './config.js';
+import { getTools, executeTool } from './tools.js';
+import { decidePolicy } from './policy.js';
+import { formatBytes } from './session.js';
 import {
   fetchAbilities,
-  fetchCategories,
   clearCache,
   onCacheRefresh,
   executeAbility,
   initRateLimiter,
-  getAbilityByToolName,
-  type Ability,
 } from './abilities.js';
-import { generateHelpDocument, generateToolHelp } from './help.js';
+import { validateCredentials } from './credential-check.js';
+import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, isValidId } from './security.js';
 import { abilityNameToToolName } from './naming.js';
-import {
-  formatErrorResponse,
-  getErrorMessage,
-  getHttpStatus,
-  McpErrorFactory,
-  McpError,
-} from './errors.js';
+import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
@@ -61,59 +54,6 @@ const SERVER_VERSION = '1.0.0-beta.3';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
-
-/**
- * Validate and parse a resource URI.
- * Only allows known URI patterns to prevent injection attacks.
- * Decodes URL-encoded characters before validation.
- */
-function validateResourceUri(uri: string): {
-  type: string;
-  params?: Record<string, string | number>;
-} {
-  // Decode URI to handle URL-encoded characters (e.g., %20, %2F)
-  let decodedUri: string;
-  try {
-    decodedUri = decodeURIComponent(uri);
-  } catch (error) {
-    // Handle malformed URIs (invalid percent-encoding)
-    throw McpErrorFactory.invalidParams('Malformed URI: invalid percent-encoding', {
-      uri,
-      error: getErrorMessage(error),
-    });
-  }
-
-  const staticUris = [
-    'mainwp://abilities',
-    'mainwp://categories',
-    'mainwp://status',
-    'mainwp://help',
-  ];
-  if (staticUris.includes(decodedUri)) {
-    return { type: decodedUri.replace('mainwp://', '') };
-  }
-
-  // Match mainwp://site/{id} pattern with strict numeric ID
-  const siteMatch = decodedUri.match(/^mainwp:\/\/site\/(\d+)$/);
-  if (siteMatch) {
-    const siteId = parseInt(siteMatch[1], 10);
-    if (siteId < 1 || siteId > Number.MAX_SAFE_INTEGER) {
-      throw McpErrorFactory.invalidParams(
-        'Invalid site ID: must be between 1 and ' + Number.MAX_SAFE_INTEGER,
-        { uri, siteId }
-      );
-    }
-    return { type: 'site', params: { site_id: siteId } };
-  }
-
-  // Match mainwp://help/tool/{tool_name} pattern (lowercase only, matches tool name format)
-  const toolHelpMatch = decodedUri.match(/^mainwp:\/\/help\/tool\/([a-z0-9_]+)$/);
-  if (toolHelpMatch) {
-    return { type: 'tool-help', params: { tool_name: toolHelpMatch[1] } };
-  }
-
-  throw McpErrorFactory.resourceNotFound(uri);
-}
 
 /**
  * Create and configure the MCP server
@@ -207,102 +147,9 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
     };
   });
 
-  // Handler: Read a resource
-  // URI Handling Convention:
-  // - Static URIs (mainwp://abilities, mainwp://categories, mainwp://status, mainwp://help)
-  //   use direct equality checks for performance.
-  // - Dynamic/parameterized URIs (mainwp://site/{id}, mainwp://help/tool/{name})
-  //   MUST be routed through validateResourceUri() for security validation.
-  // - Do not introduce new dynamic URI patterns without using validateResourceUri().
+  // Handler: Read a resource (URI validation + branch bodies live in resources.ts)
   server.setRequestHandler(ReadResourceRequestSchema, async request => {
-    const { uri } = request.params;
-
-    const jsonResource = (data: unknown) => ({
-      contents: [{ uri, mimeType: 'application/json', text: formatJson(config, data) }],
-    });
-
-    try {
-      // Static URI handlers (no validation needed - exact match)
-      if (uri === 'mainwp://abilities') {
-        return jsonResource(await fetchAbilities(config, false, logger));
-      }
-
-      if (uri === 'mainwp://categories') {
-        return jsonResource(await fetchCategories(config, false, logger));
-      }
-
-      if (uri === 'mainwp://status') {
-        // Redact dashboardUrl to host-only to avoid leaking full URL path to untrusted MCP clients
-        let redactedHost: string;
-        try {
-          redactedHost = new URL(config.dashboardUrl).host;
-        } catch {
-          redactedHost = '[invalid-url]';
-        }
-
-        try {
-          const abilities = await fetchAbilities(config, true, logger); // Force refresh
-          return jsonResource({
-            connected: true,
-            dashboardHost: redactedHost,
-            abilitiesCount: abilities.length,
-            sessionData: getSessionDataUsage(config),
-          });
-        } catch (error) {
-          return jsonResource({
-            connected: false,
-            dashboardHost: redactedHost,
-            error: sanitizeError(getErrorMessage(error)),
-          });
-        }
-      }
-
-      if (uri === 'mainwp://help') {
-        const abilities = await fetchAbilities(config, false, logger);
-        return jsonResource(generateHelpDocument(abilities, config.abilityNamespaces[0]));
-      }
-
-      // Validate and parse the resource URI (throws on invalid URIs)
-      const parsed = validateResourceUri(uri);
-
-      if (parsed.type === 'site' && parsed.params?.site_id) {
-        // Derive the exposed tool name so allow/block lists keyed on
-        // namespaced names (non-mainwp primary namespace) still apply
-        const getSiteToolName = abilityNameToToolName(
-          'mainwp/get-site-v1',
-          config.abilityNamespaces[0]
-        );
-        if (!isToolAllowed(config, getSiteToolName)) {
-          throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
-        }
-        const result = await executeAbility(
-          config,
-          'mainwp/get-site-v1',
-          { site_id: parsed.params.site_id },
-          logger
-        );
-        return jsonResource(result);
-      }
-
-      if (parsed.type === 'tool-help' && parsed.params?.tool_name) {
-        const toolName = parsed.params.tool_name as string;
-
-        const ability = await getAbilityByToolName(config, toolName, logger);
-        if (!ability) {
-          throw McpErrorFactory.resourceNotFound(uri);
-        }
-
-        return jsonResource(generateToolHelp(ability, config.abilityNamespaces[0]));
-      }
-
-      throw new Error(`Unhandled resource type: ${parsed.type}`);
-    } catch (error) {
-      return {
-        contents: [
-          { uri, mimeType: 'application/json', text: formatErrorResponse(error, sanitizeError) },
-        ],
-      };
-    }
+    return handleReadResource(config, request.params.uri, logger);
   });
 
   // Handler: List available prompts
@@ -356,7 +203,7 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
           'mainwp/list-sites-v1',
           config.abilityNamespaces[0]
         );
-        if (!isToolAllowed(config, listSitesToolName)) {
+        if (decidePolicy(config, listSitesToolName) !== 'allow') {
           throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${listSitesToolName}`);
         }
         try {
@@ -434,89 +281,6 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
   });
 
   return { server, logger };
-}
-
-/**
- * Validate credentials by attempting to fetch abilities from the MainWP Dashboard.
- * Provides enhanced error messages for common failure scenarios.
- *
- * @param config - Server configuration
- * @param logger - Logger for status messages
- * @returns The fetched abilities array on success
- * @throws Error with actionable message on failure
- */
-async function validateCredentials(config: Config, logger: Logger): Promise<Ability[]> {
-  try {
-    const abilities = await fetchAbilities(config, false, logger);
-    logger.info('Credential validation successful: Connected to MainWP Dashboard');
-    return abilities;
-  } catch (error) {
-    const message = getErrorMessage(error);
-    const lowerMessage = message.toLowerCase();
-
-    // HTTP failures carry a structured status (createHttpError in http-client.ts);
-    // classify on that. Message sniffing below is only for non-HTTP failures
-    // (DNS, SSL, timeout) which have no status to inspect.
-    const status = getHttpStatus(error);
-
-    // Authentication failures (401/403) - provide auth-type specific guidance
-    if (status === 401 || status === 403) {
-      const authHint =
-        config.authType === 'basic'
-          ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
-          : 'Bearer tokens (MAINWP_TOKEN) are not accepted by the Abilities API, which authenticates through native WordPress. Use MAINWP_USER + MAINWP_APP_PASSWORD (a WordPress Application Password / Basic auth) instead.';
-      throw new Error(`Authentication failed: Invalid credentials. ${authHint}`, {
-        cause: error,
-      });
-    }
-
-    // Endpoint not found (404) - likely missing Abilities API plugin
-    if (status === 404) {
-      throw new Error(
-        'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.',
-        { cause: error }
-      );
-    }
-
-    // Connection timeout
-    if (lowerMessage.includes('timeout')) {
-      throw new Error(
-        'Connection timeout. Verify MAINWP_URL is reachable and the server is responding.',
-        { cause: error }
-      );
-    }
-
-    // SSL/TLS certificate errors
-    if (
-      lowerMessage.includes('certificate') ||
-      lowerMessage.includes('ssl') ||
-      lowerMessage.includes('tls') ||
-      lowerMessage.includes('self-signed') ||
-      lowerMessage.includes('unable to verify')
-    ) {
-      throw new Error(
-        'SSL certificate verification failed. For self-signed certificates, set MAINWP_SKIP_SSL_VERIFY=true (development only).',
-        { cause: error }
-      );
-    }
-
-    // Network connectivity errors
-    if (
-      lowerMessage.includes('enotfound') ||
-      lowerMessage.includes('econnrefused') ||
-      lowerMessage.includes('network') ||
-      lowerMessage.includes('getaddrinfo') ||
-      lowerMessage.includes('econnreset')
-    ) {
-      throw new Error(
-        'Network error: Cannot reach MAINWP_URL. Verify the URL is correct and the server is accessible.',
-        { cause: error }
-      );
-    }
-
-    // Other errors - re-throw with prefix
-    throw new Error(`Credential validation failed: ${message}`, { cause: error });
-  }
 }
 
 /**

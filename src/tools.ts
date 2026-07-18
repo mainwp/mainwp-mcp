@@ -26,6 +26,7 @@ import {
 } from './session.js';
 import { abilityToTool } from './tool-schema.js';
 import { handleConfirmationFlow } from './confirmation.js';
+import { decidePolicy, classifyDestructive, isToolAllowed } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 
 /**
@@ -75,11 +76,9 @@ export function clearToolsCache(): void {
   cachedToolsFingerprint = null;
 }
 
-/** Return whether a tool is permitted by the configured allow/block lists. */
-export function isToolAllowed(config: Config, toolName: string): boolean {
-  if (config.blockedTools?.includes(toolName)) return false;
-  return !config.allowedTools?.length || config.allowedTools.includes(toolName);
-}
+// Re-exported for existing consumers; the implementation lives in the pure
+// policy gate (policy.ts), the single policy authority for every surface.
+export { isToolAllowed };
 
 /**
  * Fetch all MainWP abilities and convert them to MCP tools
@@ -180,7 +179,9 @@ export async function executeTool(
       throw McpErrorFactory.cancelled();
     }
 
-    if (!isToolAllowed(config, toolName)) {
+    // Policy gate, listing stage: runs before ability resolution so a blocked
+    // tool is indistinguishable from a nonexistent one (no ability-name leak).
+    if (decidePolicy(config, toolName) !== 'allow') {
       throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
     }
 
@@ -200,7 +201,7 @@ export async function executeTool(
 
     // Default-deny: treat missing annotations as destructive (fail-closed)
     annotations = ability.meta?.annotations;
-    const isDestructive = annotations?.destructive ?? true;
+    const isDestructive = classifyDestructive(annotations);
     let effectiveArgs = args;
 
     // Always warn when annotations are missing — abilities without annotations
@@ -224,7 +225,11 @@ export async function executeTool(
       });
     }
 
-    // Safe mode handling
+    // Policy gate, execution stage: with destructiveness resolved, the gate
+    // decides safe-mode blocking and confirmation routing. The executor only
+    // acts on the decision; precedence lives in decidePolicy.
+    const decision = decidePolicy(config, toolName, isDestructive);
+
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)
       if ('confirm' in args) {
@@ -235,28 +240,28 @@ export async function executeTool(
           hadConfirm: confirm,
         });
       }
+    }
 
-      // Block destructive operations with a clear user-visible message.
-      // Note: Safe-mode early-return responses are intentionally excluded from
-      // sessionDataBytes tracking. The session data limit is designed to prevent
-      // runaway API responses, not small fixed-size local error messages.
-      if (isDestructive) {
-        reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
-        return {
-          content: [
-            {
-              type: 'text',
-              text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
-            },
-          ],
-          isError: true,
-        };
-      }
+    // Block destructive operations with a clear user-visible message.
+    // Note: Safe-mode early-return responses are intentionally excluded from
+    // sessionDataBytes tracking. The session data limit is designed to prevent
+    // runaway API responses, not small fixed-size local error messages.
+    if (decision === 'safe-mode-blocked') {
+      reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: formatJson(config, buildSafeModeBlockedResponse(ctx)),
+          },
+        ],
+        isError: true,
+      };
     }
 
     // Two-phase confirmation flow for destructive operations
     // Only applies when requireUserConfirmation is enabled and tool is destructive
-    if (config.requireUserConfirmation && isDestructive) {
+    if (decision === 'needs-confirmation') {
       const confirmResult = await handleConfirmationFlow({
         config,
         ability,
