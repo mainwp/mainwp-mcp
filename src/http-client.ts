@@ -7,6 +7,7 @@
 
 import { Agent as UndiciAgent } from 'undici';
 import { Config, getAuthHeaders } from './config.js';
+import { createHttpError } from './errors.js';
 import { sanitizeError } from './security.js';
 import type { Logger } from './logging.js';
 
@@ -18,6 +19,32 @@ export const MAX_URL_LENGTH = 8000;
 
 /** Maximum number of pages to fetch during pagination — prevents unbounded requests */
 const MAX_PAGES = 50;
+
+interface ResponseDeadline {
+  timeoutId?: ReturnType<typeof setTimeout>;
+  timedOut: boolean;
+  effectiveTimeout: number;
+  url: string;
+  externalSignal?: AbortSignal;
+  externalAbortHandler?: () => void;
+}
+
+const responseDeadlines = new WeakMap<Response, ResponseDeadline>();
+
+function clearResponseDeadline(deadline: ResponseDeadline): void {
+  if (deadline.timeoutId) {
+    clearTimeout(deadline.timeoutId);
+  }
+  if (deadline.externalSignal && deadline.externalAbortHandler) {
+    deadline.externalSignal.removeEventListener('abort', deadline.externalAbortHandler);
+  }
+}
+
+function createTimeoutError(deadline: Pick<ResponseDeadline, 'effectiveTimeout' | 'url'>): Error {
+  const error = new Error(`Request timeout after ${deadline.effectiveTimeout}ms: ${deadline.url}`);
+  (error as Error & { code: string }).code = 'ETIMEDOUT';
+  return error;
+}
 
 /**
  * Per-request undici dispatcher that skips TLS certificate verification.
@@ -46,15 +73,25 @@ export function createFetch(config: Config, perCallTimeout?: number) {
 
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
+    const deadline: ResponseDeadline = {
+      timedOut: false,
+      effectiveTimeout,
+      url,
+    };
+    deadline.timeoutId = setTimeout(() => {
+      deadline.timedOut = true;
+      controller.abort();
+    }, effectiveTimeout);
 
     // Forward external signal abort to our controller (preserves caller cancellation)
     const externalSignal = options.signal;
     if (externalSignal) {
+      deadline.externalSignal = externalSignal;
       if (externalSignal.aborted) {
         controller.abort();
       } else {
-        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+        deadline.externalAbortHandler = () => controller.abort();
+        externalSignal.addEventListener('abort', deadline.externalAbortHandler, { once: true });
       }
     }
 
@@ -75,7 +112,6 @@ export function createFetch(config: Config, perCallTimeout?: number) {
       }
 
       const response = await fetch(url, fetchOptions as RequestInit);
-      clearTimeout(timeoutId);
 
       // Check response size before parsing (if content-length is provided)
       const contentLength = response.headers.get('content-length');
@@ -88,14 +124,12 @@ export function createFetch(config: Config, perCallTimeout?: number) {
         }
       }
 
+      responseDeadlines.set(response, deadline);
       return response;
     } catch (error) {
-      clearTimeout(timeoutId);
-      if ((error as Error).name === 'AbortError') {
-        // Create timeout error with ETIMEDOUT code for retry detection
-        const timeoutError = new Error(`Request timeout after ${effectiveTimeout}ms: ${url}`);
-        (timeoutError as Error & { code: string }).code = 'ETIMEDOUT';
-        throw timeoutError;
+      clearResponseDeadline(deadline);
+      if ((error as Error).name === 'AbortError' && deadline.timedOut) {
+        throw createTimeoutError(deadline);
       }
       throw error;
     }
@@ -116,37 +150,51 @@ export function createFetch(config: Config, perCallTimeout?: number) {
  * @returns The response body as a string
  */
 export async function readLimitedBody(response: Response, maxBytes: number): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    // Fallback for test mocks without ReadableStream body
-    let text: string;
-    if (typeof response.text === 'function') {
-      text = await response.text();
-    } else {
-      // Last resort: json() + stringify (handles minimal mock objects)
-      text = JSON.stringify(await response.json());
+  const deadline = responseDeadlines.get(response);
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      // Fallback for test mocks without ReadableStream body
+      let text: string;
+      if (typeof response.text === 'function') {
+        text = await response.text();
+      } else {
+        // Last resort: json() + stringify (handles minimal mock objects)
+        text = JSON.stringify(await response.json());
+      }
+      if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+        throw new Error(`Response body exceeds ${maxBytes} bytes limit`);
+      }
+      return text;
     }
-    if (Buffer.byteLength(text, 'utf8') > maxBytes) {
-      throw new Error(`Response body exceeds ${maxBytes} bytes limit`);
+
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        // Fire-and-forget: a rejected cancel() must not race the throw below
+        void reader.cancel().catch(() => {});
+        throw new Error(`Response body exceeds ${maxBytes} bytes limit`);
+      }
+      chunks.push(value);
     }
-    return text;
+
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  } catch (error) {
+    if (deadline?.timedOut) {
+      throw createTimeoutError(deadline);
+    }
+    throw error;
+  } finally {
+    if (deadline) {
+      clearResponseDeadline(deadline);
+      responseDeadlines.delete(response);
+    }
   }
-
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    totalBytes += value.byteLength;
-    if (totalBytes > maxBytes) {
-      reader.cancel();
-      throw new Error(`Response body exceeds ${maxBytes} bytes limit`);
-    }
-    chunks.push(value);
-  }
-
-  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 /**
@@ -161,6 +209,7 @@ export async function paginateApi<T>(
   logger?: Logger
 ): Promise<T[]> {
   let page = 1;
+  let capped = false;
   const allItems: T[] = [];
 
   while (true) {
@@ -168,7 +217,9 @@ export async function paginateApi<T>(
 
     if (!response.ok) {
       const errorText = await readLimitedBody(response, MAX_ERROR_BODY_BYTES);
-      throw new Error(
+      throw createHttpError(
+        response.status,
+        String(response.status),
         `Failed to fetch ${label}: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`
       );
     }
@@ -184,11 +235,15 @@ export async function paginateApi<T>(
     allItems.push(...batch);
 
     const totalPages = parseInt(response.headers.get('X-WP-TotalPages') || '1', 10);
-    if (page >= totalPages || page >= MAX_PAGES) break;
+    if (page >= totalPages) break;
+    if (page >= MAX_PAGES) {
+      capped = true;
+      break;
+    }
     page++;
   }
 
-  if (page >= MAX_PAGES) {
+  if (capped) {
     logger?.warning(
       `Pagination capped at ${MAX_PAGES} pages (fetched ${allItems.length} ${label}) — some may be missing`
     );

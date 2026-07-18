@@ -3,14 +3,20 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getTools, executeTool, clearToolsCache } from './tools.js';
+import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
-import { type Config } from './config.js';
-import { type Logger } from './logging.js';
-import { type Ability, clearCache, initRateLimiter } from './abilities.js';
+import { MCP_ERROR_CODES } from './errors.js';
+import {
+  type Ability,
+  clearCache,
+  fetchAbilities,
+  initRateLimiter,
+  onCacheRefresh,
+} from './abilities.js';
+import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -127,37 +133,9 @@ const sampleAbilities: Ability[] = [
   },
 ];
 
-const baseConfig: Config = {
-  dashboardUrl: 'https://test.local',
-  authType: 'basic',
-  username: 'admin',
-  appPassword: 'xxxx',
-  skipSslVerify: true,
-  allowHttp: false,
-  rateLimit: 0,
-  requestTimeout: 5000,
-  maxResponseSize: 10485760,
-  safeMode: false,
-  requireUserConfirmation: true,
-  maxSessionData: 52428800,
-  schemaVerbosity: 'standard',
-  responseFormat: 'compact',
-  retryEnabled: false, // Disable retries for tests
-  maxRetries: 2,
-  retryBaseDelay: 1000,
-  retryMaxDelay: 2000,
-  abilityNamespaces: ['mainwp'],
-  configSource: 'environment',
-};
+const baseConfig = makeBaseConfig();
 
-const mockLogger: Logger = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  notice: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  critical: vi.fn(),
-};
+const mockLogger = makeMockLogger();
 
 describe('getTools', () => {
   beforeEach(() => {
@@ -225,6 +203,27 @@ describe('getTools', () => {
     const deleteTool = tools.find(t => t.name === 'delete_site_v1');
 
     expect(deleteTool?.inputSchema.properties).toHaveProperty('user_confirmed');
+  });
+
+  it('does not mutate cached schemas or notify on an identical forced refresh', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => structuredClone(sampleAbilities),
+      headers: new Headers(),
+    });
+
+    await getTools(baseConfig);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => structuredClone(sampleAbilities),
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).not.toHaveBeenCalled();
   });
 
   it('should handle schema verbosity modes - compact', async () => {
@@ -482,6 +481,18 @@ describe('getTools', () => {
   });
 });
 
+describe('isToolAllowed', () => {
+  it('gives the blocklist precedence over the allowlist', () => {
+    const config = {
+      ...baseConfig,
+      allowedTools: ['list_sites_v1'],
+      blockedTools: ['list_sites_v1'],
+    };
+
+    expect(isToolAllowed(config, 'list_sites_v1')).toBe(false);
+  });
+});
+
 describe('executeTool', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -518,6 +529,40 @@ describe('executeTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('passes tool arguments through to the ability request', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    await executeTool(baseConfig, 'list_sites_v1', { page: 2, per_page: 25 }, mockLogger);
+
+    const url = mockFetch.mock.calls[1][0] as string;
+    expect(url).toContain('input[page]=2');
+    expect(url).toContain('input[per_page]=25');
+  });
+
+  it('rejects a disallowed tool before lookup, preview, or execution', async () => {
+    const config = { ...baseConfig, blockedTools: ['delete_site_v1'] };
+
+    const result = await executeTool(
+      config,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Tool is not allowed: delete_site_v1');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('should validate input before execution', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -543,7 +588,8 @@ describe('executeTool', () => {
 
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.error.message).toContain('Ability not found for tool: no_such_tool_v1');
+    expect(parsed.error.code).toBe(MCP_ERROR_CODES.TOOL_NOT_FOUND);
+    expect(parsed.error.message).toContain('Tool not found: no_such_tool_v1');
   });
 
   it('should block destructive operations in safe mode', async () => {
@@ -563,6 +609,29 @@ describe('executeTool', () => {
 
     expect(result.content[0].text).toContain('SAFE_MODE_BLOCKED');
     expect(result.isError).toBe(true);
+  });
+
+  it('allows read-only tools in safe mode', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ sites: [] }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      { ...baseConfig, safeMode: true },
+      'list_sites_v1',
+      {},
+      mockLogger
+    );
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ sites: [] });
+    expect(result.isError).toBeUndefined();
   });
 
   it('should strip confirm parameter in safe mode', async () => {
@@ -616,6 +685,141 @@ describe('executeTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('issues a confirmation token without calling upstream when the ability has confirm but no dry_run', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+
+    // Workflow step, not an error: token issued, no preview, no upstream call
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe('CONFIRMATION_REQUIRED');
+    expect(parsed.next_action).toBe('confirm_without_preview');
+    expect(parsed.preview).toBeNull();
+    expect(typeof parsed.confirmation_token).toBe('string');
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only
+
+    // The confirmed follow-up call executes — the gate is not a dead end
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmed = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: parsed.confirmation_token },
+      mockLogger
+    );
+    expect(confirmed.isError).toBeUndefined();
+    expect(confirmed.content[0].text).toContain('deleted');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects injected dry_run on an ability that does not declare it', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    // Undeclared dry_run must not bypass confirmation: if upstream ignored
+    // the unknown parameter, the destructive operation would execute for real.
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, dry_run: true },
+      mockLogger
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBe('INVALID_PARAMETER');
+    expect(parsed.message).toContain('dry_run');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only, no /run
+  });
+
+  it('rejects injected dry_run even when combined with confirm: true', async () => {
+    const confirmOnlyAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/delete-without-preview-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_id: { type: 'integer', description: 'Site ID' },
+          confirm: { type: 'boolean', description: 'Must be true to execute' },
+        },
+        required: ['site_id'],
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, confirmOnlyAbility],
+      headers: new Headers(),
+    });
+
+    // Worst case: confirm: true rides along with the fabricated dry_run —
+    // a skip here would forward confirm: true upstream without any gate.
+    const result = await executeTool(
+      baseConfig,
+      'delete_without_preview_v1',
+      { site_id: 1, confirm: true, dry_run: true },
+      mockLogger
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBe('INVALID_PARAMETER');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // abilities fetch only, no /run
+  });
+
+  it('requires a preview for a bare destructive call with confirm support', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'delete_site_v1', { site_id: 1 }, mockLogger);
+
+    expect(result.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('should reject user_confirmed without prior preview', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -650,6 +854,61 @@ describe('executeTool', () => {
 
     expect(result.content[0].text).toContain('CONFLICTING_PARAMETERS');
     expect(result.isError).toBe(true);
+  });
+
+  it('allows a declared explicit dry_run to bypass confirmation', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true, preview: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, dry_run: true },
+      mockLogger
+    );
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ dry_run: true, preview: true });
+    expect(result.isError).toBeUndefined();
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Explicit dry_run bypasses confirmation flow',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
+  it('strips confirm from an explicit dry_run call before reaching upstream', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true, preview: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, dry_run: true, confirm: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBeUndefined();
+    // Upstream must never see the ambiguous confirm+dry_run combination
+    const [executionUrl, executionInit] = mockFetch.mock.calls[1] as [string, RequestInit];
+    const serialized = `${executionUrl} ${String(executionInit?.body ?? '')}`;
+    expect(serialized).toContain('dry_run');
+    expect(serialized).not.toContain('confirm=');
+    expect(serialized).not.toContain('"confirm"');
   });
 
   it('should accept confirmation_token to resolve preview', async () => {
@@ -825,6 +1084,27 @@ describe('executeTool', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
+  it('returns an error result for upstream HTTP execution errors', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => JSON.stringify({ code: 'site_not_found', message: 'Site does not exist' }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'list_sites_v1', {}, mockLogger);
+
+    expect(result.content[0].text).toContain('site_not_found');
+    expect(result.isError).toBe(true);
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
   it('should return compact JSON by default', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -865,6 +1145,70 @@ describe('executeTool', () => {
     expect(result.content[0].text).toContain('\n');
     const parsed = JSON.parse(result.content[0].text);
     expect(result.content[0].text).toBe(JSON.stringify(parsed, null, 2));
+  });
+
+  it('executes non-primary namespace tools against their original ability URL', async () => {
+    const abilities: Ability[] = [
+      {
+        name: 'acme/do-thing-v1',
+        label: 'Acme Do Thing',
+        description: 'Third-party readonly ability',
+        category: 'acme-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => abilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ result: 'pong' }),
+      headers: new Headers(),
+    });
+    const config = {
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme'] as [string, ...string[]],
+    };
+
+    const result = await executeTool(config, 'acme__do_thing_v1', { input: 'ping' }, mockLogger);
+
+    expect(mockFetch.mock.calls[1][0]).toContain('/abilities/acme/do-thing-v1/run');
+    expect(JSON.parse(result.content[0].text)).toEqual({ result: 'pong' });
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('round-trips a hyphenated namespace through execution', async () => {
+    const abilities: Ability[] = [
+      {
+        name: 'acme-corp/do-thing-v1',
+        label: 'Acme Corp Do Thing',
+        description: 'Hyphenated-namespace ability',
+        category: 'acme-corp-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => abilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true }),
+      headers: new Headers(),
+    });
+    const config = {
+      ...baseConfig,
+      abilityNamespaces: ['mainwp', 'acme-corp'] as [string, ...string[]],
+    };
+
+    const result = await executeTool(config, 'acme_corp__do_thing_v1', {}, mockLogger);
+
+    expect(mockFetch.mock.calls[1][0]).toContain('/abilities/acme-corp/do-thing-v1/run');
+    expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
+    expect(result.isError).toBeUndefined();
   });
 });
 
@@ -908,6 +1252,8 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const expiredToken = JSON.parse(previewResult.content[0].text as string)
+      .confirmation_token as string;
 
     // Step 2: Advance time beyond PREVIEW_EXPIRY_MS (5 minutes + 1ms)
     vi.setSystemTime(startTime + 5 * 60 * 1000 + 1);
@@ -916,7 +1262,7 @@ describe('confirmation flow - full cycle', () => {
     const expiredResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: expiredToken },
       mockLogger
     );
 
@@ -927,15 +1273,73 @@ describe('confirmation flow - full cycle', () => {
       expect.objectContaining({ toolName: 'delete_site_v1' })
     );
 
-    // Step 4: Subsequent confirmation without new preview should require preview
+    // Step 4: Subsequent confirmation with the expired (now deleted) token should require preview
     const subsequentResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: expiredToken },
       mockLogger
     );
 
     expect(subsequentResult.content[0].text).toContain('PREVIEW_REQUIRED');
+  });
+
+  it('should reject confirmation without a token even when a matching preview is pending', async () => {
+    // Step 1: Generate a preview (creates a pending preview for these exact args)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: { site_id: 1, will_delete: true } }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const token = JSON.parse(previewResult.content[0].text as string).confirmation_token as string;
+    const fetchCallsAfterPreview = mockFetch.mock.calls.length;
+
+    // Step 2: user_confirmed with identical args but NO token must be rejected
+    // without any upstream call (a tool+args fallback would let a caller
+    // confirm a preview it never read)
+    const noTokenResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true, user_confirmed: true },
+      mockLogger
+    );
+
+    expect(noTokenResult.isError).toBe(true);
+    expect(noTokenResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(noTokenResult.content[0].text).toContain('confirmation_token');
+    expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterPreview);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - confirmation_token missing',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+
+    // Step 3: The issued token still works after the rejected attempt
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmedResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+    expect(confirmedResult.isError).toBeUndefined();
+    expect(confirmedResult.content[0].text).toContain('deleted');
   });
 
   it('should reject reuse of consumed confirmation_token', async () => {
@@ -1019,7 +1423,7 @@ describe('confirmation flow - full cycle', () => {
     expect(crossToolResult.content[0].text).toContain('PREVIEW_REQUIRED');
     expect(crossToolResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
-      'Confirmation failed - token belongs to different tool',
+      'Confirmation failed - token belongs to a different tool or identity',
       expect.objectContaining({ toolName: 'delete_plugins_v1' })
     );
 
@@ -1031,6 +1435,49 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
     expect(reuseResult.content[0].text).toContain('PREVIEW_REQUIRED');
+  });
+
+  it('rejects a confirmation token issued under a different config identity', async () => {
+    // Preview against dashboard A
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, affected: [1] }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    const token = JSON.parse(previewResult.content[0].text).confirmation_token;
+    expect(token).toBeDefined();
+
+    // Confirm against dashboard B with the same tool and arguments: the
+    // module-level preview maps are shared, so without identity scoping this
+    // would execute against a dashboard that never previewed anything.
+    const otherDashboard = { ...baseConfig, dashboardUrl: 'https://other-dashboard.example' };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const crossIdentityResult = await executeTool(
+      otherDashboard,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+
+    expect(crossIdentityResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(crossIdentityResult.isError).toBe(true);
   });
 
   it('should reject confirmation when arguments differ from preview (arg-swap)', async () => {
@@ -1073,6 +1520,87 @@ describe('confirmation flow - full cycle', () => {
     );
   });
 
+  it('should reject confirmation when nested arguments differ from preview (nested arg-swap)', async () => {
+    // Step 1: Generate preview with a nested argument value
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, site_id: 1 }),
+      headers: new Headers(),
+    });
+
+    const previewResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, settings: { role: 'viewer' }, confirm: true },
+      mockLogger
+    );
+    const parsed = JSON.parse(previewResult.content[0].text);
+    const token = parsed.confirmation_token;
+    expect(token).toBeDefined();
+
+    // Step 2: Confirm with the same top-level shape but a different nested value
+    const swapResult = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      {
+        site_id: 1,
+        settings: { role: 'admin' },
+        user_confirmed: true,
+        confirmation_token: token,
+      },
+      mockLogger
+    );
+
+    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.isError).toBe(true);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - arguments do not match preview',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
+  it('should reject confirmation when values nested under a __proto__ key differ from preview', async () => {
+    // JSON.parse creates __proto__ as an own property; a plain-object
+    // canonicalization target would silently drop it via the prototype setter,
+    // collapsing differing payloads onto one preview key.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ preview: true, site_id: 1 }),
+      headers: new Headers(),
+    });
+
+    const previewArgs = JSON.parse(
+      '{"site_id":1,"settings":{"__proto__":{"role":"viewer"}},"confirm":true}'
+    ) as Record<string, unknown>;
+    const previewResult = await executeTool(baseConfig, 'delete_site_v1', previewArgs, mockLogger);
+    const parsed = JSON.parse(previewResult.content[0].text);
+    const token = parsed.confirmation_token;
+    expect(token).toBeDefined();
+
+    const confirmArgs = JSON.parse(
+      '{"site_id":1,"settings":{"__proto__":{"role":"admin"}},"user_confirmed":true}'
+    ) as Record<string, unknown>;
+    confirmArgs.confirmation_token = token;
+    const swapResult = await executeTool(baseConfig, 'delete_site_v1', confirmArgs, mockLogger);
+
+    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.isError).toBe(true);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Confirmation failed - arguments do not match preview',
+      expect.objectContaining({ toolName: 'delete_site_v1' })
+    );
+  });
+
   it('should complete two-phase confirmation flow', async () => {
     // Step 1: Preview
     mockFetch.mockResolvedValueOnce({
@@ -1095,8 +1623,10 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(previewResult.content[0].text).toContain('CONFIRMATION_REQUIRED');
+    const confirmationToken = JSON.parse(previewResult.content[0].text as string)
+      .confirmation_token as string;
 
-    // Step 2: Confirm execution
+    // Step 2: Confirm execution with the issued token
     // Note: abilities are already cached from step 1, so no need to mock abilities fetch again
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1107,7 +1637,7 @@ describe('confirmation flow - full cycle', () => {
     const confirmResult = await executeTool(
       baseConfig,
       'delete_site_v1',
-      { site_id: 1, user_confirmed: true },
+      { site_id: 1, user_confirmed: true, confirmation_token: confirmationToken },
       mockLogger
     );
 
@@ -1116,8 +1646,7 @@ describe('confirmation flow - full cycle', () => {
 });
 
 describe('session data tracking', () => {
-  // Note: session data tracking is cumulative across all tests
-  // These tests verify the tracking mechanism exists
+  beforeEach(() => resetSessionData());
 
   it('should return usage object with used and limit', () => {
     const usage = getSessionDataUsage(baseConfig);

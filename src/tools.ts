@@ -50,7 +50,16 @@ export type ToolCallResult = {
 
 /**
  * Cached tool list to avoid re-converting abilities on every ListTools call.
- * Invalidated by abilities array reference change or config fingerprint change.
+ *
+ * This is the second tier of a two-tier cache and deliberately uses a
+ * different invalidation model than abilities.ts:
+ * - abilities.ts owns the SOURCE cache: TTL + namespace signature, with
+ *   stale-serving on upstream failures.
+ * - this is a pure derivation memo: abilities → tools is deterministic given
+ *   the config, so it's keyed on the abilities array identity (fetchAbilities
+ *   returns the same array while its cache is valid) plus a fingerprint of
+ *   the config fields that affect conversion. No TTL or staleness concept
+ *   needed — freshness is entirely the source cache's problem.
  */
 let cachedTools: Tool[] | null = null;
 let cachedToolsAbilitiesRef: Ability[] | null = null;
@@ -64,6 +73,12 @@ export function clearToolsCache(): void {
   cachedTools = null;
   cachedToolsAbilitiesRef = null;
   cachedToolsFingerprint = null;
+}
+
+/** Return whether a tool is permitted by the configured allow/block lists. */
+export function isToolAllowed(config: Config, toolName: string): boolean {
+  if (config.blockedTools?.includes(toolName)) return false;
+  return !config.allowedTools?.length || config.allowedTools.includes(toolName);
 }
 
 /**
@@ -82,7 +97,14 @@ export function clearToolsCache(): void {
  */
 export async function getTools(config: Config, logger?: Logger): Promise<Tool[]> {
   const abilities = await fetchAbilities(config, false, logger);
-  const fingerprint = `${config.schemaVerbosity}|${config.allowedTools?.join(',') ?? ''}|${config.blockedTools?.join(',') ?? ''}|${config.abilityNamespaces.join(',')}`;
+  // JSON.stringify (not delimiter-joining) so a tool or namespace name
+  // containing the delimiter could never produce a colliding fingerprint
+  const fingerprint = JSON.stringify([
+    config.schemaVerbosity,
+    config.allowedTools ?? [],
+    config.blockedTools ?? [],
+    config.abilityNamespaces,
+  ]);
 
   if (
     cachedTools &&
@@ -99,16 +121,7 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
-  if (config.allowedTools && config.allowedTools.length > 0) {
-    const allowedSet = new Set(config.allowedTools);
-    tools = tools.filter(tool => allowedSet.has(tool.name));
-  }
-
-  // Apply blocklist filter (blacklist)
-  if (config.blockedTools && config.blockedTools.length > 0) {
-    const blockedSet = new Set(config.blockedTools);
-    tools = tools.filter(tool => !blockedSet.has(tool.name));
-  }
+  tools = tools.filter(tool => isToolAllowed(config, tool.name));
 
   // Log if tools were filtered
   if (tools.length !== originalCount && logger) {
@@ -126,7 +139,7 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   if (config.schemaVerbosity !== 'standard' && logger) {
     logger.info('Schema verbosity mode active', {
       verbosity: config.schemaVerbosity,
-      note: 'Reduces token usage by ~30% with minimal descriptions',
+      note: 'Uses minimal descriptions to reduce token usage',
     });
   }
 
@@ -167,6 +180,10 @@ export async function executeTool(
       throw McpErrorFactory.cancelled();
     }
 
+    if (!isToolAllowed(config, toolName)) {
+      throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
+    }
+
     // Validate input before forwarding to API
     validateInput(args);
 
@@ -175,7 +192,7 @@ export async function executeTool(
     // and prefixed `{ns}__tool` names from non-primary namespaces.
     const ability = await getAbilityByToolName(config, toolName, reqLogger);
     if (!ability) {
-      throw new Error(`Ability not found for tool: ${toolName}`);
+      throw McpErrorFactory.toolNotFound(toolName);
     }
     abilityName = ability.name;
 
@@ -196,9 +213,11 @@ export async function executeTool(
       });
     }
 
-    // Log all destructive operation attempts for audit purposes (regardless of safe mode)
+    // Audit: fires for every destructive request, including ones safe mode
+    // blocks below. The matching "executed" event lives in executeAbility;
+    // grep "AUDIT:" for the full trail.
     if (isDestructive) {
-      reqLogger.info('Destructive operation invoked', {
+      reqLogger.info('AUDIT: destructive operation requested', {
         toolName,
         abilityName,
         safeMode: config.safeMode,

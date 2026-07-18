@@ -25,7 +25,7 @@
     },
     "apiToken": {
       "type": "string",
-      "description": "MainWP REST API Bearer token. Alternative to username+appPassword authentication. Only used if username+appPassword are not set (Basic Auth takes precedence when both are provided)."
+      "description": "MainWP REST API Bearer token retained for compatibility. The WordPress Abilities API is expected to reject it; use username+appPassword with a WordPress Application Password. Only used without a complete username+appPassword pair."
     },
     "skipSslVerify": {
       "type": "boolean",
@@ -91,7 +91,7 @@
       "type": "string",
       "enum": ["compact", "standard"],
       "default": "standard",
-      "description": "Schema verbosity level. 'compact' reduces token usage by ~30% with shorter descriptions. 'standard' provides full descriptions with examples and safety information. Default is 'standard'."
+      "description": "Schema verbosity level. 'compact' reduces token usage by ~20% with shorter descriptions. 'standard' provides full descriptions with examples and safety information. Default is 'standard'."
     },
     "responseFormat": {
       "type": "string",

@@ -146,12 +146,36 @@ describe('getPrompt - argument validation', () => {
     expect(() => getPrompt('troubleshoot-site', { site_id: 'abc' })).toThrow('Invalid site_id');
   });
 
-  it('should accept numeric site_id', () => {
-    expect(() => getPrompt('troubleshoot-site', { site_id: '123' })).not.toThrow();
+  it('should accept numeric site_id and interpolate it', () => {
+    const result = getPrompt('troubleshoot-site', { site_id: '123' });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect((result.messages[0].content as { text: string }).text).toContain('123');
   });
 
-  it('should accept "all" as site_id', () => {
-    expect(() => getPrompt('performance-check', { site_id: 'all' })).not.toThrow();
+  it('should accept "all" as site_id and interpolate it', () => {
+    const result = getPrompt('performance-check', { site_id: 'all' });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect((result.messages[0].content as { text: string }).text).toContain('all');
+  });
+
+  it('should reject zero and partial-numeric site_id', () => {
+    expect(() => getPrompt('troubleshoot-site', { site_id: '0' })).toThrow('Invalid site_id');
+    expect(() => getPrompt('troubleshoot-site', { site_id: '12abc' })).toThrow('Invalid site_id');
+  });
+
+  it('should reject site_ids containing a zero or partial-numeric entry', () => {
+    expect(() => getPrompt('security-audit', { site_ids: '1,0,3' })).toThrow('Invalid site_ids');
+    expect(() => getPrompt('security-audit', { site_ids: '1,2abc' })).toThrow('Invalid site_ids');
+  });
+
+  it('should canonicalize site_ids so raw whitespace never reaches the template', () => {
+    const result = getPrompt('security-audit', { site_ids: '1,\n2' });
+
+    const text = (result.messages[0].content as { text: string }).text;
+    expect(text).toContain('1,2');
+    expect(text).not.toContain('1,\n2');
   });
 
   it('should reject invalid issue_type', () => {
@@ -160,14 +184,18 @@ describe('getPrompt - argument validation', () => {
     );
   });
 
-  it('should accept valid issue_type', () => {
-    expect(() =>
-      getPrompt('troubleshoot-site', { site_id: '1', issue_type: 'security' })
-    ).not.toThrow();
+  it('should accept valid issue_type and interpolate it', () => {
+    const result = getPrompt('troubleshoot-site', { site_id: '1', issue_type: 'security' });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect((result.messages[0].content as { text: string }).text).toContain('security');
   });
 
-  it('should accept comma-separated numeric site_ids', () => {
-    expect(() => getPrompt('security-audit', { site_ids: '1,2,3' })).not.toThrow();
+  it('should accept comma-separated numeric site_ids and interpolate them', () => {
+    const result = getPrompt('security-audit', { site_ids: '1,2,3' });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect((result.messages[0].content as { text: string }).text).toContain('1,2,3');
   });
 
   it('should accept "all" as site_ids', () => {
@@ -184,7 +212,10 @@ describe('getPrompt - argument validation', () => {
     );
   });
 
-  it('should accept valid update_type', () => {
-    expect(() => getPrompt('update-workflow', { update_type: 'plugins' })).not.toThrow();
+  it('should accept valid update_type and interpolate it', () => {
+    const result = getPrompt('update-workflow', { update_type: 'plugins' });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect((result.messages[0].content as { text: string }).text).toContain('plugins');
   });
 });

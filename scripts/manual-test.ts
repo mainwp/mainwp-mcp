@@ -6,11 +6,14 @@
  * records response times, and saves results to a timestamped JSON file.
  *
  * Usage:
- *   npm run test:manual                        # Run all tests
+ *   npm run test:manual                        # Read + safe-write tests (destructive excluded)
+ *   npm run test:manual -- --destructive       # Include destructive tests
  *   npm run test:manual -- --category read     # Read-only only
  *   npm run test:manual -- --category safe-write
+ *   npm run test:manual -- --category destructive
  *   npm run test:manual -- --test count-sites --test list-sites
- *   npm run test:manual -- --site-id 1         # Skip discovery
+ *   npm run test:manual -- --site-id 1         # Skip site discovery
+ *   npm run test:manual -- --plugin-slug hello-dolly/hello.php  # Skip plugin discovery
  *   npm run test:manual -- --dry-run           # Show what would run
  *   npm run test:manual -- --verbose           # Print response bodies
  */
@@ -64,6 +67,8 @@ interface CliOptions {
   category: TestCategory | null;
   testNames: string[];
   siteId: number | null;
+  pluginSlug: string | null;
+  destructive: boolean;
   dryRun: boolean;
   verbose: boolean;
 }
@@ -97,6 +102,8 @@ function parseArgs(): CliOptions {
     category: null,
     testNames: [],
     siteId: null,
+    pluginSlug: null,
+    destructive: false,
     dryRun: false,
     verbose: false,
   };
@@ -126,6 +133,16 @@ function parseArgs(): CliOptions {
           process.exit(1);
         }
         break;
+      case '--plugin-slug':
+        opts.pluginSlug = args[++i];
+        if (!opts.pluginSlug || opts.pluginSlug.startsWith('--')) {
+          console.error('Invalid --plugin-slug: value required');
+          process.exit(1);
+        }
+        break;
+      case '--destructive':
+        opts.destructive = true;
+        break;
       case '--dry-run':
         opts.dryRun = true;
         break;
@@ -137,14 +154,19 @@ function parseArgs(): CliOptions {
 MainWP MCP Manual Test Harness
 
 Usage:
-  npm run test:manual                          Run all tests
+  npm run test:manual                          Read + safe-write tests (destructive excluded)
+  npm run test:manual -- --destructive         Include destructive tests
   npm run test:manual -- --category read        Read-only tests only
   npm run test:manual -- --category safe-write  Safe-write tests only
   npm run test:manual -- --category destructive Destructive tests only
   npm run test:manual -- --test <name>         Run specific test(s)
   npm run test:manual -- --site-id <id>        Skip discovery, use this site ID
+  npm run test:manual -- --plugin-slug <slug>  Use this plugin for lifecycle tests
   npm run test:manual -- --dry-run             Show what would run
   npm run test:manual -- --verbose             Print response bodies
+
+Plugin lifecycle tests (activate/deactivate/delete) only auto-discover
+throwaway plugins (hello-dolly). Anything else requires --plugin-slug.
 `);
         process.exit(0);
         break;
@@ -434,7 +456,6 @@ function buildTestCatalog(): TestScenario[] {
       category: 'safe-write',
       readonly: false,
       params: ctx => ({ site_id_or_domain: ctx.siteId, plugins: [ctx.pluginSlug] }),
-      pairedWith: 'delete-plugin',
     },
     {
       name: 'delete-plugin',
@@ -450,6 +471,16 @@ function buildTestCatalog(): TestScenario[] {
 // ---------------------------------------------------------------------------
 // Discovery Phase
 // ---------------------------------------------------------------------------
+
+/**
+ * Plugins the lifecycle tests (activate → deactivate → delete) may touch
+ * without asking. The delete test permanently removes the plugin from the
+ * child site, so only throwaway plugins qualify — Akismet doesn't (its
+ * uninstall drops the configured API key); pass it via --plugin-slug if you
+ * mean it. A run once auto-picked WooCommerce and deleted it — never widen
+ * this to "first plugin found".
+ */
+const SAFE_TEST_PLUGIN_SLUGS = ['hello.php', 'hello-dolly/hello.php'];
 
 async function discover(config: Config, opts: CliOptions): Promise<DiscoveryContext> {
   const ctx: DiscoveryContext = {
@@ -474,7 +505,8 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
     } catch (err) {
       console.error(`  Discovery failed (list-sites): ${(err as Error).message}`);
       throw new Error(
-        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`
+        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`,
+        { cause: err }
       );
     }
   }
@@ -484,32 +516,44 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
     return ctx;
   }
 
-  // Discover a non-essential active plugin
-  console.log('Discovering plugin slug...');
-  try {
-    const result = await callAbility(
-      config,
-      'mainwp/get-site-plugins-v1',
-      { site_id_or_domain: ctx.siteId },
-      true
-    );
-    if (result.statusCode === 200 && result.body) {
-      const data = result.body as { plugins?: Array<{ slug: string; active: boolean }> };
-      if (data.plugins) {
-        // Find any non-essential plugin (active or inactive) for lifecycle testing
-        const candidate = data.plugins.find(p => !p.slug.startsWith('mainwp-child'));
-        if (candidate) {
-          ctx.pluginSlug = candidate.slug;
-          console.log(
-            `  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`
-          );
-        } else {
-          console.log('  No non-essential plugin found — plugin tests will be skipped.');
+  // Find a throwaway plugin for lifecycle testing
+  if (opts.pluginSlug) {
+    ctx.pluginSlug = opts.pluginSlug;
+    console.log(`Using provided plugin slug: ${ctx.pluginSlug}`);
+  } else {
+    console.log('Discovering plugin slug...');
+    try {
+      const result = await callAbility(
+        config,
+        'mainwp/get-site-plugins-v1',
+        { site_id_or_domain: ctx.siteId },
+        true
+      );
+      if (result.statusCode === 200 && result.body) {
+        const data = result.body as { plugins?: Array<{ slug: string; active: boolean }> };
+        if (data.plugins) {
+          const candidates = data.plugins.filter(p => SAFE_TEST_PLUGIN_SLUGS.includes(p.slug));
+          // Only pick an inactive plugin so activate → deactivate restores the
+          // original state; an active one would end the run deactivated
+          const candidate = candidates.find(p => !p.active);
+          if (candidate) {
+            ctx.pluginSlug = candidate.slug;
+            console.log(
+              `  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`
+            );
+          } else {
+            console.log(
+              '  No throwaway plugin (hello-dolly) found — plugin lifecycle tests will be skipped.'
+            );
+            console.log(
+              '  Install Hello Dolly on the child site, or pass --plugin-slug to pick one explicitly.'
+            );
+          }
         }
       }
+    } catch (err) {
+      console.log(`  Plugin discovery failed: ${(err as Error).message}`);
     }
-  } catch (err) {
-    console.log(`  Plugin discovery failed: ${(err as Error).message}`);
   }
 
   // Discover an inactive theme
@@ -722,6 +766,9 @@ async function main(): Promise<void> {
   if (opts.category) {
     tests = tests.filter(t => t.category === opts.category);
     console.log(`Category filter: ${opts.category} (${tests.length} tests)`);
+  } else if (!opts.destructive && opts.testNames.length === 0) {
+    tests = tests.filter(t => t.category !== 'destructive');
+    console.log('Destructive tests excluded (pass --destructive to include them)');
   }
 
   if (opts.testNames.length > 0) {

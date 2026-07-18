@@ -5,8 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mainwp-mcp": "dist/index.js",
-    "mcp": "dist/index.js"
+    "mainwp-mcp": "dist/index.js"
   },
   "files": [
     "dist/",
@@ -24,8 +23,15 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:evals": "vitest run tests/evals/",
+    "test:acceptance": "tsx tests/acceptance/run.ts",
+    "test:acceptance:fast": "tsx tests/acceptance/run.ts --mode source",
+    "test:acceptance:fixture": "tsx tests/acceptance/run.ts --target fixture",
+    "test:acceptance:writes": "tsx tests/acceptance/run.ts --writes",
+    "test:acceptance:agent": "tsx tests/acceptance/agent-run.ts",
+    "test:acceptance:human": "npm run test:acceptance:fixture && npm run test:acceptance:writes && npm run test:acceptance:agent",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.eslint.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:manual": "tsx scripts/manual-test.ts",

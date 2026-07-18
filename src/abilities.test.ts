@@ -14,24 +14,17 @@ import {
   initRateLimiter,
   type Ability,
 } from './abilities.js';
-import { readLimitedBody } from './http-client.js';
+import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
 import { type Config } from './config.js';
-import { type Logger } from './logging.js';
+import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-const mockLogger: Logger = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  notice: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  critical: vi.fn(),
-};
+const mockLogger = makeMockLogger();
 
 // Sample abilities for testing
 const sampleAbilities: Ability[] = [
@@ -191,28 +184,7 @@ const sampleAbilities: Ability[] = [
 
 const sampleCategories = [{ slug: 'mainwp-sites', label: 'Sites', description: 'Site management' }];
 
-const baseConfig: Config = {
-  dashboardUrl: 'https://test.local',
-  authType: 'basic',
-  username: 'admin',
-  appPassword: 'xxxx',
-  skipSslVerify: true,
-  allowHttp: false,
-  rateLimit: 0, // Disable rate limiting for tests
-  requestTimeout: 5000,
-  maxResponseSize: 10485760,
-  safeMode: false,
-  requireUserConfirmation: true,
-  maxSessionData: 52428800,
-  schemaVerbosity: 'standard',
-  responseFormat: 'compact',
-  retryEnabled: false, // Disable retries for tests
-  maxRetries: 2,
-  retryBaseDelay: 1000,
-  retryMaxDelay: 2000,
-  abilityNamespaces: ['mainwp'],
-  configSource: 'environment',
-};
+const baseConfig = makeBaseConfig();
 
 describe('fetchAbilities', () => {
   beforeEach(() => {
@@ -253,6 +225,41 @@ describe('fetchAbilities', () => {
     await fetchAbilities(baseConfig);
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips malformed ability entries instead of failing the whole refresh', async () => {
+    const hostileAbilities = [
+      null,
+      'junk',
+      { name: 42, label: 'Numeric name' },
+      { label: 'No name at all' },
+      ...sampleAbilities,
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => hostileAbilities,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig);
+
+    expect(abilities).toHaveLength(7);
+    expect(abilities.every(a => typeof a.name === 'string')).toBe(true);
+  });
+
+  it('does not share cache across configs that differ in transport-security settings', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await fetchAbilities(baseConfig);
+    // Same dashboard and identity, but TLS verification disabled: a strict
+    // instance must not serve data fetched by a lax one (or vice versa).
+    await fetchAbilities({ ...baseConfig, skipSslVerify: !baseConfig.skipSslVerify });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('should force refresh when requested', async () => {
@@ -419,9 +426,9 @@ describe('fetchAbilities', () => {
 
     // Force a refresh that returns malformed data — two abilities with the
     // same name produce the same tool name and trip the collision check.
-    // The new atomic-assignment code must leave the existing toolNameIndex
-    // intact, so a tool-name lookup for any ability from the first fetch
-    // still resolves.
+    // The failed refresh must leave the cached abilities array and its
+    // abilityIndexes entry intact, so a tool-name lookup for any ability
+    // from the first fetch still resolves.
     const dupedPayload = [sampleAbilities[0], sampleAbilities[0]];
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -451,8 +458,9 @@ describe('fetchAbilities', () => {
       fetchAbilities({ ...baseConfig, abilityNamespaces: ['mainwp', 'acme'] })
     ).rejects.toThrow(/Network blip/);
 
-    // The downstream toolNameIndex was nulled along with cachedAbilities, so a
-    // tool-name lookup must trigger a fresh fetch rather than returning stale data.
+    // Emptying the cache slot dropped the abilities array and with it the
+    // WeakMap-keyed lookup indexes, so a tool-name lookup must trigger a
+    // fresh fetch rather than returning stale data.
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -461,6 +469,28 @@ describe('fetchAbilities', () => {
     const ability = await getAbilityByToolName(baseConfig, 'list_sites_v1');
     expect(ability?.name).toBe('mainwp/list-sites-v1');
     expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not share cached abilities across authentication identities', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Same dashboard and namespaces but a different user: WordPress can
+    // expose a different ability catalog per user, so this must refetch
+    // instead of serving the first user's cached list.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [sampleAbilities[0]],
+      headers: new Headers(),
+    });
+    const otherUserAbilities = await fetchAbilities({ ...baseConfig, username: 'bob' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(otherUserAbilities).toHaveLength(1);
   });
 
   it('should handle fetch errors with cached fallback', async () => {
@@ -532,6 +562,93 @@ describe('fetchAbilities', () => {
     });
 
     await expect(fetchAbilities(baseConfig)).rejects.toThrow(/401/);
+  });
+
+  it('should share one upstream fetch across concurrent callers', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    mockFetch.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const first = fetchAbilities(baseConfig);
+    const second = fetchAbilities(baseConfig);
+
+    resolveFetch({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a).toHaveLength(7);
+    expect(b).toBe(a);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('should attach a structured status to HTTP error responses', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'Invalid credentials',
+      headers: new Headers(),
+    });
+
+    await expect(fetchAbilities(baseConfig)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('should not share an in-flight fetch across different dashboards', async () => {
+    const resolvers: Array<(v: unknown) => void> = [];
+    mockFetch.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvers.push(resolve);
+        })
+    );
+
+    const first = fetchAbilities(baseConfig);
+    const second = fetchAbilities({ ...baseConfig, dashboardUrl: 'https://other.local' });
+
+    // Different dashboard must NOT join the first request
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[1][0])).toContain('other.local');
+
+    for (const resolve of resolvers) {
+      resolve({ ok: true, json: async () => sampleAbilities, headers: new Headers() });
+    }
+    await Promise.all([first, second]);
+  });
+
+  it('should not discard a newer cache committed while a failing refresh was in flight', async () => {
+    let rejectFirst!: (e: Error) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    const failing = fetchAbilities(baseConfig);
+
+    // A different config commits successfully while the first is in flight
+    const otherConfig = { ...baseConfig, dashboardUrl: 'https://other.local' };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    await fetchAbilities(otherConfig);
+
+    rejectFirst(new Error('Network error'));
+    await expect(failing).rejects.toThrow('Network error');
+
+    // The newer cache must survive the older refresh's failure — this call
+    // is served from cache, not a third upstream fetch
+    await fetchAbilities(otherConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('should paginate when X-WP-TotalPages > 1', async () => {
@@ -880,111 +997,39 @@ describe('executeAbility', () => {
     expect(calls[1][1].method).toBe('GET');
   });
 
-  it('should use DELETE for destructive + idempotent abilities (delete_site_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
+  it.each([
+    ['mainwp/delete-site-v1', { site_id: 1, confirm: true }],
+    ['mainwp/delete-client-v1', { client_id_or_email: 1, confirm: true }],
+    ['mainwp/delete-tag-v1', { tag_id: 1, confirm: true }],
+    [
+      'mainwp/delete-site-plugins-v1',
+      { site_id_or_domain: 1, plugins: ['test-plugin/test-plugin.php'], confirm: true },
+    ],
+    [
+      'mainwp/delete-site-themes-v1',
+      { site_id_or_domain: 1, themes: ['twentytwentyfour'], confirm: true },
+    ],
+  ])(
+    'should use DELETE for destructive + idempotent abilities (%s)',
+    async (abilityName, input) => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => sampleAbilities,
+        headers: new Headers(),
+      });
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
 
-    await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, confirm: true });
+      await executeAbility(baseConfig, abilityName, input);
 
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_client_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-client-v1', {
-      client_id_or_email: 1,
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_tag_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-tag-v1', { tag_id: 1, confirm: true });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_site_plugins_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-site-plugins-v1', {
-      site_id_or_domain: 1,
-      plugins: ['test-plugin/test-plugin.php'],
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
-
-  it('should use DELETE for destructive + idempotent abilities (delete_site_themes_v1)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sampleAbilities,
-      headers: new Headers(),
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ deleted: true }),
-      headers: new Headers(),
-    });
-
-    await executeAbility(baseConfig, 'mainwp/delete-site-themes-v1', {
-      site_id_or_domain: 1,
-      themes: ['twentytwentyfour'],
-      confirm: true,
-    });
-
-    const calls = mockFetch.mock.calls;
-    expect(calls[1][1].method).toBe('DELETE');
-  });
+      const calls = mockFetch.mock.calls;
+      expect(calls[1][1].method).toBe('DELETE');
+    }
+  );
 
   it('should use POST for non-destructive write abilities', async () => {
     mockFetch.mockResolvedValueOnce({
@@ -1003,6 +1048,35 @@ describe('executeAbility', () => {
 
     const calls = mockFetch.mock.calls;
     expect(calls[1][1].method).toBe('POST');
+  });
+
+  it('should use POST for destructive non-idempotent abilities', async () => {
+    const destructiveNonIdempotentAbility: Ability = {
+      ...sampleAbilities[1],
+      meta: {
+        annotations: {
+          readonly: false,
+          destructive: true,
+          idempotent: false,
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [destructiveNonIdempotentAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/delete-site-v1', { site_id: 1, confirm: true });
+
+    const request = mockFetch.mock.calls[1][1];
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body as string)).toEqual({ input: { site_id: 1, confirm: true } });
   });
 
   it('should serialize input to query string for DELETE requests', async () => {
@@ -1097,6 +1171,64 @@ describe('executeAbility', () => {
     expect(url).toContain('input[page]=2');
   });
 
+  it('preserves one-level object and scalar-array query encoding', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+      headers: new Headers(),
+    });
+
+    await executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+      filters: { status: 'active', count: 2 },
+      ids: [1, 'two'],
+    });
+
+    const url = mockFetch.mock.calls[1][0] as string;
+    expect(url).toContain('input[filters][status]=active');
+    expect(url).toContain('input[filters][count]=2');
+    expect(url).toContain('input[ids][]=1');
+    expect(url).toContain('input[ids][]=two');
+  });
+
+  it('rejects objects nested deeper than one level and names the offending key', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+        filters: { status: { value: 'active' } },
+      })
+    ).rejects.toMatchObject({
+      code: MCP_ERROR_CODES.INVALID_PARAMS,
+      message: expect.stringContaining('filters'),
+    });
+  });
+
+  it('rejects arrays containing objects and names the offending key', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(baseConfig, 'mainwp/list-sites-v1', {
+        filters: [{ status: 'active' }],
+      })
+    ).rejects.toMatchObject({
+      code: MCP_ERROR_CODES.INVALID_PARAMS,
+      message: expect.stringContaining('filters'),
+    });
+  });
+
   it('should throw when GET URL exceeds 8000 characters', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1109,6 +1241,86 @@ describe('executeAbility', () => {
     await expect(
       executeAbility(baseConfig, 'mainwp/list-sites-v1', { filter: longValue })
     ).rejects.toThrow(/URL exceeds 8000 characters/);
+  });
+
+  it('logs destructive previews as previewed and never executed', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ preview: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    await executeAbility(
+      baseConfig,
+      'mainwp/delete-site-v1',
+      { site_id: 1, dry_run: true },
+      mockLogger,
+      sampleAbilities[1]
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith('AUDIT: destructive operation previewed', {
+      abilityName: 'mainwp/delete-site-v1',
+    });
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('does not log destructive operations as executed after a 5xx failure', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('failure', { status: 500 }));
+    await expect(
+      executeAbility(
+        baseConfig,
+        'mainwp/delete-site-v1',
+        { site_id: 1 },
+        mockLogger,
+        sampleAbilities[1]
+      )
+    ).rejects.toThrow(/Ability execution failed/);
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('does not log destructive operations as executed after cancellation', async () => {
+    mockFetch.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      executeAbility(
+        baseConfig,
+        'mainwp/delete-site-v1',
+        { site_id: 1 },
+        mockLogger,
+        sampleAbilities[1],
+        controller.signal
+      )
+    ).rejects.toThrow();
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      'AUDIT: destructive operation executed',
+      expect.anything()
+    );
+  });
+
+  it('logs a successful destructive execution exactly once', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    await executeAbility(
+      baseConfig,
+      'mainwp/delete-site-v1',
+      { site_id: 1 },
+      mockLogger,
+      sampleAbilities[1]
+    );
+    expect(mockLogger.info).toHaveBeenCalledTimes(1);
+    expect(mockLogger.info).toHaveBeenCalledWith('AUDIT: destructive operation executed', {
+      abilityName: 'mainwp/delete-site-v1',
+    });
   });
 });
 
@@ -1148,6 +1360,22 @@ describe('clearCache', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('should clear cached categories', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleCategories,
+      headers: new Headers(),
+    });
+
+    await fetchCategories(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    clearCache();
+
+    await fetchCategories(baseConfig);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('should clear the abilities index', async () => {
     // Warm cache and index
     mockFetch.mockResolvedValueOnce({
@@ -1174,7 +1402,7 @@ describe('clearCache', () => {
   });
 
   it('should clear the toolName index', async () => {
-    // Warm cache and toolNameIndex
+    // Warm the cache and its tool-name lookup index
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -1185,11 +1413,12 @@ describe('clearCache', () => {
     expect(beforeClear?.name).toBe('mainwp/list-sites-v1');
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    // Clear cache (which must also clear toolNameIndex)
+    // Clear the cache, dropping the abilities array and its WeakMap-keyed indexes
     clearCache();
 
-    // Next getAbilityByToolName should trigger a new fetch — if clearCache forgot
-    // toolNameIndex, the lookup would silently hit the stale Map and skip the fetch.
+    // Next getAbilityByToolName should trigger a new fetch — if clearCache left
+    // the cached array in place, the lookup would silently resolve through its
+    // stale indexes and skip the fetch.
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => sampleAbilities,
@@ -1229,6 +1458,65 @@ describe('onCacheRefresh', () => {
     await fetchAbilities(baseConfig, true);
 
     expect(callback).toHaveBeenCalled();
+  });
+
+  it('notifies when a same-named ability changes schema and annotations', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    const original = sampleAbilities[0];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [original],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...original,
+          description: 'Changed description',
+          input_schema: {
+            type: 'object',
+            properties: { page: { type: 'integer' } },
+          },
+          meta: {
+            ...original.meta,
+            annotations: { ...original.meta?.annotations, readonly: false },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies when a same-named ability changes label or category', async () => {
+    const callback = vi.fn();
+    onCacheRefresh(callback);
+    const original = sampleAbilities[0];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [original],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig);
+
+    // label becomes the MCP annotation title; category becomes the standard-mode
+    // description prefix — both affect tool conversion, so a change must notify.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ ...original, label: 'Renamed Label', category: 'mainwp-renamed' }],
+      headers: new Headers(),
+    });
+    await fetchAbilities(baseConfig, true);
+
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1388,5 +1676,79 @@ describe('readLimitedBody', () => {
 
     const result = await readLimitedBody(mockResponse, 1000);
     expect(result).toBe('{"key":"value"}');
+  });
+
+  it('surfaces ETIMEDOUT when the request deadline expires during a body read', async () => {
+    mockFetch.mockImplementationOnce((_url, options: RequestInit) => {
+      const signal = options.signal as AbortSignal;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('partial'));
+          signal.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(new Response(stream));
+    });
+    const customFetch = createFetch(makeBaseConfig({ requestTimeout: 20 }));
+
+    const response = await customFetch('https://test.local/stalled');
+
+    await expect(readLimitedBody(response, 1000)).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+  });
+
+  it('preserves AbortError for external cancellation during a body read', async () => {
+    mockFetch.mockImplementationOnce((_url, options: RequestInit) => {
+      const signal = options.signal as AbortSignal;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('partial'));
+          signal.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(new Response(stream));
+    });
+    const externalController = new AbortController();
+    const customFetch = createFetch(makeBaseConfig({ requestTimeout: 1000 }));
+    const response = await customFetch('https://test.local/cancelled', {
+      signal: externalController.signal,
+    });
+
+    externalController.abort();
+
+    await expect(readLimitedBody(response, 1000)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('paginateApi', () => {
+  it('does not warn when all 50 reported pages are fetched', async () => {
+    const logger = makeMockLogger();
+    const customFetch = vi.fn(
+      async () => new Response('[]', { headers: { 'X-WP-TotalPages': '50' } })
+    );
+
+    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+
+    expect(customFetch).toHaveBeenCalledTimes(50);
+    expect(logger.warning).not.toHaveBeenCalled();
+  });
+
+  it('warns when reported pages exceed the 50-page cap', async () => {
+    const logger = makeMockLogger();
+    const customFetch = vi.fn(
+      async () => new Response('[]', { headers: { 'X-WP-TotalPages': '51' } })
+    );
+
+    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+
+    expect(customFetch).toHaveBeenCalledTimes(50);
+    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Pagination capped'));
   });
 });

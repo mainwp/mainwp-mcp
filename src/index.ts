@@ -10,12 +10,15 @@
  *
  * Environment Variables:
  *   - MAINWP_URL: Base URL of MainWP Dashboard (required)
- *   - MAINWP_TOKEN: Bearer token for authentication (required)
+ *   - MAINWP_USER + MAINWP_APP_PASSWORD: WordPress Application Password authentication
+ *   - MAINWP_TOKEN: Compatibility-only bearer token (expected to fail against Abilities API)
  *   - MAINWP_SKIP_SSL_VERIFY: Set to "true" to skip SSL verification (optional)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -27,8 +30,8 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, Config, formatJson } from './config.js';
-import { getTools, executeTool } from './tools.js';
-import { getSessionDataUsage } from './session.js';
+import { getTools, executeTool, isToolAllowed } from './tools.js';
+import { getSessionDataUsage, formatBytes } from './session.js';
 import {
   fetchAbilities,
   fetchCategories,
@@ -42,8 +45,15 @@ import {
 import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { sanitizeError, isValidId, validateInput } from './security.js';
-import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
+import { sanitizeError, isValidId } from './security.js';
+import { abilityNameToToolName } from './naming.js';
+import {
+  formatErrorResponse,
+  getErrorMessage,
+  getHttpStatus,
+  McpErrorFactory,
+  McpError,
+} from './errors.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
@@ -108,7 +118,7 @@ function validateResourceUri(uri: string): {
 /**
  * Create and configure the MCP server
  */
-async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
+export async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
   const server = new Server(
     {
       name: SERVER_NAME,
@@ -256,6 +266,15 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
       const parsed = validateResourceUri(uri);
 
       if (parsed.type === 'site' && parsed.params?.site_id) {
+        // Derive the exposed tool name so allow/block lists keyed on
+        // namespaced names (non-mainwp primary namespace) still apply
+        const getSiteToolName = abilityNameToToolName(
+          'mainwp/get-site-v1',
+          config.abilityNamespaces[0]
+        );
+        if (!isToolAllowed(config, getSiteToolName)) {
+          throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
+        }
         const result = await executeAbility(
           config,
           'mainwp/get-site-v1',
@@ -295,13 +314,21 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
   server.setRequestHandler(GetPromptRequestSchema, async request => {
     const { name, arguments: args } = request.params;
     try {
-      // Validate prompt arguments before processing
+      // Prompt arguments are flat strings. Guard their transport-safe shape
+      // here; prompt-specific semantics belong to validatePromptArgs.
       if (args) {
-        validateInput(args as Record<string, unknown>);
+        for (const value of Object.values(args)) {
+          // eslint-disable-next-line no-control-regex
+          if (value.length > 200 || /[\x00-\x1f]/.test(value)) {
+            throw McpErrorFactory.invalidParams(
+              'Prompt arguments must be at most 200 characters and contain no control characters'
+            );
+          }
+        }
       }
       return getPrompt(name, args);
     } catch (error) {
-      // Preserve structured MCP errors (e.g., from validateInput)
+      // Preserve structured MCP errors from prompt validation
       if (error instanceof McpError) {
         throw error;
       }
@@ -325,6 +352,13 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
 
       // For site_id arguments, try to fetch site list dynamically
       if ((argName === 'site_id' || argName === 'site_ids') && values.length === 0) {
+        const listSitesToolName = abilityNameToToolName(
+          'mainwp/list-sites-v1',
+          config.abilityNamespaces[0]
+        );
+        if (!isToolAllowed(config, listSitesToolName)) {
+          throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${listSitesToolName}`);
+        }
         try {
           const abilities = await fetchAbilities(config, false, logger);
           const listSitesAbility = abilities.find(a => a.name === 'mainwp/list-sites-v1');
@@ -337,8 +371,12 @@ async function createServer(config: Config): Promise<{ server: Server; logger: L
                 .map((site: { id: number }) => String(site.id));
             }
           }
-        } catch {
-          // Ignore errors, return empty completions
+        } catch (error) {
+          // Fail soft — completions are best-effort — but leave a trace so
+          // config/auth problems here aren't invisible in production
+          logger.info('Site-id completion lookup failed', {
+            error: sanitizeError(getErrorMessage(error)),
+          });
         }
       }
 
@@ -416,24 +454,24 @@ async function validateCredentials(config: Config, logger: Logger): Promise<Abil
     const message = getErrorMessage(error);
     const lowerMessage = message.toLowerCase();
 
+    // HTTP failures carry a structured status (createHttpError in http-client.ts);
+    // classify on that. Message sniffing below is only for non-HTTP failures
+    // (DNS, SSL, timeout) which have no status to inspect.
+    const status = getHttpStatus(error);
+
     // Authentication failures (401/403) - provide auth-type specific guidance
-    if (
-      lowerMessage.includes('401') ||
-      lowerMessage.includes('403') ||
-      lowerMessage.includes('unauthorized') ||
-      lowerMessage.includes('forbidden')
-    ) {
+    if (status === 401 || status === 403) {
       const authHint =
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
-          : 'Verify MAINWP_TOKEN (or apiToken in settings.json) is correct and has not expired.';
+          : 'Bearer tokens (MAINWP_TOKEN) are not accepted by the Abilities API, which authenticates through native WordPress. Use MAINWP_USER + MAINWP_APP_PASSWORD (a WordPress Application Password / Basic auth) instead.';
       throw new Error(`Authentication failed: Invalid credentials. ${authHint}`, {
         cause: error,
       });
     }
 
     // Endpoint not found (404) - likely missing Abilities API plugin
-    if (lowerMessage.includes('404') || lowerMessage.includes('not found')) {
+    if (status === 404) {
       throw new Error(
         'Abilities API endpoint not found. Verify MAINWP_URL points to a MainWP Dashboard with the Abilities API plugin installed.',
         { cause: error }
@@ -499,13 +537,11 @@ async function main(): Promise<void> {
     startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
     startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
     startupLogger.info(`Config source: ${config.configSource}`);
-    startupLogger.info(`Session data limit: ${(config.maxSessionData / 1048576).toFixed(1)}MB`);
+    startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
     if (config.skipSslVerify) {
-      startupLogger.error('╔══════════════════════════════════════════════════════════════╗');
-      startupLogger.error('║  WARNING: SSL verification disabled                          ║');
-      startupLogger.error('║  Connection is vulnerable to man-in-the-middle attacks       ║');
-      startupLogger.error('║  Only use for local development with self-signed certs       ║');
-      startupLogger.error('╚══════════════════════════════════════════════════════════════╝');
+      startupLogger.error('WARNING: SSL verification disabled.');
+      startupLogger.error('The connection is vulnerable to man-in-the-middle attacks.');
+      startupLogger.error('Only use this for local development with self-signed certificates.');
     }
 
     // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
@@ -553,5 +589,19 @@ async function main(): Promise<void> {
   }
 }
 
-// Run the server
-main();
+// Run only when invoked as the program entry point; tests import createServer.
+// Node resolves the ESM main module to its real path while argv[1] keeps the
+// path as invoked, so npm's bin symlinks need argv[1] realpathed to match.
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  void main();
+}

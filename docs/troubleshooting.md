@@ -82,7 +82,7 @@ Some tools work but others return 403. The WordPress user lacks required capabil
 
 ### Bearer Token Not Working
 
-Works with username/password but not with `MAINWP_TOKEN`. Check that the token was generated correctly in MainWP Dashboard, the token hasn't expired, and you're using the correct environment variable (`MAINWP_TOKEN`, not `MAINWP_APP_PASSWORD`). When in doubt, use Application Password authentication instead.
+Bearer authentication with `MAINWP_TOKEN` is expected to fail against the WordPress Abilities API, which uses native WordPress authentication. Configure `MAINWP_USER` and `MAINWP_APP_PASSWORD` with a WordPress Application Password instead.
 
 ---
 
@@ -138,9 +138,21 @@ For automation scripts, disable the confirmation flow:
 }
 ```
 
-The AI tried to execute a destructive operation with `user_confirmed: true` without first requesting a preview. The two-step confirmation flow requires the AI to show you a preview before executing. The AI skipped the preview step.
+The AI tried to execute a destructive operation without completing the two-step confirmation flow. This error covers calling with `user_confirmed: true` without first requesting a preview, calling with no confirmation parameters at all (the server rejects bare destructive calls rather than executing them), or confirming with a token that is unknown, already used (tokens are single-use), or bound to a different tool or different arguments.
 
 This is usually an AI behavior issue. Try rephrasing: "Show me what will be deleted first, then I'll confirm."
+
+### "CONFIRMATION_REQUIRED" with `preview: null`
+
+```json
+{
+  "status": "CONFIRMATION_REQUIRED",
+  "next_action": "confirm_without_preview",
+  "preview": null
+}
+```
+
+Not an error. The ability requires confirmation but doesn't support `dry_run`, so there is nothing to preview. The response still carries a `confirmation_token`; the AI should describe what the operation will do and, once you explicitly approve, call the tool again with `user_confirmed: true` and that token.
 
 ### "PREVIEW_EXPIRED"
 
@@ -151,7 +163,7 @@ This is usually an AI behavior issue. Try rephrasing: "Show me what will be dele
 }
 ```
 
-You waited more than 5 minutes between seeing the preview and confirming the operation. Request a new preview—the AI will automatically do this if you just say "yes" or "proceed."
+You waited more than 5 minutes between seeing the preview and confirming the operation. Request a new preview—the AI will automatically do this if you just say "yes" or "proceed." (An already-used token produces `PREVIEW_REQUIRED` instead: tokens are single-use.)
 
 ### "CONFLICTING_PARAMETERS"
 
@@ -173,7 +185,7 @@ The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneou
 }
 ```
 
-The AI tried to use `user_confirmed: true` on a non-destructive tool. Only `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1` support `user_confirmed`. Other tools don't need confirmation.
+The AI tried to use `user_confirmed: true` on a tool that doesn't participate in the confirmation flow. Only tools whose schema declares a `confirm` parameter (the deletion tools: `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) accept `user_confirmed`. Other tools don't need confirmation.
 
 ---
 

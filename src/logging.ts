@@ -7,16 +7,9 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
-// RFC 5424 Log Levels
-export type LogLevel =
-  | 'debug'
-  | 'info'
-  | 'notice'
-  | 'warning'
-  | 'error'
-  | 'critical'
-  | 'alert'
-  | 'emergency';
+// RFC 5424 log levels, minus 'alert'/'emergency' — the Logger interface
+// implements exactly these six, so the type carries no unreachable members
+export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
 
 export interface Logger {
   debug(message: string, data?: Record<string, unknown>): void;

@@ -56,7 +56,7 @@ Safe mode prevents all destructive operations by stripping the `confirm: true` p
 MAINWP_SAFE_MODE=true
 ```
 
-Safe mode blocks `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1`. These tools require `confirm: true` to execute, and safe mode strips this parameter, causing the API to reject the request.
+Safe mode blocks every tool the server classifies as destructive, including `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, and `delete_site_themes_v1`. Blocked calls return a `SAFE_MODE_BLOCKED` error without reaching the Dashboard. As a second layer, safe mode also strips the `confirm` parameter, so even a request that somehow bypassed the block would be rejected by the Abilities API.
 
 All read operations and non-destructive writes remain available: listing and viewing sites, clients, tags; running updates (reversible via backups); activating and deactivating plugins and themes; syncing sites; creating new clients and tags.
 
@@ -64,7 +64,7 @@ Safe mode is useful for training (let users explore without risk), development (
 
 We recommend enabling Safe Mode when first installing mainwp-mcp. This lets you verify your credentials and connection work correctly, explore available tools without risk of data loss, and understand how the AI interacts with your MainWP Dashboard. Once comfortable, disable Safe Mode to enable full functionality.
 
-The server classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard. If an ability lacks annotations, the server defaults to treating it as non-destructive. This is intentional: the MainWP Dashboard controls ability registration, missing annotations indicate a Dashboard-side issue, and new or misconfigured abilities shouldn't be silently blocked. A warning is logged when abilities cannot be reliably classified. For stricter control, use `blockedTools` to explicitly block specific tools or `allowedTools` to whitelist only known-safe tools.
+The server classifies abilities as destructive or non-destructive based on the `destructive` annotation from the MainWP Dashboard. If an ability lacks annotations, the server treats it as destructive. This default-deny stance means a new or misconfigured ability is blocked by safe mode and subject to the confirmation flow until the Dashboard annotates it properly; a warning is logged whenever an ability cannot be reliably classified so the missing annotation can be fixed at the source. For stricter control, use `blockedTools` to explicitly block specific tools or `allowedTools` to whitelist only known-safe tools.
 
 ---
 
@@ -107,22 +107,30 @@ The two-step confirmation flow prevents accidental destructive operations by req
 
 When you ask the AI to delete something, the server intercepts the request and returns a preview instead of executing immediately. The AI shows you what will be deleted and asks for explicit confirmation. Only after you confirm does the server execute the operation.
 
-**Phase 1 - Preview:** AI calls the destructive tool with `confirm: true`. Server runs a dry-run preview and returns details. AI shows you what will be affected and waits for your response.
+**Phase 1 - Preview:** AI calls the destructive tool with `confirm: true`. Server runs a dry-run preview and returns a `CONFIRMATION_REQUIRED` response containing the preview details and a one-time `confirmation_token`. AI shows you what will be affected and waits for your response.
 
-**Phase 2 - Execute:** You confirm the action. AI calls the tool again with `user_confirmed: true`. Server validates the preview was shown (within last 5 minutes) and executes the deletion.
+**Phase 2 - Execute:** You confirm the action. AI calls the tool again with `user_confirmed: true` and the `confirmation_token`. Server validates that the token matches the same tool and the same arguments, that the preview is less than 5 minutes old, and executes the deletion.
+
+Calling a destructive tool with neither `confirm` nor `user_confirmed` is rejected with a `PREVIEW_REQUIRED` error. The server never executes a bare destructive call.
+
+Some abilities require confirmation but don't support `dry_run`, so there is nothing to preview. For those, the `confirm: true` step returns `CONFIRMATION_REQUIRED` with `preview: null` and `next_action: "confirm_without_preview"`, and still issues a token. The two-step gate applies even without a preview; the AI is instructed to describe the operation and obtain your explicit approval before confirming.
 
 Example flow:
 
-```
+```text
 You: Delete the "staging" tag
 
 AI: [Calls delete_tag_v1(tag_id: 5, confirm: true)]
-    Server returns preview:
+    Server returns:
     {
-      "tag_id": 5,
-      "name": "staging",
-      "sites_affected": 12,
-      "clients_affected": 3
+      "status": "CONFIRMATION_REQUIRED",
+      "preview": {
+        "tag_id": 5,
+        "name": "staging",
+        "sites_affected": 12,
+        "clients_affected": 3
+      },
+      "confirmation_token": "3f2c..."
     }
 
 AI: I found the "staging" tag (ID: 5).
@@ -131,7 +139,8 @@ AI: I found the "staging" tag (ID: 5).
 
 You: Yes
 
-AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true)]
+AI: [Calls delete_tag_v1(tag_id: 5, user_confirmed: true,
+     confirmation_token: "3f2c...")]
     Tag deleted successfully.
 ```
 
@@ -188,6 +197,8 @@ For untrusted AI clients:
 ```
 
 This provides defense-in-depth: Safe Mode blocks destructive operations at runtime, and `blockedTools` prevents the tools from even appearing in the AI's tool list.
+
+Note that `allowedTools` and `blockedTools` control which tools are listed and executable. The informational resources (`mainwp://abilities`, `mainwp://help`) still describe the full ability catalog from the Dashboard; blocking a tool prevents execution everywhere, it does not redact its documentation.
 
 ---
 

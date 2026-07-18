@@ -33,7 +33,16 @@ export default tseslint.config(
     },
   },
   {
-    // Ignore build artifacts, dependencies, and utility scripts; keep *.config.js ignored to avoid self-linting issues
-    ignores: ['dist/', 'node_modules/', 'coverage/', 'scripts/', '*.config.js'],
+    // CLI scripts print to stdout by design
+    files: ['scripts/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // Ignore build artifacts and dependencies; keep *.config.js ignored to
+    // avoid self-linting issues. check-version.js stays ignored (plain
+    // CommonJS-style CI script); scripts/*.ts is linted like the rest.
+    ignores: ['dist/', 'node_modules/', 'coverage/', 'scripts/check-version.js', '*.config.js'],
   }
 );

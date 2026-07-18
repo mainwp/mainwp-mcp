@@ -12,6 +12,8 @@
 
 _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
+**AI proposes the work. MainWP decides what's permitted, performs it, and reports what actually happened.**
+
 [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
 
 **Looking for the MainWP Control CLI instead?** [MainWP Control](https://github.com/mainwp/mainwp-control) is a CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. MainWP Control is for automation: AI automation, cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
@@ -20,7 +22,18 @@ _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
-### What You Can Do
+## How It Works
+
+MainWP MCP is a layered system, and each layer has a distinct job:
+
+- **AI interprets intent.** The assistant turns a natural-language request into a plan and selects the tools that match it.
+- **MCP applies the boundary.** The server exposes only the ability namespaces and tools you permit, and rechecks that policy when a tool is actually called, not just when tools are listed.
+- **The MainWP Dashboard is the authority.** It holds your managed sites, defines the available abilities, and performs the WordPress operation.
+- **You approve what matters.** Destructive operations stop at a confirmation gate before anything runs.
+
+The AI stays flexible where flexibility helps. The Dashboard stays deterministic where consequences live.
+
+## What You Can Do
 
 - **Site Management**: List sites, check connection status, sync data, add or remove child sites
 - **Update Management**: See pending updates across all sites, apply core/plugin/theme updates
@@ -29,6 +42,8 @@ An MCP (Model Context Protocol) server that connects AI assistants to your MainW
 - **Bulk Operations**: Sync, reconnect, or check connectivity across dozens of sites at once
 
 Built for WordPress agencies and site managers who want AI assistance with their MainWP workflows.
+
+> **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set of abilities your workflow needs and widen from there. See [Limiting Exposed Tools](#limiting-exposed-tools).
 
 ---
 
@@ -405,23 +420,25 @@ For Windsurf and other hosts, use the same JSON configuration pattern shown abov
 
 ### Environment Variables
 
-| Variable                           | Required | Default    | Description                                              |
-| ---------------------------------- | -------- | ---------- | -------------------------------------------------------- |
-| `MAINWP_URL`                       | Yes      |            | Base URL of your MainWP Dashboard                        |
-| `MAINWP_USER`                      | Yes      |            | WordPress admin username                                 |
-| `MAINWP_APP_PASSWORD`              | Yes      |            | WordPress Application Password                           |
-| `MAINWP_SKIP_SSL_VERIFY`           | No       | `false`    | Skip SSL verification (dev only)                         |
-| `MAINWP_ALLOW_HTTP`                | No       | `false`    | Allow HTTP URLs (credentials sent in plain text)         |
-| `MAINWP_SAFE_MODE`                 | No       | `false`    | Block destructive operations                             |
-| `MAINWP_REQUIRE_USER_CONFIRMATION` | No       | `true`     | Require two-step confirmation for destructive operations |
-| `MAINWP_ALLOWED_TOOLS`             | No       |            | Whitelist of tools to expose                             |
-| `MAINWP_BLOCKED_TOOLS`             | No       |            | Blacklist of tools to hide                               |
-| `MAINWP_SCHEMA_VERBOSITY`          | No       | `standard` | `standard` or `compact`                                  |
-| `MAINWP_RETRY_ENABLED`             | No       | `true`     | Enable automatic retry for transient errors              |
-| `MAINWP_MAX_RETRIES`               | No       | `2`        | Total retry attempts including initial request           |
-| `MAINWP_RETRY_BASE_DELAY`          | No       | `1000`     | Base delay between retries in milliseconds               |
-| `MAINWP_RETRY_MAX_DELAY`           | No       | `2000`     | Maximum delay between retries in milliseconds            |
-| `MAINWP_ABILITY_NAMESPACES`        | No       | `mainwp`   | Comma-separated ability namespace allowlist              |
+| Variable                           | Required       | Default    | Description                                                                                            |
+| ---------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| `MAINWP_URL`                       | Yes            |            | Base URL of your MainWP Dashboard                                                                      |
+| `MAINWP_USER`                      | For basic auth |            | WordPress admin username                                                                               |
+| `MAINWP_APP_PASSWORD`              | For basic auth |            | WordPress Application Password                                                                         |
+| `MAINWP_TOKEN`                     | No             |            | Compatibility only; the Abilities API is expected to reject bearer tokens. Use an Application Password |
+| `MAINWP_SKIP_SSL_VERIFY`           | No             | `false`    | Skip SSL verification (dev only)                                                                       |
+| `MAINWP_ALLOW_HTTP`                | No             | `false`    | Allow HTTP URLs (credentials sent in plain text)                                                       |
+| `MAINWP_SAFE_MODE`                 | No             | `false`    | Block destructive operations                                                                           |
+| `MAINWP_REQUIRE_USER_CONFIRMATION` | No             | `true`     | Require two-step confirmation for destructive operations                                               |
+| `MAINWP_ALLOWED_TOOLS`             | No             |            | Whitelist of tools to expose                                                                           |
+| `MAINWP_BLOCKED_TOOLS`             | No             |            | Blacklist of tools to hide                                                                             |
+| `MAINWP_SCHEMA_VERBOSITY`          | No             | `standard` | `standard` or `compact`                                                                                |
+| `MAINWP_RESPONSE_FORMAT`           | No             | `compact`  | Response JSON formatting: `compact` or `pretty`                                                        |
+| `MAINWP_RETRY_ENABLED`             | No             | `true`     | Enable automatic retry for transient errors                                                            |
+| `MAINWP_MAX_RETRIES`               | No             | `2`        | Total retry attempts including initial request                                                         |
+| `MAINWP_RETRY_BASE_DELAY`          | No             | `1000`     | Base delay between retries in milliseconds                                                             |
+| `MAINWP_RETRY_MAX_DELAY`           | No             | `2000`     | Maximum delay between retries in milliseconds                                                          |
+| `MAINWP_ABILITY_NAMESPACES`        | No             | `mainwp`   | Comma-separated ability namespace allowlist                                                            |
 
 > **⚠️ Security Warning: SSL Verification**
 >
@@ -455,11 +472,11 @@ Configuration loads from `./settings.json` or `~/.config/mainwp-mcp/settings.jso
 
 ## Optimizing Token Usage
 
-You have access to around 60 tools (the exact count varies by Dashboard version), which consume approximately 28,000 tokens in your AI's context window. Two settings help reduce this footprint.
+You have access to around 60 tools (the exact count varies by Dashboard version), which consume roughly 13,000 tokens in your AI's context window in standard mode (measured against a 62-tool catalog; actual counts vary by tokenizer). Two settings help reduce this footprint.
 
 ### Compact Schema Mode
 
-A single setting reduces token usage by roughly 30%:
+A single setting reduces token usage by roughly 20% (about 13,000 → 10,000 tokens on the measured catalog):
 
 ```json
 {
@@ -477,96 +494,7 @@ Compact mode truncates descriptions to 60 characters and removes examples while 
 
 ### Limiting Exposed Tools
 
-You can expose only the tools you need. These configurations cover common scenarios. Tool names from non-primary namespaces (added via `abilityNamespaces`) use the `{namespace}__{tool}` form — e.g. `acme__do_thing_v1` — so reference them that way in `allowedTools` / `blockedTools`.
-
-**Read-only monitoring** (17 tools, ~73% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_sites_v1",
-    "get_site_v1",
-    "get_site_plugins_v1",
-    "get_site_themes_v1",
-    "get_site_updates_v1",
-    "list_updates_v1",
-    "list_ignored_updates_v1",
-    "list_clients_v1",
-    "get_client_v1",
-    "count_clients_v1",
-    "count_client_sites_v1",
-    "get_client_sites_v1",
-    "get_client_costs_v1",
-    "list_tags_v1",
-    "get_tag_v1",
-    "get_tag_sites_v1",
-    "get_tag_clients_v1"
-  ]
-}
-```
-
-**Site management only** (30 tools, ~53% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_sites_v1",
-    "get_site_v1",
-    "count_sites_v1",
-    "get_sites_basic_v1",
-    "add_site_v1",
-    "update_site_v1",
-    "delete_site_v1",
-    "sync_sites_v1",
-    "check_site_v1",
-    "check_sites_v1",
-    "reconnect_site_v1",
-    "reconnect_sites_v1",
-    "disconnect_site_v1",
-    "disconnect_sites_v1",
-    "suspend_site_v1",
-    "suspend_sites_v1",
-    "unsuspend_site_v1",
-    "get_site_plugins_v1",
-    "get_site_themes_v1",
-    "activate_site_plugins_v1",
-    "deactivate_site_plugins_v1",
-    "delete_site_plugins_v1",
-    "activate_site_theme_v1",
-    "delete_site_themes_v1",
-    "get_abandoned_plugins_v1",
-    "get_abandoned_themes_v1",
-    "get_site_security_v1",
-    "get_site_client_v1",
-    "get_site_costs_v1",
-    "get_site_changes_v1"
-  ]
-}
-```
-
-**Updates only** (13 tools, ~80% reduction):
-
-```json
-{
-  "allowedTools": [
-    "list_updates_v1",
-    "run_updates_v1",
-    "update_all_v1",
-    "get_site_updates_v1",
-    "update_site_core_v1",
-    "update_site_plugins_v1",
-    "update_site_themes_v1",
-    "update_site_translations_v1",
-    "list_ignored_updates_v1",
-    "set_ignored_updates_v1",
-    "ignore_site_core_v1",
-    "ignore_site_plugins_v1",
-    "ignore_site_themes_v1"
-  ]
-}
-```
-
-**Hide destructive tools** (block deletions while keeping everything else):
+You can expose only the tools you need with `allowedTools`, or hide specific tools with `blockedTools`. For example, blocking the deletion tools while keeping everything else:
 
 ```json
 {
@@ -580,18 +508,9 @@ You can expose only the tools you need. These configurations cover common scenar
 }
 ```
 
-### Combining Settings
+Tool names from non-primary namespaces (added via `abilityNamespaces`) use the `{namespace}__{tool}` form (e.g. `acme__do_thing_v1`), so reference them that way in `allowedTools` / `blockedTools`.
 
-Compact mode and tool filtering work together. This configuration exposes just four tools with minimal descriptions, well-suited for focused automation:
-
-```json
-{
-  "schemaVerbosity": "compact",
-  "allowedTools": ["list_sites_v1", "get_site_v1", "list_updates_v1", "run_updates_v1"]
-}
-```
-
-For all configuration options, see the [Configuration Guide](docs/configuration.md).
+Filtering stacks with compact mode: a read-only monitoring preset cuts token usage by ~73%, and a focused four-tool automation config by over 90%. Ready-made presets (read-only monitoring, site management, updates only, minimal automation) live in the [Configuration Guide](docs/configuration.md#tool-filtering).
 
 ---
 
@@ -609,13 +528,13 @@ sequenceDiagram
     participant MainWP
 
     User->>AI: Delete site 3
-    AI->>Server: delete_site_v1(site_id: 3, confirm: true)
+    AI->>Server: delete_site_v1(site_id_or_domain: 3, confirm: true)
     Server->>MainWP: dry_run preview request
     MainWP-->>Server: site details
-    Server-->>AI: PREVIEW with site info
+    Server-->>AI: CONFIRMATION_REQUIRED<br/>(preview + confirmation_token)
     AI->>User: Shows: "Example Site (https://example.com)<br/>Confirm deletion?"
     User->>AI: Yes, proceed
-    AI->>Server: delete_site_v1(site_id: 3, user_confirmed: true)
+    AI->>Server: delete_site_v1(site_id_or_domain: 3, user_confirmed: true,<br/>confirmation_token: "...")
     Server->>MainWP: execute deletion
     MainWP-->>Server: success
     Server-->>AI: deletion complete
@@ -645,6 +564,10 @@ These destructive tools require two-step confirmation:
 - `delete_tag_v1` - Delete a tag
 - `delete_site_plugins_v1` - Delete plugins from a site
 - `delete_site_themes_v1` - Delete themes from a site
+
+The gate is strict. Calling one of these tools with neither `confirm` nor `user_confirmed` returns a `PREVIEW_REQUIRED` error; the server never executes a bare destructive call. A confirmation must reference a preview of the same tool with the same arguments taken within the last 5 minutes. The preview response includes a `confirmation_token` the AI passes back with `user_confirmed: true`.
+
+Abilities that require confirmation but don't support `dry_run` still go through the two-step gate: the server returns `CONFIRMATION_REQUIRED` with `preview: null` and a token, and the AI must describe the operation and get your explicit approval before confirming.
 
 ### Disabling for Automation
 
@@ -727,6 +650,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **reconnect_site_v1** - Reconnect a disconnected site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -779,6 +703,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **activate_site_theme_v1** - Activate a theme on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -790,6 +715,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **get_abandoned_plugins_v1** - Get abandoned plugins on a site
   - `site_id_or_domain`: Site ID or domain (string|number, required)
@@ -930,6 +856,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **suspend_client_v1** - Suspend a client
   - `client_id_or_email`: Client ID or email (string|number, required)
@@ -975,6 +902,7 @@ Around 60 tools organized by category (the exact count varies by Dashboard versi
   - `confirm`: Must be true to request preview (boolean, required)
   - `dry_run`: Preview what would be deleted (boolean, optional)
   - `user_confirmed`: Set to true only after showing preview to user and receiving approval (boolean, optional)
+  - `confirmation_token`: Token from the preview response; pass it back with `user_confirmed: true` (string, optional)
 
 - **get_tag_sites_v1** - Get sites associated with a tag
   - `tag_id`: Tag ID (number, required)
@@ -1004,12 +932,14 @@ Operations with more than 50 sites are automatically queued for background proce
 
 These resources are available for inspection:
 
-| URI                   | Description                                   |
-| --------------------- | --------------------------------------------- |
-| `mainwp://abilities`  | Full list of available abilities with schemas |
-| `mainwp://categories` | List of ability categories                    |
-| `mainwp://status`     | Current connection status                     |
-| `mainwp://help`       | Tool documentation and safety conventions     |
+| URI                              | Description                                   |
+| -------------------------------- | --------------------------------------------- |
+| `mainwp://abilities`             | Full list of available abilities with schemas |
+| `mainwp://categories`            | List of ability categories                    |
+| `mainwp://status`                | Current connection status                     |
+| `mainwp://help`                  | Tool documentation and safety conventions     |
+| `mainwp://site/{site_id}`        | Details for a single site by ID               |
+| `mainwp://help/tool/{tool_name}` | Documentation for a specific tool             |
 
 ---
 

@@ -18,7 +18,7 @@ import { abilityNameToToolName } from './naming.js';
  * MCP's tool input schema (also JSON Schema based).
  */
 function convertInputSchema(ability: Ability): Tool['inputSchema'] {
-  const schema = ability.input_schema;
+  const schema = ability.input_schema ? structuredClone(ability.input_schema) : undefined;
 
   if (!schema) {
     // No input required
@@ -31,13 +31,36 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
   // The abilities API uses JSON Schema, which is compatible with MCP
   // We just need to ensure it has the required structure
   // Cast to the expected MCP SDK type
-  const properties = (schema.properties || {}) as { [key: string]: Record<string, unknown> };
-  const required = (schema.required as string[]) || [];
+  //
+  // PHP dashboards serialize empty associative arrays as [] — an array-typed
+  // `properties` (or malformed `required`) invalidates the whole tools/list
+  // response for spec-compliant clients, so coerce anything non-conforming.
+  const rawProperties = schema.properties;
+  const rawPropertyMap = (
+    rawProperties && typeof rawProperties === 'object' && !Array.isArray(rawProperties)
+      ? rawProperties
+      : {}
+  ) as Record<string, unknown>;
+  // Sanitize each property too: a primitive or array value would throw on the
+  // description backfill below, failing the whole tools/list response instead
+  // of isolating one malformed property. Null prototype so a hostile
+  // __proto__ parameter stays an own property instead of polluting the map
+  // and leaking inherited keys into the confirm/dry_run detection.
+  const properties: { [key: string]: Record<string, unknown> } = Object.create(null);
+  for (const [name, prop] of Object.entries(rawPropertyMap)) {
+    properties[name] =
+      prop !== null && typeof prop === 'object' && !Array.isArray(prop)
+        ? (prop as Record<string, unknown>)
+        : {};
+  }
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((entry): entry is string => typeof entry === 'string')
+    : [];
 
   // Backfill missing descriptions from parameter names.
   // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
   for (const [name, prop] of Object.entries(properties)) {
-    if (prop && (!prop.description || String(prop.description).trim() === '')) {
+    if (!prop.description || String(prop.description).trim() === '') {
       prop.description = paramNameToDescription(name);
     }
   }
@@ -59,13 +82,20 @@ function paramNameToDescription(name: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1) + '.';
 }
 
+/** Descriptions at or under this length are kept as-is */
+const TARGET_DESC_LENGTH = 60;
+/** A first sentence may exceed the target by this small tolerance */
+const SENTENCE_TOLERANCE = 5;
+/** Hard-truncate length; +3 for the ellipsis lands near the target */
+const HARD_TRUNCATE_LENGTH = TARGET_DESC_LENGTH - 3;
+
 /**
- * Truncate a description to the first sentence or ~60 characters
+ * Truncate a description to the first sentence or ~TARGET_DESC_LENGTH characters
  *
  * Strategy:
- * - Preserve full description if already ≤60 characters
- * - Return first sentence if it's within limit (≤65 chars, small tolerance)
- * - Otherwise truncate to 57 characters with ellipsis
+ * - Preserve full description if already within the target length
+ * - Return first sentence if it's within target + tolerance
+ * - Otherwise hard-truncate with ellipsis
  */
 function truncateDescription(description: string | undefined | null): string {
   if (!description) {
@@ -73,7 +103,7 @@ function truncateDescription(description: string | undefined | null): string {
   }
 
   // If already short enough, return as-is
-  if (description.length <= 60) {
+  if (description.length <= TARGET_DESC_LENGTH) {
     return description;
   }
 
@@ -81,14 +111,13 @@ function truncateDescription(description: string | undefined | null): string {
   const sentenceMatch = description.match(/^[^.!?]+[.!?](?:\s|$)/);
   if (sentenceMatch) {
     const sentence = sentenceMatch[0].trim();
-    // Only use sentence if it's within limit (allow small tolerance of 5 chars)
-    if (sentence.length <= 65) {
+    if (sentence.length <= TARGET_DESC_LENGTH + SENTENCE_TOLERANCE) {
       return sentence;
     }
   }
 
-  // No suitable sentence found, truncate to ~60 chars
-  return description.slice(0, 57) + '...';
+  // No suitable sentence found
+  return description.slice(0, HARD_TRUNCATE_LENGTH) + '...';
 }
 
 /**
@@ -104,7 +133,9 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
   }
 
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  const compressedProperties: Record<string, Record<string, unknown>> = {};
+  // Null prototype for the same reason as convertInputSchema: a __proto__
+  // parameter must stay an own key through compression.
+  const compressedProperties: Record<string, Record<string, unknown>> = Object.create(null);
 
   for (const [key, prop] of Object.entries(properties)) {
     if (!prop || typeof prop !== 'object') {
@@ -247,6 +278,77 @@ export function buildSafetyTags(
 }
 
 /**
+ * Build the full-detail tool description for standard verbosity:
+ * category prefix, full ability description, contextual LLM instructions,
+ * safety tags, and the two-phase confirmation workflow.
+ */
+function buildStandardDescription(
+  ability: Ability,
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean,
+  isDestructive: boolean
+): string {
+  // Category prefix (e.g., "[sites] ...")
+  const categoryLabel = ability.category?.replace(/^mainwp-/, '').replace(/-/g, ' ');
+  let description = categoryLabel
+    ? `[${categoryLabel}] ${ability.description}`
+    : ability.description;
+
+  // Append contextual LLM instructions
+  const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
+  if (instructions) {
+    description += ` ${instructions}`;
+  }
+
+  // Append safety tags
+  const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'standard');
+  if (tags) {
+    description += ` ${tags}`;
+  }
+
+  // Append confirmation workflow for destructive tools with confirm parameter.
+  // Only promise a preview when the ability declares dry_run — confirm-only
+  // abilities issue a token without an upstream preview call.
+  if (isDestructive && hasConfirm) {
+    description +=
+      '\n\nCONFIRMATION FLOW: ' +
+      (hasDryRun
+        ? '1) Call with confirm:true to preview what will be affected. ' +
+          '2) Show preview to user and ask for confirmation. '
+        : '1) Call with confirm:true to receive a confirmation token (no preview available). ' +
+          '2) Ask the user for confirmation. ') +
+      '3) If confirmed, call again with user_confirmed:true and the confirmation_token ' +
+      'from the first response to execute. ' +
+      'Do NOT set user_confirmed:true without explicit user consent.';
+  }
+
+  return description;
+}
+
+/**
+ * Build the token-lean tool description for compact verbosity:
+ * truncated description, short safety tags, one-line confirm flow.
+ */
+function buildCompactDescription(
+  ability: Ability,
+  meta: AbilityAnnotations | undefined,
+  hasDryRun: boolean,
+  hasConfirm: boolean,
+  isDestructive: boolean
+): string {
+  let description = truncateDescription(ability.description);
+  const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
+  if (tags) {
+    description += ` ${tags}`;
+  }
+  if (isDestructive && hasConfirm) {
+    description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
+  }
+  return description;
+}
+
+/**
  * Convert a MainWP Ability to an MCP Tool definition
  *
  * Enhances tool metadata with:
@@ -274,15 +376,25 @@ export function abilityToTool(
   const hasConfirm = 'confirm' in props;
   const isDestructive = meta?.destructive ?? false;
 
-  // Add user_confirmed parameter for destructive tools with confirm parameter
-  // This must happen BEFORE schema compression so it applies to all verbosity modes
+  // Add user_confirmed and confirmation_token parameters for destructive tools
+  // with a confirm parameter. Both must be declared: confirmed execution is
+  // token-bound, and a schema-validating client (or upstream
+  // additionalProperties: false) would otherwise reject the token it is
+  // required to send. This must happen BEFORE schema compression so it applies
+  // to all verbosity modes.
   if (isDestructive && hasConfirm) {
     const mutableProps = inputSchema.properties as Record<string, object>;
     mutableProps['user_confirmed'] = {
       type: 'boolean',
       description:
-        'Confirm execution after reviewing preview. ' +
-        'FLOW: 1) confirm:true for preview, 2) show user, 3) user_confirmed:true if approved.',
+        'Confirm execution after user approval. ' +
+        'FLOW: 1) confirm:true, 2) show result to user, ' +
+        '3) user_confirmed:true + confirmation_token if approved.',
+    };
+    mutableProps['confirmation_token'] = {
+      type: 'string',
+      description:
+        'Token issued by the confirm:true response; required alongside user_confirmed:true.',
     };
   }
 
@@ -292,45 +404,10 @@ export function abilityToTool(
   }
 
   // Build description with safety context
-  let description: string;
-
-  if (verbosity === 'standard') {
-    // Category prefix for standard mode (e.g., "[sites] ...")
-    const categoryLabel = ability.category?.replace(/^mainwp-/, '').replace(/-/g, ' ');
-    description = categoryLabel ? `[${categoryLabel}] ${ability.description}` : ability.description;
-
-    // Append contextual LLM instructions
-    const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
-    if (instructions) {
-      description += ` ${instructions}`;
-    }
-
-    // Append safety tags
-    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'standard');
-    if (tags) {
-      description += ` ${tags}`;
-    }
-
-    // Append confirmation workflow for destructive tools with confirm parameter
-    if (isDestructive && hasConfirm) {
-      description +=
-        '\n\nCONFIRMATION FLOW: ' +
-        '1) Call with confirm:true to preview what will be affected. ' +
-        '2) Show preview to user and ask for confirmation. ' +
-        '3) If confirmed, call again with user_confirmed:true to execute. ' +
-        'Do NOT set user_confirmed:true without explicit user consent.';
-    }
-  } else {
-    // Compact mode: truncated description + short safety tags
-    description = truncateDescription(ability.description);
-    const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
-    if (tags) {
-      description += ` ${tags}`;
-    }
-    if (isDestructive && hasConfirm) {
-      description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
-    }
-  }
+  const description =
+    verbosity === 'standard'
+      ? buildStandardDescription(ability, meta, hasDryRun, hasConfirm, isDestructive)
+      : buildCompactDescription(ability, meta, hasDryRun, hasConfirm, isDestructive);
 
   return {
     name: toolName,

@@ -57,6 +57,23 @@ describe('isRetryableError', () => {
       const error = new Error('Unprocessable Entity: 422');
       expect(isRetryableError(error)).toBe(false);
     });
+
+    it('ignores unrelated numbers in error messages', () => {
+      expect(isRetryableError(new Error('cannot process more than 500 items'))).toBe(false);
+      expect(isRetryableError(new Error('connection idle for 503 seconds'))).toBe(false);
+      expect(isRetryableError(new Error('batch contains: 500 items'))).toBe(false);
+      expect(isRetryableError(new Error('validation failed: 503 records'))).toBe(false);
+    });
+
+    it('extracts status codes preceded by the word "status"', () => {
+      expect(isRetryableError(new Error('Request failed with status 503'))).toBe(true);
+      expect(isRetryableError(new Error('status code 502 received'))).toBe(true);
+    });
+
+    it('extracts status codes at the start of the message', () => {
+      expect(isRetryableError(new Error('503 Service Unavailable'))).toBe(true);
+      expect(isRetryableError(new Error('404 Not Found'))).toBe(false);
+    });
   });
 
   describe('network error codes', () => {
@@ -489,39 +506,13 @@ describe('withRetry', () => {
     expect(receivedBudgets[1]).toBeGreaterThan(receivedBudgets[2]);
   });
 
-  it('retries on error with status property set to 503', async () => {
+  it.each([503, 429])('retries on error with status property set to %i', async status => {
     let attempts = 0;
     const operation = vi.fn(async (_ctx: RetryContext) => {
       attempts++;
       if (attempts < 2) {
-        const error = new Error('Service Unavailable');
-        (error as Error & { status: number }).status = 503;
-        throw error;
-      }
-      return 'success';
-    });
-
-    const promise = withRetry(operation, {
-      maxRetries: 3,
-      baseDelay: 100,
-      maxDelay: 200,
-      timeoutBudget: 10000,
-    });
-
-    await vi.runAllTimersAsync();
-    const result = await promise;
-
-    expect(result).toBe('success');
-    expect(attempts).toBe(2);
-  });
-
-  it('retries on error with status property set to 429', async () => {
-    let attempts = 0;
-    const operation = vi.fn(async (_ctx: RetryContext) => {
-      attempts++;
-      if (attempts < 2) {
-        const error = new Error('Too Many Requests');
-        (error as Error & { status: number }).status = 429;
+        const error = new Error(status === 503 ? 'Service Unavailable' : 'Too Many Requests');
+        (error as Error & { status: number }).status = status;
         throw error;
       }
       return 'success';

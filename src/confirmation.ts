@@ -8,13 +8,15 @@
 
 import crypto from 'crypto';
 import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
-import { executeAbility, type Ability } from './abilities.js';
+import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
 import { trackSessionData } from './session.js';
 import {
   buildInvalidParameterResponse,
+  buildDryRunNotSupportedResponse,
   buildConflictingParametersResponse,
+  buildNoPreviewAvailableResponse,
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
@@ -78,11 +80,39 @@ export interface ConfirmationFlowParams {
 }
 
 /**
+ * Recursively sort object keys so serialization is deterministic at every
+ * depth. JSON.stringify's array-replacer form cannot be used here: it filters
+ * property names at all nesting levels, which drops nested values from the
+ * key and lets differing nested arguments collide.
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    // Null prototype so hostile keys like __proto__ become own enumerable
+    // properties instead of hitting Object.prototype accessors and vanishing
+    // from the serialized key.
+    const sorted: Record<string, unknown> = Object.create(null);
+    for (const key of Object.keys(source).sort()) {
+      sorted[key] = canonicalize(source[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
  * from the key to ensure preview and execution calls match.
+ * Prefixed with the config identity hash: the preview maps are module-level,
+ * so without the scope a token issued against one dashboard/principal could
+ * confirm the same tool and arguments against another createServer(config)
+ * instance in the same process.
  */
-function getPreviewKey(toolName: string, args: Record<string, unknown>): string {
+function getPreviewKey(scope: string, toolName: string, args: Record<string, unknown>): string {
   const {
     confirm: _confirm,
     user_confirmed: _user_confirmed,
@@ -90,8 +120,7 @@ function getPreviewKey(toolName: string, args: Record<string, unknown>): string 
     confirmation_token: _confirmation_token,
     ...relevantArgs
   } = args;
-  const sortedKeys = Object.keys(relevantArgs).sort();
-  return `${toolName}:${JSON.stringify(relevantArgs, sortedKeys)}`;
+  return `${scope}:${toolName}:${JSON.stringify(canonicalize(relevantArgs))}`;
 }
 
 /**
@@ -142,6 +171,8 @@ export async function handleConfirmationFlow(
   const schemaProps = ability.input_schema?.properties;
   const hasConfirmParam =
     schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
+  const hasDryRunParam =
+    schemaProps !== null && typeof schemaProps === 'object' && 'dry_run' in schemaProps;
 
   // Validation: user_confirmed on tools without confirm parameter
   if (!hasConfirmParam && args.user_confirmed === true) {
@@ -177,29 +208,64 @@ export async function handleConfirmationFlow(
     };
   }
 
-  // Case 1: Explicit dry_run bypass - skip confirmation flow entirely
+  // Case 1: Explicit dry_run bypass - skip confirmation flow entirely.
+  // Only honored when the ability declares dry_run: forwarding a fabricated
+  // dry_run (possibly alongside confirm: true) would execute for real if
+  // upstream ignores unknown input, so undeclared dry_run is rejected
+  // before any upstream call.
   if (args.dry_run === true) {
+    if (!hasDryRunParam) {
+      logger.warning('Invalid parameter: dry_run on tool without dry_run support', {
+        toolName,
+        abilityName,
+      });
+      return {
+        action: 'respond',
+        response: [
+          { type: 'text', text: formatJson(config, buildDryRunNotSupportedResponse(ctx)) },
+        ],
+        isError: true,
+      };
+    }
     logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
-    return { action: 'skip' };
+    // Strip confirm so upstream never sees the ambiguous confirm+dry_run
+    // combination — mirrors the Case 2 preview call, which sends dry_run
+    // with confirm removed.
+    const { confirm: _dryRunConfirm, ...dryRunArgs } = effectiveArgs;
+    return { action: 'execute', effectiveArgs: dryRunArgs };
   }
 
   // Case 2: Preview request (confirm: true without user_confirmed)
   if (args.confirm === true && args.user_confirmed !== true) {
     cleanupExpiredPreviews();
 
-    // Execute preview with dry_run: true
-    const previewArgs = { ...effectiveArgs, dry_run: true, confirm: undefined };
-    const previewResult = await executeAbility(
-      config,
-      abilityName,
-      previewArgs,
-      logger,
-      ability,
-      signal
-    );
+    // Abilities without a declared dry_run parameter get no upstream preview
+    // call — fabricating dry_run against a schema that doesn't declare it
+    // could execute for real if upstream ignores unknown input. The two-phase
+    // gate still applies: a token is issued below so the confirmed follow-up
+    // call can proceed.
+    let previewResult: unknown = null;
+    if (hasDryRunParam) {
+      // Execute preview with dry_run: true and the confirm flag removed
+      const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
+      delete previewArgs.confirm;
+      previewResult = await executeAbility(
+        config,
+        abilityName,
+        previewArgs,
+        logger,
+        ability,
+        signal
+      );
+    } else {
+      logger.warning('Preview unavailable - ability does not support dry_run', {
+        toolName,
+        abilityName,
+      });
+    }
 
     // Store preview for later validation
-    const previewKey = getPreviewKey(toolName, args);
+    const previewKey = getPreviewKey(configIdentityHash(config), toolName, args);
     pendingPreviews.set(previewKey, Date.now());
 
     // Clean up any existing token for this preview key before generating a new one
@@ -214,9 +280,16 @@ export async function handleConfirmationFlow(
     const token = crypto.randomUUID();
     tokenIndex.set(token, previewKey);
 
-    logger.info('Preview generated for confirmation', { toolName });
+    logger.info(
+      hasDryRunParam
+        ? 'Preview generated for confirmation'
+        : 'Confirmation required without preview',
+      { toolName }
+    );
 
-    const confirmationResponse = buildConfirmationRequiredResponse(ctx, previewResult, token);
+    const confirmationResponse = hasDryRunParam
+      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
+      : buildNoPreviewAvailableResponse(ctx, token);
     const previewResponse = formatJson(config, confirmationResponse);
 
     trackSessionData(previewResponse, config, logger, 'during preview');
@@ -237,46 +310,66 @@ export async function handleConfirmationFlow(
       );
     }
 
-    // Resolve preview key: prefer token-based lookup, fall back to key-based
-    let previewKey: string;
+    // Confirmed execution is token-bound: the token proves the caller saw the
+    // preview response. A tool+args fallback would let a caller confirm a
+    // preview it never read, so no token means no execution.
     const confirmationToken =
       typeof args.confirmation_token === 'string' ? args.confirmation_token : undefined;
 
-    if (confirmationToken) {
-      const tokenPreviewKey = tokenIndex.get(confirmationToken);
-      if (!tokenPreviewKey) {
-        logger.warning('Confirmation failed - invalid confirmation token', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      // Verify token belongs to this tool (prevent cross-tool reuse)
-      if (!tokenPreviewKey.startsWith(`${toolName}:`)) {
-        tokenIndex.delete(confirmationToken);
-        logger.warning('Confirmation failed - token belongs to different tool', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      // Verify token matches current arguments (prevent arg-swap)
-      const currentPreviewKey = getPreviewKey(toolName, args);
-      if (currentPreviewKey !== tokenPreviewKey) {
-        tokenIndex.delete(confirmationToken);
-        logger.warning('Confirmation failed - arguments do not match preview', { toolName });
-        return {
-          action: 'respond',
-          response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
-          isError: true,
-        };
-      }
-      previewKey = tokenPreviewKey;
-    } else {
-      previewKey = getPreviewKey(toolName, args);
+    if (!confirmationToken) {
+      logger.warning('Confirmation failed - confirmation_token missing', { toolName });
+      return {
+        action: 'respond',
+        response: [
+          {
+            type: 'text',
+            text: formatJson(
+              config,
+              buildPreviewRequiredResponse(
+                ctx,
+                'user_confirmed: true requires the confirmation_token issued by the preview response'
+              )
+            ),
+          },
+        ],
+        isError: true,
+      };
     }
+
+    const tokenPreviewKey = tokenIndex.get(confirmationToken);
+    if (!tokenPreviewKey) {
+      logger.warning('Confirmation failed - invalid confirmation token', { toolName });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    // Verify token belongs to this tool AND this config identity (prevent
+    // cross-tool reuse and cross-dashboard/principal reuse alike)
+    if (!tokenPreviewKey.startsWith(`${configIdentityHash(config)}:${toolName}:`)) {
+      tokenIndex.delete(confirmationToken);
+      logger.warning('Confirmation failed - token belongs to a different tool or identity', {
+        toolName,
+      });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    // Verify token matches current arguments (prevent arg-swap)
+    const currentPreviewKey = getPreviewKey(configIdentityHash(config), toolName, args);
+    if (currentPreviewKey !== tokenPreviewKey) {
+      tokenIndex.delete(confirmationToken);
+      logger.warning('Confirmation failed - arguments do not match preview', { toolName });
+      return {
+        action: 'respond',
+        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        isError: true,
+      };
+    }
+    const previewKey = tokenPreviewKey;
 
     // Check preview expiry BEFORE running cleanup for more helpful error messages
     const previewTimestamp = pendingPreviews.get(previewKey);
@@ -292,7 +385,7 @@ export async function handleConfirmationFlow(
 
     if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
       pendingPreviews.delete(previewKey);
-      if (confirmationToken) tokenIndex.delete(confirmationToken);
+      tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - preview expired', { toolName });
       return {
         action: 'respond',
@@ -303,7 +396,7 @@ export async function handleConfirmationFlow(
 
     // Preview is valid - proceed with execution
     pendingPreviews.delete(previewKey);
-    if (confirmationToken) tokenIndex.delete(confirmationToken);
+    tokenIndex.delete(confirmationToken);
     const previewAge = Date.now() - previewTimestamp;
     logger.info('User confirmation validated', { toolName, previewAge });
 
@@ -321,10 +414,24 @@ export async function handleConfirmationFlow(
   }
 
   // Default case: no confirm or user_confirmed provided
-  // Log warning but proceed to maintain backward compatibility
   logger.warning('Destructive tool called without confirmation parameters', {
     toolName,
     abilityName,
   });
-  return { action: 'skip' };
+  return {
+    action: 'respond',
+    response: [
+      {
+        type: 'text',
+        text: formatJson(
+          config,
+          buildPreviewRequiredResponse(
+            ctx,
+            'Destructive tools require confirmation parameters; neither confirm nor user_confirmed was provided'
+          )
+        ),
+      },
+    ],
+    isError: true,
+  };
 }

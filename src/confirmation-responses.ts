@@ -49,6 +49,26 @@ export function buildInvalidParameterResponse(ctx: ConfirmationContext): object 
 }
 
 /**
+ * Response when dry_run is passed to a confirm-capable tool whose ability
+ * does not declare dry_run. Forwarding the fabricated parameter upstream
+ * could execute the operation for real if the handler ignores unknown input,
+ * so the call is rejected before any request is made.
+ */
+export function buildDryRunNotSupportedResponse(ctx: ConfirmationContext): object {
+  return {
+    error: 'INVALID_PARAMETER',
+    message: 'dry_run parameter not supported for this tool',
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      reason:
+        'This ability does not declare a dry_run parameter, so a preview cannot be guaranteed upstream',
+      resolution: 'Remove dry_run and call with confirm: true to start the confirmation flow',
+    },
+  };
+}
+
+/**
  * Response when user_confirmed and dry_run are both set (conflicting intent)
  */
 export function buildConflictingParametersResponse(ctx: ConfirmationContext): object {
@@ -61,6 +81,32 @@ export function buildConflictingParametersResponse(ctx: ConfirmationContext): ob
       reason: 'dry_run is for read-only previews, user_confirmed is for confirmed execution',
       resolution:
         'Remove dry_run to execute with confirmation, or remove user_confirmed to preview only',
+    },
+  };
+}
+
+/**
+ * Response when a confirm-capable tool cannot generate a dry-run preview.
+ * Still a CONFIRMATION_REQUIRED workflow step — a token is issued so the
+ * confirmed follow-up call can proceed — but carries no preview payload.
+ */
+export function buildNoPreviewAvailableResponse(ctx: ConfirmationContext, token: string): object {
+  return {
+    status: 'CONFIRMATION_REQUIRED',
+    next_action: 'confirm_without_preview',
+    message:
+      'This ability does not support dry_run, so no preview is available. ' +
+      'Explicit user approval is required to proceed.',
+    preview: null,
+    confirmation_token: token,
+    instructions:
+      'Describe to the user exactly what this operation will do. If they explicitly approve, ' +
+      'call this tool again with user_confirmed: true and confirmation_token: "<token above>". ' +
+      'Do NOT set user_confirmed: true without explicit user consent.',
+    metadata: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      expiresIn: '5 minutes',
     },
   };
 }
@@ -91,9 +137,14 @@ export function buildConfirmationRequiredResponse(
 }
 
 /**
- * Response when user_confirmed is set but no preview was requested first
+ * Response when confirmed execution is impossible because no valid preview
+ * exists. Default reason covers the user_confirmed-without-preview case;
+ * pass a specific reason for other paths (e.g. no confirmation parameters).
  */
-export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
+export function buildPreviewRequiredResponse(
+  ctx: ConfirmationContext,
+  reason = 'user_confirmed: true requires a prior preview request'
+): object {
   return {
     error: 'PREVIEW_REQUIRED',
     next_action: 'request_preview_first',
@@ -101,7 +152,7 @@ export function buildPreviewRequiredResponse(ctx: ConfirmationContext): object {
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
-      reason: 'user_confirmed: true requires a prior preview request',
+      reason,
       resolution:
         'Call the tool with confirm: true (without user_confirmed) to generate a preview first.',
     },

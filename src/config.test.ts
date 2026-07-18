@@ -14,6 +14,7 @@ import fs from 'fs';
 
 // Import test fixtures for validation tests
 import configFixture from '../tests/fixtures/config.json' with { type: 'json' };
+import { makeBaseConfig } from '../tests/helpers/config.js';
 
 // Mock fs module
 vi.mock('fs');
@@ -75,6 +76,20 @@ describe('loadSettingsFile', () => {
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ rateLimit: 'fast' }));
 
     expect(() => loadSettingsFile()).toThrow(/must be a number/);
+  });
+
+  it('should reject non-finite numbers (JSON 1e999 parses to Infinity)', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue('{"maxResponseSize": 1e999}');
+
+    expect(() => loadSettingsFile()).toThrow(/must be an integer within the safe range/);
+  });
+
+  it('should reject decimal numbers in settings file', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ rateLimit: 60.5 }));
+
+    expect(() => loadSettingsFile()).toThrow(/must be an integer within the safe range/);
   });
 
   it('should validate field types - array fields', () => {
@@ -167,6 +182,18 @@ describe('loadConfig', () => {
 
     expect(config.authType).toBe('bearer');
     expect(config.apiToken).toBe('mytoken123');
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Application Password'));
+  });
+
+  it('should warn when bearer auth is selected with only a partial basic auth pair', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_TOKEN = 'mytoken123';
+
+    const config = loadConfig();
+
+    expect(config.authType).toBe('bearer');
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Application Password'));
   });
 
   it('should prefer basic auth over bearer auth', () => {
@@ -348,6 +375,74 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/conflict/);
   });
 
+  function baseEnv() {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+  }
+
+  describe('boolean env var parsing', () => {
+    it.each(['true', 'TRUE', 'True', '1', 'yes', 'on', 'ON'])('parses %s as true', value => {
+      baseEnv();
+      process.env.MAINWP_SAFE_MODE = value;
+
+      expect(loadConfig().safeMode).toBe(true);
+    });
+
+    it.each(['false', 'FALSE', '0', 'no', 'off'])('parses %s as false', value => {
+      baseEnv();
+      process.env.MAINWP_REQUIRE_USER_CONFIRMATION = value;
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('throws on an unrecognized value instead of falling back to the default', () => {
+      baseEnv();
+      process.env.MAINWP_SAFE_MODE = 'maybe';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_SAFE_MODE.*maybe/);
+    });
+
+    it('throws when a malformed env value overrides a permissive settings-file value', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ allowHttp: true }));
+      baseEnv();
+      process.env.MAINWP_ALLOW_HTTP = 'flase';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_ALLOW_HTTP.*flase/);
+    });
+  });
+
+  describe('numeric env var parsing', () => {
+    it('rejects values with trailing non-numeric characters', () => {
+      baseEnv();
+      process.env.MAINWP_RATE_LIMIT = '60abc';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_RATE_LIMIT.*60abc/);
+    });
+
+    it('rejects entirely non-numeric values', () => {
+      baseEnv();
+      process.env.MAINWP_REQUEST_TIMEOUT = 'abc';
+
+      expect(() => loadConfig()).toThrow(/MAINWP_REQUEST_TIMEOUT.*abc/);
+    });
+
+    it('accepts clean integer values', () => {
+      baseEnv();
+      process.env.MAINWP_RATE_LIMIT = '120';
+
+      expect(loadConfig().rateLimit).toBe(120);
+    });
+
+    it('rejects digit-only values that overflow to Infinity', () => {
+      baseEnv();
+      process.env.MAINWP_REQUEST_TIMEOUT = '9'.repeat(400);
+
+      expect(() => loadConfig()).toThrow(/MAINWP_REQUEST_TIMEOUT.*safe integer/);
+    });
+  });
+
   it('should prioritize env vars over settings file', () => {
     const settings = { dashboardUrl: 'https://from-file.com' };
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -464,26 +559,13 @@ describe('loadConfig', () => {
 
 describe('getAbilitiesApiUrl', () => {
   it('should construct proper URL', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const url = getAbilitiesApiUrl(config);
 
@@ -493,28 +575,14 @@ describe('getAbilitiesApiUrl', () => {
 
 describe('getAuthHeaders', () => {
   it('should return Basic auth header', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
-      username: 'admin',
       appPassword: 'secret',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -523,27 +591,15 @@ describe('getAuthHeaders', () => {
   });
 
   it('should return Bearer auth header', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
       authType: 'bearer',
       apiToken: 'mytoken',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -551,26 +607,13 @@ describe('getAuthHeaders', () => {
   });
 
   it('should always include Content-Type', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
 
@@ -578,28 +621,15 @@ describe('getAuthHeaders', () => {
   });
 
   it('should encode Basic auth credentials correctly', () => {
-    const config: Config = {
+    const config: Config = makeBaseConfig({
       dashboardUrl: 'https://example.com',
-      authType: 'basic',
       username: 'user',
       appPassword: 'pass',
       skipSslVerify: false,
-      allowHttp: false,
       rateLimit: 60,
       requestTimeout: 30000,
-      maxResponseSize: 10485760,
-      safeMode: false,
-      requireUserConfirmation: true,
-      maxSessionData: 52428800,
-      schemaVerbosity: 'standard',
-      responseFormat: 'compact',
       retryEnabled: true,
-      maxRetries: 2,
-      retryBaseDelay: 1000,
-      retryMaxDelay: 2000,
-      abilityNamespaces: ['mainwp'],
-      configSource: 'environment',
-    };
+    });
 
     const headers = getAuthHeaders(config);
     const encoded = headers['Authorization'].replace('Basic ', '');

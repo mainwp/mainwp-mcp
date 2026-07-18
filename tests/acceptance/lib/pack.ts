@@ -1,0 +1,162 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { Artifacts } from './artifacts.js';
+import type { CommandRunner } from './commands.js';
+import { startLocalDependencyRegistry } from './local-registry.js';
+
+interface NpmPackResult {
+  id: string;
+  name: string;
+  version: string;
+  filename: string;
+  shasum: string;
+  integrity: string;
+}
+
+export interface PackChecks {
+  requiredFilesPresent: boolean;
+  forbiddenFilesAbsent: boolean;
+  installedEntryPresent: boolean;
+  mainwpBinPresent: boolean;
+  installedBinStartsServer: boolean;
+  installedVersionMatches: boolean;
+}
+
+export interface PackedPackage {
+  tempRoot: string;
+  consumerDir: string;
+  tarballPath: string;
+  filename: string;
+  sha256: string;
+  npmShasum: string;
+  integrity: string;
+  installedEntry: string;
+  mainwpBin: string;
+  version: string;
+  checks: PackChecks;
+  cleanup(): void;
+}
+
+async function setupPackedPackage(
+  repoRoot: string,
+  runner: CommandRunner,
+  artifacts: Artifacts,
+  keepConsumer: boolean,
+  tempRoot: string
+): Promise<PackedPackage> {
+  const packResult = await runner.run(
+    ['npm', 'pack', '--json', '--pack-destination', tempRoot],
+    repoRoot
+  );
+  const parsed = JSON.parse(packResult.stdout) as NpmPackResult[];
+  if (parsed.length !== 1) throw new Error(`npm pack produced ${parsed.length} package records`);
+  const packed = parsed[0];
+  const tarballPath = path.join(tempRoot, packed.filename);
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(tarballPath)).digest('hex');
+  const listingResult = await runner.run(['tar', '-tzf', tarballPath], repoRoot);
+  const entries = new Set(listingResult.stdout.split(/\r?\n/).filter(Boolean));
+  const requiredFiles = [
+    'package/dist/index.js',
+    'package/settings.schema.json',
+    'package/README.md',
+    'package/LICENSE',
+  ];
+  const forbiddenPrefixes = ['package/settings.json', 'package/src/', 'package/src'];
+  const requiredFilesPresent = requiredFiles.every(filename => entries.has(filename));
+  const forbiddenFilesAbsent = [...entries].every(
+    filename =>
+      !forbiddenPrefixes.some(prefix => filename === prefix || filename.startsWith(prefix))
+  );
+  if (!requiredFilesPresent || !forbiddenFilesAbsent) {
+    throw new Error('Packed tarball content assertions failed');
+  }
+
+  const consumerDir = path.join(tempRoot, 'consumer');
+  fs.mkdirSync(consumerDir);
+  const npmCache = path.join(tempRoot, 'npm-cache');
+  fs.mkdirSync(npmCache);
+  await runner.run(['npm', 'init', '-y'], consumerDir, {
+    env: { ...process.env, npm_config_cache: npmCache },
+  });
+
+  const registry = await startLocalDependencyRegistry(repoRoot, tempRoot, runner);
+  try {
+    await runner.run(
+      ['npm', 'install', tarballPath, '--no-audit', '--no-fund', '--registry', registry.url],
+      consumerDir,
+      { env: { ...process.env, npm_config_cache: npmCache } }
+    );
+  } finally {
+    await registry.close();
+  }
+
+  const packageDir = path.join(consumerDir, 'node_modules', '@mainwp', 'mcp');
+  const installedEntry = fs.realpathSync(path.join(packageDir, 'dist', 'index.js'));
+  const mainwpBin = path.join(consumerDir, 'node_modules', '.bin', 'mainwp-mcp');
+  const installedPackage = JSON.parse(
+    fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')
+  ) as { version: string };
+  const repoPackage = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+    version: string;
+  };
+  const binProbe = await runner.run([mainwpBin], consumerDir, {
+    allowFailure: true,
+    timeoutMs: 10_000,
+    env: {
+      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      HOME: consumerDir,
+      MAINWP_URL: 'https://127.0.0.1:1',
+      MAINWP_USER: 'packaging-probe',
+      MAINWP_APP_PASSWORD: 'packaging probe password',
+      MAINWP_RATE_LIMIT: '0',
+      MAINWP_REQUEST_TIMEOUT: '1000',
+      MAINWP_RETRY_ENABLED: 'false',
+    },
+  });
+  const checks: PackChecks = {
+    requiredFilesPresent,
+    forbiddenFilesAbsent,
+    installedEntryPresent: fs.existsSync(installedEntry),
+    mainwpBinPresent: fs.existsSync(mainwpBin),
+    installedBinStartsServer: binProbe.stderr.includes('MainWP MCP Server v'),
+    installedVersionMatches: installedPackage.version === repoPackage.version,
+  };
+  if (Object.values(checks).some(check => !check)) {
+    throw new Error(`Installed package assertions failed: ${JSON.stringify(checks)}`);
+  }
+  artifacts.setTarball({ filename: packed.filename, sha256, integrity: packed.integrity });
+
+  return {
+    tempRoot,
+    consumerDir,
+    tarballPath,
+    filename: packed.filename,
+    sha256,
+    npmShasum: packed.shasum,
+    integrity: packed.integrity,
+    installedEntry,
+    mainwpBin,
+    version: installedPackage.version,
+    checks,
+    cleanup: () => {
+      if (!keepConsumer) fs.rmSync(tempRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function packAndInstall(
+  repoRoot: string,
+  runner: CommandRunner,
+  artifacts: Artifacts,
+  keepConsumer: boolean
+): Promise<PackedPackage> {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-acceptance-'));
+  try {
+    return await setupPackedPackage(repoRoot, runner, artifacts, keepConsumer, tempRoot);
+  } catch (error) {
+    if (!keepConsumer) fs.rmSync(tempRoot, { recursive: true, force: true });
+    throw error;
+  }
+}

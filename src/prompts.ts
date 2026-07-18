@@ -6,6 +6,8 @@
  */
 
 import type { Prompt, GetPromptResult, PromptMessage } from '@modelcontextprotocol/sdk/types.js';
+import { isValidId } from './security.js';
+import { McpErrorFactory } from './errors.js';
 
 /**
  * Internal prompt definition with message generator
@@ -25,7 +27,6 @@ interface PromptDefinition {
  * All available prompt definitions
  */
 const promptDefinitions: PromptDefinition[] = [
-  // === Site Troubleshooting ===
   {
     name: 'troubleshoot-site',
     description: 'Diagnose issues with a MainWP child site',
@@ -59,7 +60,6 @@ Provide a summary of:
     ],
   },
 
-  // === Maintenance Check ===
   {
     name: 'maintenance-check',
     description: 'Run a comprehensive maintenance check across all managed sites',
@@ -88,7 +88,6 @@ Generate a maintenance summary including:
     ],
   },
 
-  // === Update Workflow ===
   {
     name: 'update-workflow',
     description: 'Guide through safely updating WordPress sites',
@@ -134,7 +133,6 @@ Please start by checking the current update status.`,
     ],
   },
 
-  // === Site Report ===
   {
     name: 'site-report',
     description: 'Generate a detailed report for a specific site',
@@ -173,7 +171,6 @@ Format the report in a clear, scannable format.`,
     ],
   },
 
-  // === Network Summary ===
   {
     name: 'network-summary',
     description: 'Generate a summary report of all managed sites',
@@ -216,7 +213,6 @@ Present the data in a clear, executive-summary format.`,
     ],
   },
 
-  // === Security Audit ===
   {
     name: 'security-audit',
     description: 'Perform a security-focused audit of managed sites',
@@ -260,7 +256,6 @@ Start by gathering the site and update information, then provide the security as
     ],
   },
 
-  // === Backup Status ===
   {
     name: 'backup-status',
     description: 'Check backup status across managed sites',
@@ -301,7 +296,6 @@ Note: This analysis depends on the backup data available through MainWP. If back
     ],
   },
 
-  // === Performance Check ===
   {
     name: 'performance-check',
     description: 'Analyze site performance indicators',
@@ -379,26 +373,39 @@ function validatePromptArgs(
   for (const [key, value] of Object.entries(args)) {
     if (typeof value !== 'string') continue;
 
-    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric
+    // site_id: numeric or "all"; site_ids: "all" or comma-separated numeric.
+    // isValidId (security.ts) is the single definition of a valid ID — it
+    // also enforces the >= 1 and safe-integer bounds the old regexes missed.
     if (key === 'site_id') {
-      if (value !== 'all' && !/^\d+$/.test(value)) {
-        throw new Error(`Invalid site_id: must be a numeric value or "all"`);
+      if (value !== 'all' && !isValidId(value)) {
+        throw McpErrorFactory.invalidParams(`Invalid site_id: must be a numeric value or "all"`);
       }
       sanitized[key] = value;
     } else if (key === 'site_ids') {
-      // "all" or comma-separated IDs
-      if (value !== 'all' && !/^(\d+)(,\s*\d+)*$/.test(value)) {
-        throw new Error(`Invalid site_ids: must be "all" or comma-separated numeric IDs`);
+      // "all" or comma-separated IDs. Store the canonicalized join, not the
+      // raw value — validation trims each part, so the raw string could
+      // smuggle whitespace/newlines into the prompt template
+      if (value === 'all') {
+        sanitized[key] = value;
+      } else {
+        const ids = value.split(',').map(part => part.trim());
+        if (!ids.every(isValidId)) {
+          throw McpErrorFactory.invalidParams(
+            `Invalid site_ids: must be "all" or comma-separated numeric IDs`
+          );
+        }
+        sanitized[key] = ids.join(',');
       }
-      sanitized[key] = value;
     } else if (key === 'issue_type') {
       if (!VALID_ISSUE_TYPES.has(value)) {
-        throw new Error(`Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`);
+        throw McpErrorFactory.invalidParams(
+          `Invalid issue_type: must be one of ${[...VALID_ISSUE_TYPES].join(', ')}`
+        );
       }
       sanitized[key] = value;
     } else if (key === 'update_type') {
       if (!VALID_UPDATE_TYPES.has(value)) {
-        throw new Error(
+        throw McpErrorFactory.invalidParams(
           `Invalid update_type: must be one of ${[...VALID_UPDATE_TYPES].join(', ')}`
         );
       }
