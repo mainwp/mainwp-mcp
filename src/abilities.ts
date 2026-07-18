@@ -66,6 +66,59 @@ export interface AbilityAnnotations {
 const MAX_LABEL_LENGTH = 200;
 const MAX_CATEGORY_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 2000;
+const MAX_INSTRUCTIONS_LENGTH = 300;
+const MAX_CATEGORY_DESC_LENGTH = 500;
+
+/**
+ * Bounds for remote schema payloads. Generous against real ability schemas
+ * (a few dozen nodes, short strings); they exist to reject or trim
+ * pathological structures a hostile Dashboard could ship.
+ */
+const MAX_SCHEMA_NODES = 2000;
+const MAX_SCHEMA_STRING_LENGTH = 500;
+const MAX_SCHEMA_KEY_LENGTH = 200;
+
+/**
+ * Deep-bound a remote JSON-Schema-shaped value: every string at every depth
+ * under every keyword (properties, items, oneOf, $defs, additionalProperties,
+ * anything else) is capped, oversized keys are dropped, and a total node
+ * budget rejects pathological structures outright (returns null so the caller
+ * drops the ability). The traversal is deliberately generic — an earlier
+ * revision followed only `properties`/`items` to a fixed depth, which left
+ * every unlisted keyword and deeper level as a flooding bypass.
+ */
+function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknown> | null {
+  let nodes = 0;
+  let overflow = false;
+  const walk = (value: unknown): unknown => {
+    if (overflow || ++nodes > MAX_SCHEMA_NODES) {
+      overflow = true;
+      return null;
+    }
+    if (typeof value === 'string') {
+      return value.length > MAX_SCHEMA_STRING_LENGTH
+        ? value.slice(0, MAX_SCHEMA_STRING_LENGTH - 3) + '...'
+        : value;
+    }
+    if (Array.isArray(value)) {
+      return value.map(walk);
+    }
+    if (value !== null && typeof value === 'object') {
+      // Null prototype so hostile keys like __proto__ stay own properties.
+      const out: Record<string, unknown> = Object.create(null);
+      for (const [key, child] of Object.entries(value)) {
+        if (key.length > MAX_SCHEMA_KEY_LENGTH) {
+          continue;
+        }
+        out[key] = walk(child);
+      }
+      return out;
+    }
+    return value;
+  };
+  const bounded = walk(root);
+  return overflow ? null : (bounded as Record<string, unknown>);
+}
 
 /**
  * Normalize one remote text field: non-strings become '', control and format
@@ -424,13 +477,15 @@ export async function fetchAbilities(
         return true;
       });
 
-      // Normalize remote free-text at the boundary: every downstream surface
+      // Normalize remote content at the boundary: every downstream surface
       // (tool descriptions, mainwp:// resources, help documents) consumes
       // these fields verbatim, so a non-string value must not throw later and
-      // hostile text is bounded once here instead of at each consumer. A
-      // non-string `instructions` is dropped rather than coerced — it is an
-      // optional hint, and tool-schema applies its own tighter cap.
-      for (const ability of newAbilities) {
+      // hostile text is bounded once here instead of at each consumer.
+      // Schemas are deep-bounded the same way — help output and the abilities
+      // resource read input_schema directly, so bounding only in the
+      // tools/list conversion path leaves those surfaces exposed. An ability
+      // whose schema blows the node budget is dropped outright.
+      const safeAbilities = newAbilities.filter(ability => {
         ability.label = normalizeRemoteText(ability.label, MAX_LABEL_LENGTH, 'flatten');
         ability.category = normalizeRemoteText(ability.category, MAX_CATEGORY_LENGTH, 'flatten');
         ability.description = normalizeRemoteText(
@@ -442,12 +497,40 @@ export async function fetchAbilities(
         if (
           annotations !== null &&
           typeof annotations === 'object' &&
-          'instructions' in annotations &&
-          typeof (annotations as AbilityAnnotations).instructions !== 'string'
+          'instructions' in annotations
         ) {
-          delete (annotations as AbilityAnnotations).instructions;
+          const capped = normalizeRemoteText(
+            (annotations as AbilityAnnotations).instructions,
+            MAX_INSTRUCTIONS_LENGTH,
+            'flatten'
+          );
+          if (capped) {
+            (annotations as AbilityAnnotations).instructions = capped;
+          } else {
+            delete (annotations as AbilityAnnotations).instructions;
+          }
         }
-      }
+        for (const key of ['input_schema', 'output_schema'] as const) {
+          const schema = ability[key];
+          if (schema === undefined) {
+            continue;
+          }
+          if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
+            delete ability[key];
+            continue;
+          }
+          const bounded = boundRemoteSchema(schema);
+          if (bounded === null) {
+            logger?.warning('Skipping ability with oversized schema', {
+              name: sanitizeError(ability.name),
+              schema: key,
+            });
+            return false;
+          }
+          ability[key] = bounded;
+        }
+        return true;
+      });
 
       // A misconfigured namespace allowlist boots a server that advertises
       // zero tools with no other symptom — warn loudly so the cause is in the
@@ -479,7 +562,7 @@ export async function fetchAbilities(
             .sort((a, b) => a.name.localeCompare(b.name))
         );
       const oldFingerprint = fingerprint(abilitiesCache.data);
-      const newFingerprint = fingerprint(newAbilities);
+      const newFingerprint = fingerprint(safeAbilities);
       const hasChanged = oldFingerprint !== newFingerprint;
       const hadCachedAbilities = abilitiesCache.data !== null;
 
@@ -491,7 +574,7 @@ export async function fetchAbilities(
       const newAbilitiesIndex = new Map<string, Ability>();
       const newToolNameIndex = new Map<string, Ability>();
       const primary = namespaces[0];
-      for (const ability of newAbilities) {
+      for (const ability of safeAbilities) {
         newAbilitiesIndex.set(ability.name, ability);
 
         const toolName = abilityNameToToolName(ability.name, primary);
@@ -513,9 +596,9 @@ export async function fetchAbilities(
       }
 
       return {
-        data: newAbilities,
+        data: safeAbilities,
         commit: () => {
-          abilityIndexes.set(newAbilities, {
+          abilityIndexes.set(safeAbilities, {
             byName: newAbilitiesIndex,
             byToolName: newToolNameIndex,
           });
@@ -554,9 +637,24 @@ export async function fetchCategories(
         config.maxResponseSize,
         logger
       ),
-    // Filter categories to configured namespaces (allowlist of `{ns}-` prefixes)
+    // Filter categories to configured namespaces (allowlist of `{ns}-`
+    // prefixes) and normalize the remote text — the mainwp://categories
+    // resource returns these objects verbatim, so they get the same boundary
+    // treatment as ability fields.
     process: allCategories => ({
-      data: allCategories.filter(c => isAllowedCategory(c.slug, namespaces)),
+      data: allCategories
+        .filter(
+          c =>
+            c !== null &&
+            typeof c === 'object' &&
+            typeof (c as { slug?: unknown }).slug === 'string' &&
+            isAllowedCategory(c.slug, namespaces)
+        )
+        .map(c => ({
+          slug: normalizeRemoteText(c.slug, MAX_CATEGORY_LENGTH, 'flatten'),
+          label: normalizeRemoteText(c.label, MAX_LABEL_LENGTH, 'flatten'),
+          description: normalizeRemoteText(c.description, MAX_CATEGORY_DESC_LENGTH, 'multiline'),
+        })),
     }),
   });
 }

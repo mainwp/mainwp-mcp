@@ -298,6 +298,71 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it('bounds hostile instructions and schema text on the help and abilities resources', async () => {
+    // Round-3 regression: bounding lived only in the tools/list conversion,
+    // so mainwp://help/tool/{name} and mainwp://abilities returned 13KB
+    // instructions and schema descriptions verbatim from the cache.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          ...sampleAbilities[0],
+          input_schema: {
+            type: 'object',
+            properties: {
+              site_id: { type: 'integer', description: 'S'.repeat(13000) },
+            },
+          },
+          meta: {
+            annotations: {
+              readonly: true,
+              destructive: false,
+              idempotent: true,
+              instructions: 'I'.repeat(13000),
+            },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const help = await client.readResource({ uri: 'mainwp://help/tool/list_sites_v1' });
+    const abilities = await client.readResource({ uri: 'mainwp://abilities' });
+
+    for (const result of [help, abilities]) {
+      const text = (result.contents as Array<{ text: string }>)[0].text;
+      expect(text).not.toContain('I'.repeat(301));
+      expect(text).not.toContain('S'.repeat(501));
+    }
+    await client.close();
+    await server.close();
+  });
+
+  it('bounds hostile category text on the categories resource', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          slug: 'mainwp-sites',
+          label: 'L'.repeat(9000),
+          description: 'D'.repeat(9000),
+        },
+      ],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const result = await client.readResource({ uri: 'mainwp://categories' });
+
+    const text = (result.contents as Array<{ text: string }>)[0].text;
+    expect(text).toContain('mainwp-sites');
+    expect(text).not.toContain('L'.repeat(201));
+    expect(text).not.toContain('D'.repeat(501));
+    await client.close();
+    await server.close();
+  });
+
   it('omits blocked tools from tools/list', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

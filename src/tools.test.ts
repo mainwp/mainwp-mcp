@@ -234,7 +234,17 @@ describe('getTools', () => {
     expect(tools[0].description!.length).toBeLessThan(2500);
   });
 
-  it('bounds hostile schema property descriptions at every depth', async () => {
+  it('bounds hostile schema strings under every keyword and at any depth', async () => {
+    // Round-3 regression: the first bounding pass followed only
+    // properties/items to depth 8, so oneOf/$defs/deep-nesting floods
+    // passed through intact.
+    const deepChain = (levels: number): Record<string, unknown> => {
+      let node: Record<string, unknown> = { type: 'string', description: 'd'.repeat(10000) };
+      for (let i = 0; i < levels; i++) {
+        node = { type: 'object', properties: { child: node } };
+      }
+      return node;
+    };
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => [
@@ -257,7 +267,18 @@ describe('getTools', () => {
                 type: 'array',
                 items: { type: 'object', description: 'z'.repeat(10000) },
               },
+              mode: {
+                oneOf: [
+                  { type: 'string', description: 'o'.repeat(10000) },
+                  { type: 'integer', description: 'p'.repeat(10000) },
+                ],
+              },
+              deep: deepChain(14),
             },
+            $defs: {
+              hidden: { type: 'string', description: 'q'.repeat(10000) },
+            },
+            additionalProperties: { type: 'string', description: 'r'.repeat(10000) },
           },
           meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
         },
@@ -268,10 +289,37 @@ describe('getTools', () => {
     const tools = await getTools(baseConfig);
 
     const serialized = JSON.stringify(tools[0].inputSchema);
-    expect(serialized.length).toBeLessThan(3000);
-    expect(serialized).not.toContain('x'.repeat(501));
-    expect(serialized).not.toContain('y'.repeat(501));
-    expect(serialized).not.toContain('z'.repeat(501));
+    for (const marker of ['x', 'y', 'z', 'o', 'p', 'q', 'r', 'd']) {
+      expect(serialized).not.toContain(marker.repeat(501));
+    }
+    expect(serialized.length).toBeLessThan(8000);
+  });
+
+  it('drops an ability whose schema blows the node budget, keeping the rest of the catalog', async () => {
+    const hugeProperties: Record<string, unknown> = {};
+    for (let i = 0; i < 3000; i++) {
+      hugeProperties[`p${i}`] = { type: 'string' };
+    }
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        sampleAbilities[0],
+        {
+          name: 'mainwp/schema-bomb-v1',
+          label: 'Schema Bomb',
+          description: 'Pathological structure',
+          category: 'mainwp-sites',
+          input_schema: { type: 'object', properties: hugeProperties },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    expect(tools.map(t => t.name)).toContain('list_sites_v1');
+    expect(tools.map(t => t.name)).not.toContain('schema_bomb_v1');
   });
 
   it('advertises unannotated abilities as destructive, matching the execution policy', async () => {

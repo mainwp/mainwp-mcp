@@ -58,13 +58,14 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
     ? schema.required.filter((entry): entry is string => typeof entry === 'string')
     : [];
 
-  // Bound remote description text first (non-strings and hostile flooding
-  // become '' / capped), then backfill what is missing from parameter names.
+  // Backfill missing descriptions from parameter names. Remote description
+  // text arrives already bounded — abilities.ts deep-bounds every schema
+  // string at the fetch boundary, which also covers the help and resource
+  // surfaces this module never sees.
   // Some upstream abilities omit descriptions; LLMs need them for accurate
   // tool use.
   for (const [name, prop] of Object.entries(properties)) {
-    boundSchemaDescriptions(prop);
-    if (!prop.description || String(prop.description).trim() === '') {
+    if (typeof prop.description !== 'string' || prop.description.trim() === '') {
       prop.description = paramNameToDescription(name);
     }
   }
@@ -74,41 +75,6 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
     properties,
     required,
   };
-}
-
-/** Remote schema description fields are bounded to this length. */
-const MAX_SCHEMA_DESC_LENGTH = 500;
-
-/**
- * Recursively bound `description` fields inside a remote schema node.
- * Standard verbosity ships nested schemas uncompressed, so without this a
- * hostile Dashboard could flood tool schemas with arbitrary text; compact
- * mode's compressSchema truncates further but only after this safety bound.
- */
-function boundSchemaDescriptions(node: Record<string, unknown>, depth = 0): void {
-  if (depth > 8) {
-    return;
-  }
-  if ('description' in node && node.description !== undefined) {
-    const bounded = flattenRemoteText(node.description, MAX_SCHEMA_DESC_LENGTH);
-    if (bounded) {
-      node.description = bounded;
-    } else {
-      delete node.description;
-    }
-  }
-  const nested = node.properties;
-  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-    for (const child of Object.values(nested)) {
-      if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
-        boundSchemaDescriptions(child as Record<string, unknown>, depth + 1);
-      }
-    }
-  }
-  const items = node.items;
-  if (items && typeof items === 'object' && !Array.isArray(items)) {
-    boundSchemaDescriptions(items as Record<string, unknown>, depth + 1);
-  }
 }
 
 /**
