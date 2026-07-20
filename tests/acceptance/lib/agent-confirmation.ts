@@ -74,8 +74,7 @@ export function evaluateConfirmationTranscript(
     );
 
   let preview:
-    | { toolUse: RecordedAgentToolUse; index: number; confirmationToken: string }
-    | undefined;
+    { toolUse: RecordedAgentToolUse; index: number; confirmationToken: string } | undefined;
   for (const candidate of relevantUses) {
     const result = candidate.toolUse.id ? resultByCallId.get(candidate.toolUse.id) : undefined;
     if (!result || result.isError) continue;
