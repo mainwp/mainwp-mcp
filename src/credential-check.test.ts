@@ -81,6 +81,22 @@ describe('validateCredentials', () => {
     );
   });
 
+  it('classifies connection timeouts', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Request timeout after 30000ms'));
+
+    await expect(validateCredentials(makeBaseConfig(), mockLogger)).rejects.toThrow(
+      /Connection timeout\. Verify MAINWP_URL is reachable/
+    );
+  });
+
+  it('classifies SSL certificate errors', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('unable to verify the first certificate'));
+
+    await expect(validateCredentials(makeBaseConfig(), mockLogger)).rejects.toThrow(
+      /SSL certificate verification failed/
+    );
+  });
+
   it('classifies network errors without an HTTP status', async () => {
     mockFetch.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND dashboard.local'));
 

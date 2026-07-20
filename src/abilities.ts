@@ -66,7 +66,8 @@ export interface AbilityAnnotations {
 const MAX_LABEL_LENGTH = 200;
 const MAX_CATEGORY_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 2000;
-const MAX_INSTRUCTIONS_LENGTH = 300;
+/** Shared with tool-schema.ts, which re-sanitizes instructions at description composition. */
+export const MAX_INSTRUCTIONS_LENGTH = 300;
 const MAX_CATEGORY_DESC_LENGTH = 500;
 
 /**
@@ -245,9 +246,12 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
  * Normalize one remote text field: non-strings become '', control and format
  * characters collapse to spaces (multiline mode preserves single newlines for
  * legitimate prose), and the result is hard-capped. Runs at the fetch
- * boundary so every downstream consumer sees bounded plain text.
+ * boundary so every downstream consumer sees bounded plain text. Exported so
+ * defense-in-depth call sites (tool-schema.ts) share this one implementation
+ * instead of carrying a copy that can drift.
+ * @internal
  */
-function normalizeRemoteText(
+export function normalizeRemoteText(
   raw: unknown,
   maxLength: number,
   mode: 'flatten' | 'multiline'

@@ -7,7 +7,12 @@
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { Ability, AbilityAnnotations } from './abilities.js';
+import {
+  MAX_INSTRUCTIONS_LENGTH,
+  normalizeRemoteText,
+  type Ability,
+  type AbilityAnnotations,
+} from './abilities.js';
 import type { SchemaVerbosity } from './config.js';
 import { abilityNameToToolName } from './naming.js';
 import { classifyDestructive, declaresUsableBooleanParam } from './policy.js';
@@ -209,39 +214,6 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
 }
 
 /**
- * Remote ability `instructions` are Dashboard/extension-controlled text and
- * must be treated as hostile: unbounded, they are a context-flooding and
- * prompt-injection channel into every tool description. Cap keeps them a
- * short usage hint, not a directive payload.
- */
-const MAX_API_INSTRUCTIONS_LENGTH = 300;
-
-/**
- * Flatten remote text to a single bounded line: control and format
- * characters (newlines, ANSI, bidi marks) collapse to spaces so the text
- * cannot fake description structure, then hard-truncate. Non-strings return
- * '' — remote metadata carries no type guarantees, and throwing here would
- * fail the whole tools/list response over one malformed field.
- */
-function flattenRemoteText(raw: unknown, maxLength: number): string {
-  if (typeof raw !== 'string') {
-    return '';
-  }
-  const flattened = raw
-    .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (flattened.length <= maxLength) {
-    return flattened;
-  }
-  return flattened.slice(0, maxLength - 3) + '...';
-}
-
-function sanitizeApiInstructions(raw: unknown): string {
-  return flattenRemoteText(raw, MAX_API_INSTRUCTIONS_LENGTH);
-}
-
-/**
  * Generate contextual LLM instruction text from ability metadata.
  *
  * Produces safety guidance that tells the AI how to use a tool correctly:
@@ -257,10 +229,13 @@ export function generateInstructions(
 ): string {
   const parts: string[] = [];
 
-  // Bounded, sanitized API-provided usage hint (ensure trailing punctuation
-  // for clean concatenation)
+  // Remote instructions are Dashboard/extension-controlled and treated as
+  // hostile: re-flattened and re-capped here (shared fetch-boundary sanitizer)
+  // so they stay a short usage hint, never a directive payload, even if the
+  // upstream bound ever regresses. Trailing punctuation added for clean
+  // concatenation.
   if (meta?.instructions) {
-    const instr = sanitizeApiInstructions(meta.instructions);
+    const instr = normalizeRemoteText(meta.instructions, MAX_INSTRUCTIONS_LENGTH, 'flatten');
     if (instr) {
       parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
     }
