@@ -447,6 +447,81 @@ describe('getTools', () => {
     expect(tools.map(t => t.name)).not.toContain('schema_bomb_v1');
   });
 
+  it('drops an ability whose schema hides the node bomb in boolean subschemas', async () => {
+    // Regression (2026-07-19 CR round 6): boolean entries under properties
+    // bypassed the node budget — each cost zero nodes, so thousands of
+    // boolean subschemas walked for free while object subschemas were capped.
+    const hugeProperties: Record<string, unknown> = {};
+    for (let i = 0; i < 3000; i++) {
+      hugeProperties[`p${i}`] = true;
+    }
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        sampleAbilities[0],
+        {
+          name: 'mainwp/bool-bomb-v1',
+          label: 'Boolean Schema Bomb',
+          description: 'Pathological structure',
+          category: 'mainwp-sites',
+          input_schema: { type: 'object', properties: hugeProperties },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    expect(tools.map(t => t.name)).toContain('list_sites_v1');
+    expect(tools.map(t => t.name)).not.toContain('bool_bomb_v1');
+  });
+
+  it('treats truthy non-boolean safety flags as absent claims, not as grants', async () => {
+    // Regression (2026-07-19 CR round 6): `readonly: "yes"` and
+    // `idempotent: 1` passed loose `if (meta?.readonly)` reads in guidance
+    // and tags even though the strict hints require literal true. Malformed
+    // flags are dropped at the fetch boundary, so guidance, hints, retry,
+    // and no-op handling all see the fail-closed default.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/fake-idempotent-v1',
+          label: 'Fake Idempotent',
+          description: 'Claims idempotence with a string',
+          category: 'mainwp-sites',
+          input_schema: { type: 'object', properties: { site_id: { type: 'integer' } } },
+          meta: { annotations: { readonly: false, destructive: 1, idempotent: 'sure' } },
+        },
+        {
+          name: 'mainwp/fake-readonly-v1',
+          label: 'Fake Readonly',
+          description: 'Claims readonly with a string',
+          category: 'mainwp-sites',
+          input_schema: { type: 'object', properties: { site_id: { type: 'integer' } } },
+          meta: { annotations: { readonly: 'yes', destructive: false, idempotent: false } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+    const fakeIdempotent = tools.find(t => t.name === 'fake_idempotent_v1');
+    const fakeReadonly = tools.find(t => t.name === 'fake_readonly_v1');
+
+    // destructive: 1 is not a literal false — stays destructive, and the
+    // string idempotent claim must not suppress the non-idempotence warning.
+    expect(fakeIdempotent?.annotations?.destructiveHint).toBe(true);
+    expect(fakeIdempotent?.annotations?.idempotentHint).toBe(false);
+    expect(fakeIdempotent?.description).toContain('Not idempotent');
+
+    // readonly: 'yes' must not advertise the tool as safe to call freely.
+    expect(fakeReadonly?.annotations?.readOnlyHint).toBe(false);
+    expect(fakeReadonly?.description).not.toContain('Read-only');
+    expect(fakeReadonly?.description).toContain('Write operation');
+  });
+
   it('advertises unannotated abilities as destructive, matching the execution policy', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

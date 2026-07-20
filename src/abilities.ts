@@ -213,7 +213,11 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
               if (sub !== null && typeof sub === 'object' && !Array.isArray(sub)) {
                 map[name] = walkSchema(sub);
               } else if (typeof sub === 'boolean') {
-                map[name] = sub; // boolean schemas are valid
+                // Boolean schemas are valid but still count against the node
+                // budget — a map of thousands of boolean entries must not
+                // walk for free while object subschemas are capped.
+                if (!budget()) break;
+                map[name] = sub;
               }
               // Other primitive entry values are invalid schemas: dropped.
             }
@@ -611,20 +615,29 @@ export async function fetchAbilities(
           'multiline'
         );
         const annotations: unknown = ability.meta?.annotations;
-        if (
-          annotations !== null &&
-          typeof annotations === 'object' &&
-          'instructions' in annotations
-        ) {
-          const capped = normalizeRemoteText(
-            (annotations as AbilityAnnotations).instructions,
-            MAX_INSTRUCTIONS_LENGTH,
-            'flatten'
-          );
-          if (capped) {
-            (annotations as AbilityAnnotations).instructions = capped;
-          } else {
-            delete (annotations as AbilityAnnotations).instructions;
+        if (annotations !== null && typeof annotations === 'object') {
+          if ('instructions' in annotations) {
+            const capped = normalizeRemoteText(
+              (annotations as AbilityAnnotations).instructions,
+              MAX_INSTRUCTIONS_LENGTH,
+              'flatten'
+            );
+            if (capped) {
+              (annotations as AbilityAnnotations).instructions = capped;
+            } else {
+              delete (annotations as AbilityAnnotations).instructions;
+            }
+          }
+          // Safety flags must be literal booleans. A truthy non-boolean
+          // (`readonly: "yes"`, `idempotent: 1`) would pass loose `if (x)`
+          // reads in guidance, retry, and no-op handling, so the malformed
+          // key is dropped here and every consumer sees the fail-closed
+          // default: destructive, not readonly, not idempotent.
+          const record = annotations as Record<string, unknown>;
+          for (const flag of ['readonly', 'destructive', 'idempotent'] as const) {
+            if (flag in record && typeof record[flag] !== 'boolean') {
+              delete record[flag];
+            }
           }
         }
         for (const key of ['input_schema', 'output_schema'] as const) {
