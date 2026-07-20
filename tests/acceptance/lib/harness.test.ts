@@ -433,6 +433,16 @@ describe('agent acceptance matchers', () => {
     ).toBe(true);
   });
 
+  it('rejects existing-site wording despite unrelated managed text', () => {
+    // Pins the exists-guard's precedence over the broadened "managed" verb:
+    // without the guard, pattern 1 would match "site ... isn't managed".
+    expect(
+      matchesNotFoundSiteAnswer(
+        "The site exists, but it isn't managed by the plugin you asked about."
+      )
+    ).toBe(false);
+  });
+
   it('accepts a relayed mainwp_site_not_found error code as absence evidence', () => {
     expect(
       matchesNotFoundSiteAnswer('The lookup failed with `mainwp_site_not_found` for that host.')
