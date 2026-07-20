@@ -443,6 +443,14 @@ describe('agent acceptance matchers', () => {
     ).toBe(false);
   });
 
+  it('accepts a no-such-domain absence in the guard-exempt wording', () => {
+    // CR iteration 11: the exists-guard exempts "no such" subjects, so the
+    // accept patterns must recognize the same wording or it matches nothing.
+    expect(matchesNotFoundSiteAnswer('No such domain is registered with this dashboard.')).toBe(
+      true
+    );
+  });
+
   it('accepts a negated exists phrasing without tripping the exists-guard', () => {
     // Live transcript, 2026-07-20 (Codex human-suite run): "confirms no
     // matching site exists" tripped the exists-guard on its "site exists"
