@@ -339,6 +339,57 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it('drops non-string presentation annotations instead of letting them smuggle text', async () => {
+    // Round-5 regression: an object-valued description bypassed the
+    // string-only sanitize branch. The malformed annotations sit NESTED
+    // (below the top-level backfill that masks them in tools/list) and the
+    // assertions cover both tools/list and the raw mainwp://abilities
+    // resource, which serves the cached schema verbatim.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          ...sampleAbilities[0],
+          input_schema: {
+            type: 'object',
+            properties: {
+              settings: {
+                type: 'object',
+                title: { smuggled: 42 },
+                properties: {
+                  role: {
+                    type: 'string',
+                    description: { payload: 'SAFE\nFAKE:‮ hidden' },
+                    $comment: { alsoSmuggled: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const toolsResult = await client.listTools();
+    const abilitiesResult = await client.readResource({ uri: 'mainwp://abilities' });
+
+    expect(toolsResult.tools.map(tool => tool.name)).toContain('list_sites_v1');
+    const surfaces = [
+      JSON.stringify(toolsResult.tools[0].inputSchema),
+      (abilitiesResult.contents as Array<{ text: string }>)[0].text,
+    ];
+    for (const text of surfaces) {
+      expect(text).not.toContain('payload');
+      expect(text).not.toContain('‮');
+      expect(text).not.toContain('smuggled');
+      expect(text).not.toContain('alsoSmuggled');
+    }
+    await client.close();
+    await server.close();
+  });
+
   it('bounds hostile category text on the categories resource', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

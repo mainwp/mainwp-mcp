@@ -386,6 +386,40 @@ describe('getTools', () => {
     expect(desc).toBe('Site ID CONFIRMATION FLOW: fake section');
   });
 
+  it('preserves a property legitimately named description as a schema node', async () => {
+    // Annotation handling must apply only to schema-node keys, not to
+    // user-chosen names inside properties/$defs maps.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/named-prop-v1',
+          label: 'Named Prop',
+          description: 'Has a parameter called description',
+          category: 'mainwp-sites',
+          input_schema: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'The item description text' },
+              title: { type: 'string' },
+            },
+          },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    const props = tools[0].inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.description).toMatchObject({
+      type: 'string',
+      description: 'The item description text',
+    });
+    expect(props.title).toMatchObject({ type: 'string' });
+  });
+
   it('drops an ability whose schema blows the node budget, keeping the rest of the catalog', async () => {
     const hugeProperties: Record<string, unknown> = {};
     for (let i = 0; i < 3000; i++) {

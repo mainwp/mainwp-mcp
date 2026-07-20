@@ -85,53 +85,85 @@ const MAX_SCHEMA_TEXT_LENGTH = 500;
 const MAX_SCHEMA_SEMANTIC_LENGTH = 2000;
 const MAX_SCHEMA_KEY_LENGTH = 200;
 
-/** Schema fields that are human/AI-facing prose, safe to sanitize and cap. */
+/** Schema-node annotations that are human/AI-facing prose: sanitize and cap. */
 const SCHEMA_TEXT_FIELDS = new Set(['description', 'title', '$comment']);
+/**
+ * Keywords whose value is a map of user-chosen names to subschemas. Their
+ * keys are NOT annotations — a property legitimately named "description"
+ * must be preserved as a schema node, not treated as prose.
+ */
+const SCHEMA_MAP_KEYWORDS = new Set([
+  'properties',
+  'patternProperties',
+  'definitions',
+  '$defs',
+  'dependentSchemas',
+]);
+/** Keywords whose value is instance data, not schema structure. */
+const SCHEMA_DATA_KEYWORDS = new Set(['enum', 'const', 'default', 'examples', 'example']);
 
 /**
- * Deep-bound a remote JSON-Schema-shaped value, field-aware:
+ * Deep-bound a remote JSON-Schema-shaped value, schema-structure-aware:
  *
- * - Presentation fields (description, title, $comment) get the same
- *   control/format-character stripping and length cap as top-level ability
- *   text — they feed tool and help output, so hidden bidi/newline tricks
- *   and flooding both matter, and truncating prose changes no contract.
- * - Every other string is semantic (enum values, pattern, $ref, ...) and is
- *   passed through untouched; if one exceeds the sanity bound the ability is
- *   rejected outright rather than silently altered.
- * - Oversized keys and a total node budget likewise reject the ability;
- *   traversal stops at the first violation instead of visiting siblings.
+ * - Prose annotations on schema nodes (description, title, $comment) get
+ *   control/format-character stripping and a length cap when they are
+ *   strings; a non-string value there is dropped — it is invalid JSON
+ *   Schema, strict clients may reject it, and (the round-5 bypass) an
+ *   object-valued description otherwise smuggles unsanitized text past the
+ *   string-only check.
+ * - Map keywords (properties, $defs, ...) contain user-chosen names mapping
+ *   to subschemas, so their keys get no annotation handling; non-schema
+ *   entry values (strings, numbers) are dropped, boolean schemas kept.
+ * - Data keywords (enum, const, default, examples) hold instance values:
+ *   strings there are semantic and never mutated.
+ * - Any other semantic string (pattern, $ref, format, required entries, ...)
+ *   passes through untouched; one over the sanity bound rejects the ability
+ *   outright rather than being silently altered, as do oversized keys and
+ *   the total node budget. Traversal stops at the first violation.
  *
  * Returns null when rejected — the caller drops the ability with a warning.
- * The traversal is deliberately generic over keywords (properties, items,
- * oneOf, $defs, additionalProperties, anything else): an earlier revision
- * followed a keyword list to a fixed depth, which left every unlisted
- * keyword and deeper level as a flooding bypass.
+ * Traversal is generic over unlisted keywords (items, oneOf,
+ * additionalProperties, anything future): an early revision followed a
+ * keyword list to a fixed depth, which left everything unlisted as a bypass.
  */
 function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknown> | null {
   let nodes = 0;
   let invalid = false;
-  const walk = (value: unknown, field: string | null): unknown => {
-    if (invalid || ++nodes > MAX_SCHEMA_NODES) {
+
+  const boundedString = (value: string): string | null => {
+    if (value.length > MAX_SCHEMA_SEMANTIC_LENGTH) {
       invalid = true;
       return null;
     }
-    if (typeof value === 'string') {
-      if (field !== null && SCHEMA_TEXT_FIELDS.has(field)) {
-        return normalizeRemoteText(value, MAX_SCHEMA_TEXT_LENGTH, 'flatten');
-      }
-      if (value.length > MAX_SCHEMA_SEMANTIC_LENGTH) {
-        invalid = true;
-        return null;
-      }
-      return value;
+    return value;
+  };
+
+  const budget = (): boolean => {
+    if (invalid || ++nodes > MAX_SCHEMA_NODES) {
+      invalid = true;
+      return false;
     }
+    return true;
+  };
+
+  const keyOk = (key: string): boolean => {
+    if (key.length > MAX_SCHEMA_KEY_LENGTH) {
+      invalid = true;
+      return false;
+    }
+    return true;
+  };
+
+  // Instance data under enum/const/default/examples: no annotation handling
+  // anywhere inside, strings are semantic, structure is budget-bounded.
+  const walkData = (value: unknown): unknown => {
+    if (!budget()) return null;
+    if (typeof value === 'string') return boundedString(value);
     if (Array.isArray(value)) {
       const out: unknown[] = [];
       for (const child of value) {
-        if (invalid) {
-          break;
-        }
-        out.push(walk(child, null));
+        if (invalid) break;
+        out.push(walkData(child));
       }
       return out;
     }
@@ -139,20 +171,69 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
       // Null prototype so hostile keys like __proto__ stay own properties.
       const out: Record<string, unknown> = Object.create(null);
       for (const [key, child] of Object.entries(value)) {
-        if (invalid) {
-          break;
-        }
-        if (key.length > MAX_SCHEMA_KEY_LENGTH) {
-          invalid = true;
-          break;
-        }
-        out[key] = walk(child, key);
+        if (invalid || !keyOk(key)) break;
+        out[key] = walkData(child);
       }
       return out;
     }
     return value;
   };
-  const bounded = walk(root, null);
+
+  const walkSchema = (value: unknown): unknown => {
+    if (!budget()) return null;
+    if (typeof value === 'string') return boundedString(value);
+    if (Array.isArray(value)) {
+      // Mixed shapes are legal here: oneOf holds subschemas, required/type
+      // hold plain strings. Objects recurse as schema nodes, strings stay
+      // semantic, booleans (boolean schemas) pass through.
+      const out: unknown[] = [];
+      for (const child of value) {
+        if (invalid) break;
+        out.push(walkSchema(child));
+      }
+      return out;
+    }
+    if (value !== null && typeof value === 'object') {
+      const out: Record<string, unknown> = Object.create(null);
+      for (const [key, child] of Object.entries(value)) {
+        if (invalid || !keyOk(key)) break;
+        if (SCHEMA_TEXT_FIELDS.has(key)) {
+          if (typeof child === 'string') {
+            out[key] = normalizeRemoteText(child, MAX_SCHEMA_TEXT_LENGTH, 'flatten');
+          }
+          // Non-string prose annotation: dropped (invalid JSON Schema and a
+          // sanitation bypass) — the key is simply omitted.
+          continue;
+        }
+        if (SCHEMA_MAP_KEYWORDS.has(key)) {
+          if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+            const map: Record<string, unknown> = Object.create(null);
+            for (const [name, sub] of Object.entries(child)) {
+              if (invalid || !keyOk(name)) break;
+              if (sub !== null && typeof sub === 'object' && !Array.isArray(sub)) {
+                map[name] = walkSchema(sub);
+              } else if (typeof sub === 'boolean') {
+                map[name] = sub; // boolean schemas are valid
+              }
+              // Other primitive entry values are invalid schemas: dropped.
+            }
+            out[key] = map;
+          }
+          // Non-object map keyword value: dropped.
+          continue;
+        }
+        if (SCHEMA_DATA_KEYWORDS.has(key)) {
+          out[key] = walkData(child);
+          continue;
+        }
+        out[key] = walkSchema(child);
+      }
+      return out;
+    }
+    return value;
+  };
+
+  const bounded = walkSchema(root);
   return invalid ? null : (bounded as Record<string, unknown>);
 }
 
