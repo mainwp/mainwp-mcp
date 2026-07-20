@@ -75,49 +75,85 @@ const MAX_CATEGORY_DESC_LENGTH = 500;
  * pathological structures a hostile Dashboard could ship.
  */
 const MAX_SCHEMA_NODES = 2000;
-const MAX_SCHEMA_STRING_LENGTH = 500;
+/** Presentation fields: sanitized and capped — truncation is harmless prose loss. */
+const MAX_SCHEMA_TEXT_LENGTH = 500;
+/**
+ * Semantic strings (enum/const values, pattern, $ref, defaults, formats):
+ * NEVER mutated — a truncated regex or enum value silently corrupts the tool
+ * contract. Anything over this generous bound rejects the whole ability.
+ */
+const MAX_SCHEMA_SEMANTIC_LENGTH = 2000;
 const MAX_SCHEMA_KEY_LENGTH = 200;
 
+/** Schema fields that are human/AI-facing prose, safe to sanitize and cap. */
+const SCHEMA_TEXT_FIELDS = new Set(['description', 'title', '$comment']);
+
 /**
- * Deep-bound a remote JSON-Schema-shaped value: every string at every depth
- * under every keyword (properties, items, oneOf, $defs, additionalProperties,
- * anything else) is capped, oversized keys are dropped, and a total node
- * budget rejects pathological structures outright (returns null so the caller
- * drops the ability). The traversal is deliberately generic — an earlier
- * revision followed only `properties`/`items` to a fixed depth, which left
- * every unlisted keyword and deeper level as a flooding bypass.
+ * Deep-bound a remote JSON-Schema-shaped value, field-aware:
+ *
+ * - Presentation fields (description, title, $comment) get the same
+ *   control/format-character stripping and length cap as top-level ability
+ *   text — they feed tool and help output, so hidden bidi/newline tricks
+ *   and flooding both matter, and truncating prose changes no contract.
+ * - Every other string is semantic (enum values, pattern, $ref, ...) and is
+ *   passed through untouched; if one exceeds the sanity bound the ability is
+ *   rejected outright rather than silently altered.
+ * - Oversized keys and a total node budget likewise reject the ability;
+ *   traversal stops at the first violation instead of visiting siblings.
+ *
+ * Returns null when rejected — the caller drops the ability with a warning.
+ * The traversal is deliberately generic over keywords (properties, items,
+ * oneOf, $defs, additionalProperties, anything else): an earlier revision
+ * followed a keyword list to a fixed depth, which left every unlisted
+ * keyword and deeper level as a flooding bypass.
  */
 function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknown> | null {
   let nodes = 0;
-  let overflow = false;
-  const walk = (value: unknown): unknown => {
-    if (overflow || ++nodes > MAX_SCHEMA_NODES) {
-      overflow = true;
+  let invalid = false;
+  const walk = (value: unknown, field: string | null): unknown => {
+    if (invalid || ++nodes > MAX_SCHEMA_NODES) {
+      invalid = true;
       return null;
     }
     if (typeof value === 'string') {
-      return value.length > MAX_SCHEMA_STRING_LENGTH
-        ? value.slice(0, MAX_SCHEMA_STRING_LENGTH - 3) + '...'
-        : value;
+      if (field !== null && SCHEMA_TEXT_FIELDS.has(field)) {
+        return normalizeRemoteText(value, MAX_SCHEMA_TEXT_LENGTH, 'flatten');
+      }
+      if (value.length > MAX_SCHEMA_SEMANTIC_LENGTH) {
+        invalid = true;
+        return null;
+      }
+      return value;
     }
     if (Array.isArray(value)) {
-      return value.map(walk);
+      const out: unknown[] = [];
+      for (const child of value) {
+        if (invalid) {
+          break;
+        }
+        out.push(walk(child, null));
+      }
+      return out;
     }
     if (value !== null && typeof value === 'object') {
       // Null prototype so hostile keys like __proto__ stay own properties.
       const out: Record<string, unknown> = Object.create(null);
       for (const [key, child] of Object.entries(value)) {
-        if (key.length > MAX_SCHEMA_KEY_LENGTH) {
-          continue;
+        if (invalid) {
+          break;
         }
-        out[key] = walk(child);
+        if (key.length > MAX_SCHEMA_KEY_LENGTH) {
+          invalid = true;
+          break;
+        }
+        out[key] = walk(child, key);
       }
       return out;
     }
     return value;
   };
-  const bounded = walk(root);
-  return overflow ? null : (bounded as Record<string, unknown>);
+  const bounded = walk(root, null);
+  return invalid ? null : (bounded as Record<string, unknown>);
 }
 
 /**
@@ -521,7 +557,7 @@ export async function fetchAbilities(
           }
           const bounded = boundRemoteSchema(schema);
           if (bounded === null) {
-            logger?.warning('Skipping ability with oversized schema', {
+            logger?.warning('Skipping ability whose schema exceeds safety bounds', {
               name: sanitizeError(ability.name),
               schema: key,
             });

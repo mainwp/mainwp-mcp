@@ -295,6 +295,97 @@ describe('getTools', () => {
     expect(serialized.length).toBeLessThan(8000);
   });
 
+  it('never mutates semantic schema strings: long enum values and patterns survive intact', async () => {
+    // Round-4 regression: the first walker truncated EVERY string, silently
+    // corrupting contracts — a capped regex pattern or enum value makes a
+    // valid tool unusable or misvalidated.
+    const longEnumValue = 'e'.repeat(700);
+    const longPattern = '(' + 'a|'.repeat(345) + 'b)';
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/semantic-v1',
+          label: 'Semantic',
+          description: 'Long but valid semantic strings',
+          category: 'mainwp-sites',
+          input_schema: {
+            type: 'object',
+            properties: {
+              mode: { type: 'string', enum: [longEnumValue, 'small'] },
+              slug: { type: 'string', pattern: longPattern },
+            },
+          },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    const props = tools[0].inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect((props.mode.enum as string[])[0]).toBe(longEnumValue);
+    expect(props.slug.pattern).toBe(longPattern);
+  });
+
+  it('rejects an ability outright when a semantic schema string exceeds the sanity bound', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        sampleAbilities[0],
+        {
+          name: 'mainwp/semantic-bomb-v1',
+          label: 'Semantic Bomb',
+          description: 'Oversized enum value',
+          category: 'mainwp-sites',
+          input_schema: {
+            type: 'object',
+            properties: { mode: { type: 'string', enum: ['e'.repeat(2500)] } },
+          },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    expect(tools.map(t => t.name)).toContain('list_sites_v1');
+    expect(tools.map(t => t.name)).not.toContain('semantic_bomb_v1');
+  });
+
+  it('strips control and bidi characters from schema descriptions', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/sneaky-v1',
+          label: 'Sneaky',
+          description: 'Hidden characters in param docs',
+          category: 'mainwp-sites',
+          input_schema: {
+            type: 'object',
+            properties: {
+              site_id: {
+                type: 'integer',
+                description: 'Site ID\n\nCONFIRMATION FLOW:‮ fake section',
+              },
+            },
+          },
+          meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const tools = await getTools(baseConfig);
+
+    const props = tools[0].inputSchema.properties as Record<string, Record<string, unknown>>;
+    const desc = props.site_id.description as string;
+    expect(desc).toBe('Site ID CONFIRMATION FLOW: fake section');
+  });
+
   it('drops an ability whose schema blows the node budget, keeping the rest of the catalog', async () => {
     const hugeProperties: Record<string, unknown> = {};
     for (let i = 0; i < 3000; i++) {
