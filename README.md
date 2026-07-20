@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-beta-blue" alt="Beta">
+  <img src="https://img.shields.io/badge/status-stable-green" alt="Stable">
   <a href="https://www.npmjs.com/package/@mainwp/mcp"><img src="https://img.shields.io/npm/v/@mainwp/mcp" alt="npm version"></a>
   <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
@@ -15,10 +15,6 @@ _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 **AI proposes the work. MainWP decides what's permitted, performs it, and reports what actually happened.**
 
 [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
-
-**Looking for the MainWP Control CLI instead?** [MainWP Control](https://github.com/mainwp/mainwp-control) is a CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. MainWP Control is for automation: AI automation, cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
-
-**Beta Release** — This project is under active development. APIs may change between versions.
 
 An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
 
