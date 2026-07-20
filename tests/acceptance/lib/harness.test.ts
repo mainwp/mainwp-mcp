@@ -420,6 +420,19 @@ describe('agent acceptance matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts an absence phrased as not being managed', () => {
+    // Live transcript, 2026-07-20: absence stated as management ("isn't
+    // managed by your MainWP Dashboard") with no found/registered/connected
+    // verb and no error code, backed by an empty scoped search.
+    expect(
+      matchesNotFoundSiteAnswer(
+        "That site isn't managed by your MainWP Dashboard, so there are no plugins to report. " +
+          "I searched your Dashboard's connected sites for `nonexistent-acceptance-probe.invalid` " +
+          'and got zero matches.'
+      )
+    ).toBe(true);
+  });
+
   it('accepts a relayed mainwp_site_not_found error code as absence evidence', () => {
     expect(
       matchesNotFoundSiteAnswer('The lookup failed with `mainwp_site_not_found` for that host.')

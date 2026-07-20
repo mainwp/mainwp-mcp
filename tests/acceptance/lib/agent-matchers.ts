@@ -171,7 +171,7 @@ export function matchesNotFoundSiteAnswer(text: string): boolean {
   // Gaps allow ~90 chars so a long quoted hostname (37+ chars plus backticks
   // and words like "named") fits between the subject and the verdict.
   return [
-    /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:found|registered|connected|known|present|available)\b/,
+    /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:found|registered|connected|known|present|available|managed)\b/,
     /\b(?:site|domain|website)\b.{0,90}\b(?:does not|doesn't)\s+exist\b/,
     /\b(?:no|zero)\s+(?:matching\s+)?(?:site|domain|website)s?\b.{0,90}\b(?:found|registered|connected|exists?)\b/,
     /\b(?:could not|couldn't|cannot|can't|unable to)\s+(?:find|locate|identify)\b.{0,90}\b(?:site|domain|website)\b/,
