@@ -443,6 +443,21 @@ describe('agent acceptance matchers', () => {
     ).toBe(false);
   });
 
+  it('accepts a negated exists phrasing without tripping the exists-guard', () => {
+    // Live transcript, 2026-07-20 (Codex human-suite run): "confirms no
+    // matching site exists" tripped the exists-guard on its "site exists"
+    // substring and vetoed the answer before the error-code anchor and the
+    // "isn't managed" pattern could accept it.
+    expect(
+      matchesNotFoundSiteAnswer(
+        "That site isn't managed by your MainWP Dashboard. The plugin lookup returned " +
+          '`mainwp_site_not_found` for `nonexistent-acceptance-probe.invalid`, and a site ' +
+          "search for that name confirms no matching site exists, so there's no plugin " +
+          'list to report.'
+      )
+    ).toBe(true);
+  });
+
   it('accepts a relayed mainwp_site_not_found error code as absence evidence', () => {
     expect(
       matchesNotFoundSiteAnswer('The lookup failed with `mainwp_site_not_found` for that host.')

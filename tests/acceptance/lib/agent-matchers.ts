@@ -153,8 +153,11 @@ export function inventoryProvesSiteAbsent(
  */
 export function matchesNotFoundSiteAnswer(text: string): boolean {
   const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  // Negated subjects ("no matching site exists") are absence claims, not
+  // existence claims — the lookbehind keeps the guard off them so the
+  // patterns and error-code anchor below can still accept the answer.
   if (
-    /\b(?:the |that )?(?:site|domain|website)\s+(?:exists|is registered|is connected|was found)\b/.test(
+    /(?<!\b(?:no|zero) (?:matching |such )?)\b(?:the |that )?(?:site|domain|website)\s+(?:exists|is registered|is connected|was found)\b/.test(
       answer
     )
   ) {
