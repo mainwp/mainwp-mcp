@@ -273,6 +273,11 @@ export function normalizeRemoteText(
   if (cleaned.length <= maxLength) {
     return cleaned;
   }
+  // Limits at or below the ellipsis length would exceed the cap with the
+  // '...' suffix; hard-cut instead so the bound holds for every maxLength.
+  if (maxLength <= 3) {
+    return cleaned.slice(0, Math.max(0, maxLength));
+  }
   return cleaned.slice(0, maxLength - 3) + '...';
 }
 
