@@ -12,6 +12,7 @@ import {
   clearCache,
   onCacheRefresh,
   initRateLimiter,
+  normalizeRemoteText,
   type Ability,
 } from './abilities.js';
 import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
@@ -1595,6 +1596,15 @@ describe('generateHelpDocument', () => {
     expect(helpDoc.overview.safetyConventions).toHaveProperty('dryRun');
     expect(helpDoc.overview.safetyConventions).toHaveProperty('confirm');
     expect(helpDoc.overview.safetyConventions).toHaveProperty('destructive');
+  });
+});
+
+describe('normalizeRemoteText', () => {
+  it('never exceeds maxLength, including limits at or below the ellipsis length', () => {
+    for (const maxLength of [0, 1, 2, 3, 4, 10]) {
+      const result = normalizeRemoteText('abcdefghijklmnop', maxLength, 'flatten');
+      expect(result.length).toBeLessThanOrEqual(maxLength);
+    }
   });
 });
 

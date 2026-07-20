@@ -420,6 +420,52 @@ describe('agent acceptance matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts an absence phrased as not being managed', () => {
+    // Live transcript, 2026-07-20: absence stated as management ("isn't
+    // managed by your MainWP Dashboard") with no found/registered/connected
+    // verb and no error code, backed by an empty scoped search.
+    expect(
+      matchesNotFoundSiteAnswer(
+        "That site isn't managed by your MainWP Dashboard, so there are no plugins to report. " +
+          "I searched your Dashboard's connected sites for `nonexistent-acceptance-probe.invalid` " +
+          'and got zero matches.'
+      )
+    ).toBe(true);
+  });
+
+  it('rejects existing-site wording despite unrelated managed text', () => {
+    // Pins the exists-guard's precedence over the broadened "managed" verb:
+    // without the guard, pattern 1 would match "site ... isn't managed".
+    expect(
+      matchesNotFoundSiteAnswer(
+        "The site exists, but it isn't managed by the plugin you asked about."
+      )
+    ).toBe(false);
+  });
+
+  it('accepts a no-such-domain absence in the guard-exempt wording', () => {
+    // CR iteration 11: the exists-guard exempts "no such" subjects, so the
+    // accept patterns must recognize the same wording or it matches nothing.
+    expect(matchesNotFoundSiteAnswer('No such domain is registered with this dashboard.')).toBe(
+      true
+    );
+  });
+
+  it('accepts a negated exists phrasing without tripping the exists-guard', () => {
+    // Live transcript, 2026-07-20 (Codex human-suite run): "confirms no
+    // matching site exists" tripped the exists-guard on its "site exists"
+    // substring and vetoed the answer before the error-code anchor and the
+    // "isn't managed" pattern could accept it.
+    expect(
+      matchesNotFoundSiteAnswer(
+        "That site isn't managed by your MainWP Dashboard. The plugin lookup returned " +
+          '`mainwp_site_not_found` for `nonexistent-acceptance-probe.invalid`, and a site ' +
+          "search for that name confirms no matching site exists, so there's no plugin " +
+          'list to report.'
+      )
+    ).toBe(true);
+  });
+
   it('accepts a relayed mainwp_site_not_found error code as absence evidence', () => {
     expect(
       matchesNotFoundSiteAnswer('The lookup failed with `mainwp_site_not_found` for that host.')

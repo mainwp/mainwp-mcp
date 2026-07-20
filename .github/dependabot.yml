@@ -10,3 +10,13 @@ updates:
       - 'dependencies'
     commit-message:
       prefix: 'chore(deps):'
+    ignore:
+      # TypeScript 7 (native compiler) is incompatible with the
+      # typescript-eslint peer range (<6.0.0). Compiler moves are a
+      # deliberate release decision, not a bot merge.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+      # undici 8 breaks at import on Node 20, which engines still
+      # supports (>=20.19.0). Revisit when Node 20 support is dropped.
+      - dependency-name: 'undici'
+        update-types: ['version-update:semver-major']

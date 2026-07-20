@@ -153,8 +153,11 @@ export function inventoryProvesSiteAbsent(
  */
 export function matchesNotFoundSiteAnswer(text: string): boolean {
   const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  // Negated subjects ("no matching site exists") are absence claims, not
+  // existence claims — the lookbehind keeps the guard off them so the
+  // patterns and error-code anchor below can still accept the answer.
   if (
-    /\b(?:the |that )?(?:site|domain|website)\s+(?:exists|is registered|is connected|was found)\b/.test(
+    /(?<!\b(?:no|zero) (?:matching |such )?)\b(?:the |that )?(?:site|domain|website)\s+(?:exists|is registered|is connected|was found)\b/.test(
       answer
     )
   ) {
@@ -171,9 +174,9 @@ export function matchesNotFoundSiteAnswer(text: string): boolean {
   // Gaps allow ~90 chars so a long quoted hostname (37+ chars plus backticks
   // and words like "named") fits between the subject and the verdict.
   return [
-    /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:found|registered|connected|known|present|available)\b/,
+    /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:found|registered|connected|known|present|available|managed)\b/,
     /\b(?:site|domain|website)\b.{0,90}\b(?:does not|doesn't)\s+exist\b/,
-    /\b(?:no|zero)\s+(?:matching\s+)?(?:site|domain|website)s?\b.{0,90}\b(?:found|registered|connected|exists?)\b/,
+    /\b(?:no|zero)\s+(?:matching\s+|such\s+)?(?:site|domain|website)s?\b.{0,90}\b(?:found|registered|connected|known|present|available|managed|exists?)\b/,
     /\b(?:could not|couldn't|cannot|can't|unable to)\s+(?:find|locate|identify)\b.{0,90}\b(?:site|domain|website)\b/,
     /\b(?:site|domain|website)\b.{0,90}\b(?:is not|isn't|was not|wasn't|not)\s+(?:in|on|among|part of|listed (?:in|on))\b.{0,60}\b(?:dashboard|mainwp|network|managed sites|site list)\b/,
     /\bno\s+(?:matching\s+)?(?:site|domain|website)s?\s+(?:named|called|matching|like|by that name)\b/,

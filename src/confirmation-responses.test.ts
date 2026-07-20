@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSafeModeBlockedResponse,
-  buildInvalidParameterResponse,
+  buildConfirmationUnsupportedResponse,
   buildConflictingParametersResponse,
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
@@ -49,30 +49,34 @@ describe('buildSafeModeBlockedResponse', () => {
   });
 });
 
-describe('buildInvalidParameterResponse', () => {
-  it('should indicate invalid parameter error', () => {
-    const response = buildInvalidParameterResponse(ctx) as Record<string, unknown>;
+describe('buildConfirmationUnsupportedResponse', () => {
+  it('should indicate confirmation-unsupported error', () => {
+    const response = buildConfirmationUnsupportedResponse(ctx) as Record<string, unknown>;
 
-    expect(response.error).toBe('INVALID_PARAMETER');
-    expect(response.message).toContain('user_confirmed');
+    expect(response.error).toBe('CONFIRMATION_UNSUPPORTED');
+    expect(response.message).toContain('delete_site_v1');
   });
 
   it('should include context details', () => {
-    const response = buildInvalidParameterResponse(ctx) as { details: Record<string, unknown> };
+    const response = buildConfirmationUnsupportedResponse(ctx) as {
+      details: Record<string, unknown>;
+    };
 
     expect(response.details.tool).toBe('delete_site_v1');
     expect(response.details.ability).toBe('mainwp/delete-site-v1');
   });
 
-  it('should explain the resolution', () => {
-    const response = buildInvalidParameterResponse(ctx) as { details: Record<string, unknown> };
+  it('should explain the fail-closed reason and resolution', () => {
+    const response = buildConfirmationUnsupportedResponse(ctx) as {
+      details: Record<string, unknown>;
+    };
 
-    expect(response.details.resolution).toContain('Remove');
-    expect(response.details.resolution).toContain('user_confirmed');
+    expect(response.details.reason).toContain('confirm');
+    expect(response.details.resolution).toContain('allowedTools');
   });
 
   it('should not include next_action (terminal error)', () => {
-    const response = buildInvalidParameterResponse(ctx) as Record<string, unknown>;
+    const response = buildConfirmationUnsupportedResponse(ctx) as Record<string, unknown>;
 
     expect(response.next_action).toBeUndefined();
   });

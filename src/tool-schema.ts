@@ -7,9 +7,15 @@
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { Ability, AbilityAnnotations } from './abilities.js';
+import {
+  MAX_INSTRUCTIONS_LENGTH,
+  normalizeRemoteText,
+  type Ability,
+  type AbilityAnnotations,
+} from './abilities.js';
 import type { SchemaVerbosity } from './config.js';
 import { abilityNameToToolName } from './naming.js';
+import { classifyDestructive, declaresUsableBooleanParam } from './policy.js';
 
 /**
  * Convert an Ability's JSON Schema to MCP tool input schema format
@@ -57,10 +63,14 @@ function convertInputSchema(ability: Ability): Tool['inputSchema'] {
     ? schema.required.filter((entry): entry is string => typeof entry === 'string')
     : [];
 
-  // Backfill missing descriptions from parameter names.
-  // Some upstream abilities omit descriptions; LLMs need them for accurate tool use.
+  // Backfill missing descriptions from parameter names. Remote description
+  // text arrives already bounded — abilities.ts deep-bounds every schema
+  // string at the fetch boundary, which also covers the help and resource
+  // surfaces this module never sees.
+  // Some upstream abilities omit descriptions; LLMs need them for accurate
+  // tool use.
   for (const [name, prop] of Object.entries(properties)) {
-    if (!prop.description || String(prop.description).trim() === '') {
+    if (typeof prop.description !== 'string' || prop.description.trim() === '') {
       prop.description = paramNameToDescription(name);
     }
   }
@@ -208,7 +218,8 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
  *
  * Produces safety guidance that tells the AI how to use a tool correctly:
  * preview-first workflows, dry-run suggestions, or read-only assurance.
- * API-provided instructions are prepended (they take priority).
+ * API-provided instructions come first in reading order but are sanitized
+ * and length-capped — remote metadata never outranks the built-in guidance.
  * @internal
  */
 export function generateInstructions(
@@ -218,19 +229,28 @@ export function generateInstructions(
 ): string {
   const parts: string[] = [];
 
-  // API-provided instructions take priority (ensure trailing punctuation for clean concatenation)
+  // Remote instructions are Dashboard/extension-controlled and treated as
+  // hostile: re-flattened and re-capped here (shared fetch-boundary sanitizer)
+  // so they stay a short usage hint, never a directive payload, even if the
+  // upstream bound ever regresses. Trailing punctuation added for clean
+  // concatenation.
   if (meta?.instructions) {
-    const instr = meta.instructions;
-    parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
+    const instr = normalizeRemoteText(meta.instructions, MAX_INSTRUCTIONS_LENGTH, 'flatten');
+    if (instr) {
+      parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
+    }
   }
 
-  if (meta?.destructive) {
+  // Same fail-closed classifier as the execution policy: advertised guidance
+  // must never present a tool as safer than the executor will treat it, so
+  // missing or malformed annotations read as destructive here too.
+  if (classifyDestructive(meta)) {
     if (hasConfirm && hasDryRun) {
       parts.push('Always preview with dry_run or confirm before executing. Show preview to user.');
     } else {
       parts.push('This is destructive. Confirm intent with user first.');
     }
-    if (!meta.idempotent) {
+    if (!meta?.idempotent) {
       parts.push('Not idempotent — repeating may cause different results.');
     }
   } else if (meta?.readonly) {
@@ -255,12 +275,16 @@ export function buildSafetyTags(
   hasConfirm: boolean,
   verbosity: SchemaVerbosity
 ): string {
+  // Fail-closed classification, matching the execution policy: a missing or
+  // malformed destructive annotation is tagged DESTRUCTIVE, never left bare.
+  const isDestructive = classifyDestructive(meta);
+
   if (verbosity === 'standard') {
-    if (meta?.destructive) {
+    if (isDestructive) {
       const hints: string[] = [];
       if (hasConfirm) hints.push('Requires two-step confirmation');
       if (hasDryRun) hints.push('Supports dry_run');
-      if (!meta.idempotent) hints.push('Not idempotent');
+      if (!meta?.idempotent) hints.push('Not idempotent');
       return hints.length > 0 ? `[DESTRUCTIVE, ${hints.join(', ')}]` : '[DESTRUCTIVE]';
     }
     const notes: string[] = [];
@@ -271,7 +295,7 @@ export function buildSafetyTags(
 
   // Compact mode — short tags
   const tags: string[] = [];
-  if (meta?.destructive) tags.push('destructive');
+  if (isDestructive) tags.push('destructive');
   if (hasConfirm) tags.push('confirm');
   if (hasDryRun) tags.push('dry_run');
   return tags.length > 0 ? `[${tags.join(', ')}]` : '';
@@ -370,11 +394,19 @@ export function abilityToTool(
   const meta = ability.meta?.annotations;
   let inputSchema = convertInputSchema(ability);
 
-  // Detect safety parameters in schema (before compression, needed for user_confirmed injection)
-  const props = (inputSchema.properties || {}) as Record<string, object>;
-  const hasDryRun = 'dry_run' in props;
-  const hasConfirm = 'confirm' in props;
-  const isDestructive = meta?.destructive ?? false;
+  // Detect safety parameters in schema (before compression, needed for
+  // user_confirmed injection). Detection runs on the RAW ability schema, not
+  // the converted copy: conversion coerces non-object property values to {},
+  // which would make an unusable channel (confirm: false) look usable here
+  // while the execution gate fails closed on it.
+  const rawSchemaProps: unknown = ability.input_schema?.properties;
+  const hasDryRun = declaresUsableBooleanParam(rawSchemaProps, 'dry_run');
+  const hasConfirm = declaresUsableBooleanParam(rawSchemaProps, 'confirm');
+  // Fail-closed, same classifier as the execution policy. The old
+  // `meta?.destructive ?? false` default advertised unannotated abilities as
+  // non-destructive (and skipped their confirmation-parameter injection)
+  // while the executor treated the same abilities as destructive.
+  const isDestructive = classifyDestructive(meta);
 
   // Add user_confirmed and confirmation_token parameters for destructive tools
   // with a confirm parameter. Both must be declared: confirmed execution is
@@ -413,15 +445,18 @@ export function abilityToTool(
     name: toolName,
     description,
     inputSchema,
-    // MCP semantic annotations for client UI hints (always included regardless of verbosity)
-    annotations: meta
-      ? {
-          title: ability.label || undefined,
-          readOnlyHint: meta.readonly,
-          destructiveHint: meta.destructive,
-          idempotentHint: meta.idempotent,
-          openWorldHint: true,
-        }
-      : undefined,
+    // MCP semantic annotations for client UI hints (always included
+    // regardless of verbosity). Hints are normalized booleans driven by the
+    // same fail-closed classifier as execution: a missing or malformed
+    // annotation set must not advertise a benign hint the executor will
+    // contradict, so destructiveHint follows classifyDestructive and the
+    // positive hints require literal true.
+    annotations: {
+      title: ability.label || undefined,
+      readOnlyHint: meta?.readonly === true && !isDestructive,
+      destructiveHint: isDestructive,
+      idempotentHint: meta?.idempotent === true,
+      openWorldHint: true,
+    },
   };
 }

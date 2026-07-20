@@ -5,11 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+Destructive abilities that declare no `confirm` parameter now fail closed. The confirmation flow used to return a skip decision for them, so a destructive-classified ability without a declared `confirm` parameter executed with no preview, token, or user approval even with `requireUserConfirmation` enabled. Such calls now return a `CONFIRMATION_UNSUPPORTED` error naming the missing confirm support. **This is a behavior change** for third-party or misannotated destructive abilities that never declared `confirm`; the built-in deletion tools all declare it and are unaffected. The former `INVALID_PARAMETER: user_confirmed not supported` response is folded into the new error.
+
+Dashboard-provided ability `instructions` are now sanitized before entering tool descriptions: control and format characters (newlines, ANSI, bidi marks) collapse to spaces and the text is capped at 300 characters. Remote metadata used to be forwarded verbatim and unbounded, giving a compromised Dashboard or extension a context-flooding channel into every tool description.
+
+Refreshed the dependency lockfile within declared ranges: `undici` to 7.28.0 and the MCP SDK's transitive HTTP-transport dependencies to patched versions, clearing all `npm audit` advisories (previously 4 high, 4 moderate on the production tree).
+
+All remote ability and category content is now normalized once at the fetch boundary: labels, categories, descriptions, and `instructions` get non-string values replaced, control/format characters stripped, and hard length caps (200/100/2000/300 chars) before reaching tool descriptions, mainwp:// resources, or help output. Input and output schemas are deep-bounded by a generic, field-aware walker covering every keyword at every depth (`properties`, `items`, `oneOf`, `$defs`, `additionalProperties`, anything else): presentation fields (`description`, `title`, `$comment`) are sanitized and capped at 500 chars, while semantic strings (enum/const values, `pattern`, `$ref`, defaults) are never mutated — an ability whose schema carries a semantic string over 2000 chars, an oversized key, or more than 2000 nodes is dropped from the catalog with a warning instead of being silently altered. Previously only the `instructions` field was capped, only on the tools/list path — the help and abilities resources returned remote text verbatim, and a non-string `instructions` value threw during tool conversion, which the ListTools handler turned into an empty tool catalog for the whole server.
+
+Tool discovery now uses the same fail-closed destructive classifier as the execution policy. An ability with missing or malformed `destructive` annotations used to be advertised as a plain write operation with no destructive hint (and, when it declared `confirm`, without the `user_confirmed`/`confirmation_token` parameters the executor requires) while execution treated it as destructive. Discovery now tags such tools DESTRUCTIVE, emits normalized MCP annotation hints (`destructiveHint` follows the classifier; positive hints require literal `true`; annotations are always present), and injects the confirmation parameters. **This is a behavior change** for unannotated abilities' advertised metadata; correctly annotated abilities are unaffected.
+
+Declaring a `confirm` or `dry_run` parameter now requires a subschema that can accept the boolean `true` the server sends for it. A destructive ability whose `confirm` subschema provably rejects `true` (a `false` boolean schema, `type: "string"`, an enum without `true`) has no working confirmation channel and now takes the same fail-closed `CONFIRMATION_UNSUPPORTED` path as one that never declared `confirm`, at discovery (no confirmation-parameter injection) and at execution alike; an unusable `dry_run` declaration is rejected like an undeclared one instead of being forwarded upstream. Permissive subschemas (`{}`, description-only, no `type`) still count as declared.
+
+The `safeMode` description in the shipped `settings.schema.json` no longer calls safe mode suitable for "read-only access"; it now states that non-destructive writes remain available and points to `allowedTools` for read-only setups.
+
+`prepublishOnly` additionally runs the production dependency audit (high severity and above) and the packed-package fixture acceptance suite.
+
 ### Added
 
 The server warns at startup when a bearer token (`MAINWP_TOKEN`) is configured without a complete username and application password pair. The WordPress Abilities API rejects bearer tokens, so a token-only setup fails with 401s at request time; the warning surfaces the problem at startup instead.
 
 ### Changed
+
+The `mainwp://abilities` and `mainwp://help` resources now respect `allowedTools`/`blockedTools`: blocked tools no longer appear in their payloads, and the per-tool help resource (`mainwp://help/tool/{name}`) returns a permission error for blocked tools instead of documenting them. **This is a behavior change** for clients that read the full catalog from these resources under a restrictive policy; they now see the same filtered set as `tools/list`. The `mainwp://categories` list and `mainwp://status` ability count remain unfiltered. Internally, every policy check now routes through a single pure decision function (`src/policy.ts`).
+
+Destructive classification is now strictly fail-closed: only a literal `destructive: false` annotation counts as non-destructive, so malformed values (`0`, `""`, `"yes"`) classify as destructive instead of following JavaScript truthiness. The `mainwp://site/{id}` resource and site-ID completions, which execute abilities directly, now apply this classification before executing: with safe mode or confirmation gating active, a destructive-classified (or unannotated) underlying ability denies the resource and returns empty completions. **This is a behavior change** for Dashboards that ship no annotations on `mainwp/get-site-v1` or `mainwp/list-sites-v1` — the same default-deny stance tool calls already had.
 
 Destructive tool calls now go through strict confirmation gating. A bare call to a confirm-capable tool, with no preview and no confirmation token, returns a `PREVIEW_REQUIRED` error instead of proceeding with a logged warning. **This is breaking for clients that relied on the old skip**: run the preview step first, then confirm. Abilities that require confirmation but expose no `dry_run` parameter no longer get a fabricated dry-run call; they return a token-issuing `CONFIRMATION_REQUIRED` response with `preview: null`, and execution proceeds once the client confirms with that token.
 

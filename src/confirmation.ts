@@ -11,9 +11,10 @@ import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
+import { declaresUsableBooleanParam } from './policy.js';
 import { trackSessionData } from './session.js';
 import {
-  buildInvalidParameterResponse,
+  buildConfirmationUnsupportedResponse,
   buildDryRunNotSupportedResponse,
   buildConflictingParametersResponse,
   buildNoPreviewAvailableResponse,
@@ -58,12 +59,14 @@ export function clearPendingPreviews(): void {
  *   or expired preview) so the tool result carries the MCP `isError` flag;
  *   preview responses (CONFIRMATION_REQUIRED) are successful workflow steps.
  * - `execute`: proceed with execution using the (possibly modified) effectiveArgs
- * - `skip`: confirmation flow does not apply — proceed with original args
+ *
+ * There is deliberately no pass-through variant: every destructive call either
+ * gets an explicit response or an explicit execute decision, so a new branch
+ * that forgets to decide cannot silently fall through to execution.
  */
 export type ConfirmationResult =
   | { action: 'respond'; response: TextContent[]; isError?: boolean }
-  | { action: 'execute'; effectiveArgs: Record<string, unknown> }
-  | { action: 'skip' };
+  | { action: 'execute'; effectiveArgs: Record<string, unknown> };
 
 /**
  * Parameters for the confirmation flow handler
@@ -157,9 +160,9 @@ function cleanupExpiredPreviews(): void {
  * Handle the two-phase confirmation flow for destructive operations.
  *
  * Evaluates the tool call arguments and returns one of:
- * - `respond`: early-return response (preview, validation error, expired)
- * - `execute`: proceed with modified args (user confirmed)
- * - `skip`: confirmation flow doesn't apply (dry_run, no confirm param, etc.)
+ * - `respond`: early-return response (preview, validation error, expired,
+ *   or fail-closed rejection of an ability with no confirm channel)
+ * - `execute`: proceed with modified args (user confirmed, or declared dry_run)
  */
 export async function handleConfirmationFlow(
   params: ConfirmationFlowParams
@@ -167,28 +170,31 @@ export async function handleConfirmationFlow(
   const { config, ability, toolName, abilityName, args, effectiveArgs, logger, signal } = params;
   const ctx: ConfirmationContext = { tool: toolName, ability: abilityName };
 
-  // Check if tool supports confirmation parameter
+  // Check if tool supports confirmation parameter. Usable means the declared
+  // subschema can accept the literal `true` we send — a `confirm: false` or
+  // `confirm: {type: "string"}` declaration has no working channel and takes
+  // the same fail-closed path as an absent key.
   const schemaProps = ability.input_schema?.properties;
-  const hasConfirmParam =
-    schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
-  const hasDryRunParam =
-    schemaProps !== null && typeof schemaProps === 'object' && 'dry_run' in schemaProps;
+  const hasConfirmParam = declaresUsableBooleanParam(schemaProps, 'confirm');
+  const hasDryRunParam = declaresUsableBooleanParam(schemaProps, 'dry_run');
 
-  // Validation: user_confirmed on tools without confirm parameter
-  if (!hasConfirmParam && args.user_confirmed === true) {
-    logger.warning('Invalid parameter: user_confirmed on tool without confirm support', {
+  // Fail closed: a destructive ability that declares no confirm parameter has
+  // no confirmation channel, so while confirmation is required it can never
+  // execute — regardless of user_confirmed, dry_run, or any other arguments.
+  // Anything permissive here would let an unannotated or third-party ability
+  // bypass the two-phase flow entirely.
+  if (!hasConfirmParam) {
+    logger.warning('Destructive ability declares no confirm parameter - failing closed', {
       toolName,
       abilityName,
     });
     return {
       action: 'respond',
-      response: [{ type: 'text', text: formatJson(config, buildInvalidParameterResponse(ctx)) }],
+      response: [
+        { type: 'text', text: formatJson(config, buildConfirmationUnsupportedResponse(ctx)) },
+      ],
       isError: true,
     };
-  }
-
-  if (!hasConfirmParam) {
-    return { action: 'skip' };
   }
 
   // Validation: Conflicting parameters (user_confirmed + dry_run)

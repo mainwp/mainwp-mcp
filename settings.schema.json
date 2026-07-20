@@ -40,7 +40,7 @@
     "safeMode": {
       "type": "boolean",
       "default": false,
-      "description": "Prevent destructive operations by stripping the 'confirm' parameter from tool calls. Useful for testing or read-only access."
+      "description": "Block operations classified as destructive (and strip the 'confirm' parameter as a second layer). Not read-only: non-destructive writes like updates, plugin/theme activation, and syncing stay available. Use allowedTools for genuinely read-only access."
     },
     "requireUserConfirmation": {
       "type": "boolean",

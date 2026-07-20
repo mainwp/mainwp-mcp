@@ -19,6 +19,7 @@ import {
 } from './http-client.js';
 import type { Logger } from './logging.js';
 import { abilityNameToToolName } from './naming.js';
+import { classifyDestructive } from './policy.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
@@ -54,6 +55,230 @@ export interface AbilityAnnotations {
   readonly: boolean;
   destructive: boolean;
   idempotent: boolean;
+}
+
+/**
+ * Caps for remote free-text fields, applied once at the fetch boundary.
+ * Far above anything real abilities send; they exist to bound hostile or
+ * misconfigured Dashboard metadata before it reaches tool descriptions,
+ * resources, or help output.
+ */
+const MAX_LABEL_LENGTH = 200;
+const MAX_CATEGORY_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 2000;
+/** Shared with tool-schema.ts, which re-sanitizes instructions at description composition. */
+export const MAX_INSTRUCTIONS_LENGTH = 300;
+const MAX_CATEGORY_DESC_LENGTH = 500;
+
+/**
+ * Bounds for remote schema payloads. Generous against real ability schemas
+ * (a few dozen nodes, short strings); they exist to reject or trim
+ * pathological structures a hostile Dashboard could ship.
+ */
+const MAX_SCHEMA_NODES = 2000;
+/** Presentation fields: sanitized and capped — truncation is harmless prose loss. */
+const MAX_SCHEMA_TEXT_LENGTH = 500;
+/**
+ * Semantic strings (enum/const values, pattern, $ref, defaults, formats):
+ * NEVER mutated — a truncated regex or enum value silently corrupts the tool
+ * contract. Anything over this generous bound rejects the whole ability.
+ */
+const MAX_SCHEMA_SEMANTIC_LENGTH = 2000;
+const MAX_SCHEMA_KEY_LENGTH = 200;
+
+/** Schema-node annotations that are human/AI-facing prose: sanitize and cap. */
+const SCHEMA_TEXT_FIELDS = new Set(['description', 'title', '$comment']);
+/**
+ * Keywords whose value is a map of user-chosen names to subschemas. Their
+ * keys are NOT annotations — a property legitimately named "description"
+ * must be preserved as a schema node, not treated as prose.
+ */
+const SCHEMA_MAP_KEYWORDS = new Set([
+  'properties',
+  'patternProperties',
+  'definitions',
+  '$defs',
+  'dependentSchemas',
+]);
+/** Keywords whose value is instance data, not schema structure. */
+const SCHEMA_DATA_KEYWORDS = new Set(['enum', 'const', 'default', 'examples', 'example']);
+
+/**
+ * Deep-bound a remote JSON-Schema-shaped value, schema-structure-aware:
+ *
+ * - Prose annotations on schema nodes (description, title, $comment) get
+ *   control/format-character stripping and a length cap when they are
+ *   strings; a non-string value there is dropped — it is invalid JSON
+ *   Schema, strict clients may reject it, and (the round-5 bypass) an
+ *   object-valued description otherwise smuggles unsanitized text past the
+ *   string-only check.
+ * - Map keywords (properties, $defs, ...) contain user-chosen names mapping
+ *   to subschemas, so their keys get no annotation handling; non-schema
+ *   entry values (strings, numbers) are dropped, boolean schemas kept.
+ * - Data keywords (enum, const, default, examples) hold instance values:
+ *   strings there are semantic and never mutated.
+ * - Any other semantic string (pattern, $ref, format, required entries, ...)
+ *   passes through untouched; one over the sanity bound rejects the ability
+ *   outright rather than being silently altered, as do oversized keys and
+ *   the total node budget. Traversal stops at the first violation.
+ *
+ * Returns null when rejected — the caller drops the ability with a warning.
+ * Traversal is generic over unlisted keywords (items, oneOf,
+ * additionalProperties, anything future): an early revision followed a
+ * keyword list to a fixed depth, which left everything unlisted as a bypass.
+ */
+function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknown> | null {
+  let nodes = 0;
+  let invalid = false;
+
+  const boundedString = (value: string): string | null => {
+    if (value.length > MAX_SCHEMA_SEMANTIC_LENGTH) {
+      invalid = true;
+      return null;
+    }
+    return value;
+  };
+
+  const budget = (): boolean => {
+    if (invalid || ++nodes > MAX_SCHEMA_NODES) {
+      invalid = true;
+      return false;
+    }
+    return true;
+  };
+
+  const keyOk = (key: string): boolean => {
+    if (key.length > MAX_SCHEMA_KEY_LENGTH) {
+      invalid = true;
+      return false;
+    }
+    return true;
+  };
+
+  // Instance data under enum/const/default/examples: no annotation handling
+  // anywhere inside, strings are semantic, structure is budget-bounded.
+  const walkData = (value: unknown): unknown => {
+    if (!budget()) return null;
+    if (typeof value === 'string') return boundedString(value);
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      for (const child of value) {
+        if (invalid) break;
+        out.push(walkData(child));
+      }
+      return out;
+    }
+    if (value !== null && typeof value === 'object') {
+      // Null prototype so hostile keys like __proto__ stay own properties.
+      const out: Record<string, unknown> = Object.create(null);
+      for (const [key, child] of Object.entries(value)) {
+        if (invalid || !keyOk(key)) break;
+        out[key] = walkData(child);
+      }
+      return out;
+    }
+    return value;
+  };
+
+  const walkSchema = (value: unknown): unknown => {
+    if (!budget()) return null;
+    if (typeof value === 'string') return boundedString(value);
+    if (Array.isArray(value)) {
+      // Mixed shapes are legal here: oneOf holds subschemas, required/type
+      // hold plain strings. Objects recurse as schema nodes, strings stay
+      // semantic, booleans (boolean schemas) pass through.
+      const out: unknown[] = [];
+      for (const child of value) {
+        if (invalid) break;
+        out.push(walkSchema(child));
+      }
+      return out;
+    }
+    if (value !== null && typeof value === 'object') {
+      const out: Record<string, unknown> = Object.create(null);
+      for (const [key, child] of Object.entries(value)) {
+        if (invalid || !keyOk(key)) break;
+        if (SCHEMA_TEXT_FIELDS.has(key)) {
+          if (typeof child === 'string') {
+            out[key] = normalizeRemoteText(child, MAX_SCHEMA_TEXT_LENGTH, 'flatten');
+          }
+          // Non-string prose annotation: dropped (invalid JSON Schema and a
+          // sanitation bypass) — the key is simply omitted.
+          continue;
+        }
+        if (SCHEMA_MAP_KEYWORDS.has(key)) {
+          if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+            const map: Record<string, unknown> = Object.create(null);
+            for (const [name, sub] of Object.entries(child)) {
+              if (invalid || !keyOk(name)) break;
+              if (sub !== null && typeof sub === 'object' && !Array.isArray(sub)) {
+                map[name] = walkSchema(sub);
+              } else if (typeof sub === 'boolean') {
+                // Boolean schemas are valid but still count against the node
+                // budget — a map of thousands of boolean entries must not
+                // walk for free while object subschemas are capped.
+                if (!budget()) break;
+                map[name] = sub;
+              }
+              // Other primitive entry values are invalid schemas: dropped.
+            }
+            out[key] = map;
+          }
+          // Non-object map keyword value: dropped.
+          continue;
+        }
+        if (SCHEMA_DATA_KEYWORDS.has(key)) {
+          out[key] = walkData(child);
+          continue;
+        }
+        out[key] = walkSchema(child);
+      }
+      return out;
+    }
+    return value;
+  };
+
+  const bounded = walkSchema(root);
+  return invalid ? null : (bounded as Record<string, unknown>);
+}
+
+/**
+ * Normalize one remote text field: non-strings become '', control and format
+ * characters collapse to spaces (multiline mode preserves single newlines for
+ * legitimate prose), and the result is hard-capped. Runs at the fetch
+ * boundary so every downstream consumer sees bounded plain text. Exported so
+ * defense-in-depth call sites (tool-schema.ts) share this one implementation
+ * instead of carrying a copy that can drift.
+ * @internal
+ */
+export function normalizeRemoteText(
+  raw: unknown,
+  maxLength: number,
+  mode: 'flatten' | 'multiline'
+): string {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const cleaned =
+    mode === 'flatten'
+      ? raw
+          .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : raw
+          .replace(/[^\P{Cc}\n]|\p{Cf}/gu, ' ')
+          .replace(/[^\S\n]+/g, ' ')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  // Limits at or below the ellipsis length would exceed the cap with the
+  // '...' suffix; hard-cut instead so the bound holds for every maxLength.
+  if (maxLength <= 3) {
+    return cleaned.slice(0, Math.max(0, maxLength));
+  }
+  return cleaned.slice(0, maxLength - 3) + '...';
 }
 
 /**
@@ -382,6 +607,70 @@ export async function fetchAbilities(
         return true;
       });
 
+      // Normalize remote content at the boundary: every downstream surface
+      // (tool descriptions, mainwp:// resources, help documents) consumes
+      // these fields verbatim, so a non-string value must not throw later and
+      // hostile text is bounded once here instead of at each consumer.
+      // Schemas are deep-bounded the same way — help output and the abilities
+      // resource read input_schema directly, so bounding only in the
+      // tools/list conversion path leaves those surfaces exposed. An ability
+      // whose schema blows the node budget is dropped outright.
+      const safeAbilities = newAbilities.filter(ability => {
+        ability.label = normalizeRemoteText(ability.label, MAX_LABEL_LENGTH, 'flatten');
+        ability.category = normalizeRemoteText(ability.category, MAX_CATEGORY_LENGTH, 'flatten');
+        ability.description = normalizeRemoteText(
+          ability.description,
+          MAX_DESCRIPTION_LENGTH,
+          'multiline'
+        );
+        const annotations: unknown = ability.meta?.annotations;
+        if (annotations !== null && typeof annotations === 'object') {
+          if ('instructions' in annotations) {
+            const capped = normalizeRemoteText(
+              (annotations as AbilityAnnotations).instructions,
+              MAX_INSTRUCTIONS_LENGTH,
+              'flatten'
+            );
+            if (capped) {
+              (annotations as AbilityAnnotations).instructions = capped;
+            } else {
+              delete (annotations as AbilityAnnotations).instructions;
+            }
+          }
+          // Safety flags must be literal booleans. A truthy non-boolean
+          // (`readonly: "yes"`, `idempotent: 1`) would pass loose `if (x)`
+          // reads in guidance, retry, and no-op handling, so the malformed
+          // key is dropped here and every consumer sees the fail-closed
+          // default: destructive, not readonly, not idempotent.
+          const record = annotations as Record<string, unknown>;
+          for (const flag of ['readonly', 'destructive', 'idempotent'] as const) {
+            if (flag in record && typeof record[flag] !== 'boolean') {
+              delete record[flag];
+            }
+          }
+        }
+        for (const key of ['input_schema', 'output_schema'] as const) {
+          const schema = ability[key];
+          if (schema === undefined) {
+            continue;
+          }
+          if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
+            delete ability[key];
+            continue;
+          }
+          const bounded = boundRemoteSchema(schema);
+          if (bounded === null) {
+            logger?.warning('Skipping ability whose schema exceeds safety bounds', {
+              name: sanitizeError(ability.name),
+              schema: key,
+            });
+            return false;
+          }
+          ability[key] = bounded;
+        }
+        return true;
+      });
+
       // A misconfigured namespace allowlist boots a server that advertises
       // zero tools with no other symptom — warn loudly so the cause is in the
       // logs instead of leaving a silently empty server. An empty upstream is
@@ -412,7 +701,7 @@ export async function fetchAbilities(
             .sort((a, b) => a.name.localeCompare(b.name))
         );
       const oldFingerprint = fingerprint(abilitiesCache.data);
-      const newFingerprint = fingerprint(newAbilities);
+      const newFingerprint = fingerprint(safeAbilities);
       const hasChanged = oldFingerprint !== newFingerprint;
       const hadCachedAbilities = abilitiesCache.data !== null;
 
@@ -424,7 +713,7 @@ export async function fetchAbilities(
       const newAbilitiesIndex = new Map<string, Ability>();
       const newToolNameIndex = new Map<string, Ability>();
       const primary = namespaces[0];
-      for (const ability of newAbilities) {
+      for (const ability of safeAbilities) {
         newAbilitiesIndex.set(ability.name, ability);
 
         const toolName = abilityNameToToolName(ability.name, primary);
@@ -446,9 +735,9 @@ export async function fetchAbilities(
       }
 
       return {
-        data: newAbilities,
+        data: safeAbilities,
         commit: () => {
-          abilityIndexes.set(newAbilities, {
+          abilityIndexes.set(safeAbilities, {
             byName: newAbilitiesIndex,
             byToolName: newToolNameIndex,
           });
@@ -487,9 +776,24 @@ export async function fetchCategories(
         config.maxResponseSize,
         logger
       ),
-    // Filter categories to configured namespaces (allowlist of `{ns}-` prefixes)
+    // Filter categories to configured namespaces (allowlist of `{ns}-`
+    // prefixes) and normalize the remote text — the mainwp://categories
+    // resource returns these objects verbatim, so they get the same boundary
+    // treatment as ability fields.
     process: allCategories => ({
-      data: allCategories.filter(c => isAllowedCategory(c.slug, namespaces)),
+      data: allCategories
+        .filter(
+          c =>
+            c !== null &&
+            typeof c === 'object' &&
+            typeof (c as { slug?: unknown }).slug === 'string' &&
+            isAllowedCategory(c.slug, namespaces)
+        )
+        .map(c => ({
+          slug: normalizeRemoteText(c.slug, MAX_CATEGORY_LENGTH, 'flatten'),
+          label: normalizeRemoteText(c.label, MAX_LABEL_LENGTH, 'flatten'),
+          description: normalizeRemoteText(c.description, MAX_CATEGORY_DESC_LENGTH, 'multiline'),
+        })),
     }),
   });
 }
@@ -603,7 +907,9 @@ export async function executeAbility(
   }
 
   const isReadonly = ability.meta?.annotations?.readonly ?? false;
-  const isDestructive = ability.meta?.annotations?.destructive ?? true;
+  // Same strict fail-closed classifier as the policy gate, so HTTP method
+  // selection and audit logging can never diverge from the gate's decision.
+  const isDestructive = classifyDestructive(ability.meta?.annotations);
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;

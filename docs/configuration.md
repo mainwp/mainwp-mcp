@@ -321,7 +321,7 @@ Block all destructive operations. The server strips `confirm: true` from tool ar
 MAINWP_SAFE_MODE=true
 ```
 
-Safe mode is useful for testing, development, read-only access scenarios, and training users on the system. See the [Security Guide](security.md) for more details.
+Safe mode is useful for testing, development, and training users on the system. It is not read-only: non-destructive writes such as updates, plugin/theme activation, and syncing stay available — use `allowedTools` (see [Tool Filtering](#tool-filtering)) for genuinely read-only access. See the [Security Guide](security.md) for more details.
 
 ---
 

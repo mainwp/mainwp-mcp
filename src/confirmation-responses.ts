@@ -33,17 +33,22 @@ export function buildSafeModeBlockedResponse(ctx: ConfirmationContext): object {
 }
 
 /**
- * Response when user_confirmed is used on a tool without confirm parameter support
+ * Response when a destructive ability declares no confirm parameter. Such an
+ * ability has no confirmation channel, so while requireUserConfirmation is on
+ * the call fails closed regardless of arguments — executing it would silently
+ * skip the two-phase flow the configuration demands.
  */
-export function buildInvalidParameterResponse(ctx: ConfirmationContext): object {
+export function buildConfirmationUnsupportedResponse(ctx: ConfirmationContext): object {
   return {
-    error: 'INVALID_PARAMETER',
-    message: 'user_confirmed parameter not supported for this tool',
+    error: 'CONFIRMATION_UNSUPPORTED',
+    message: `Destructive operation cannot be confirmed: ${ctx.tool}`,
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
-      reason: 'This tool does not support the confirmation flow (no confirm parameter)',
-      resolution: 'Remove user_confirmed parameter and call the tool directly',
+      reason:
+        'This ability is classified destructive but does not declare a confirm parameter, so the required confirmation flow cannot run.',
+      resolution:
+        'Have the Dashboard declare confirm support for this ability (or annotate it destructive: false if misclassified), or manage access explicitly with allowedTools/blockedTools.',
     },
   };
 }

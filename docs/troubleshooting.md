@@ -176,16 +176,16 @@ You waited more than 5 minutes between seeing the preview and confirming the ope
 
 The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneously. These parameters have contradictory meanings: `user_confirmed` means "execute this operation" while `dry_run` means "just show me what would happen." The AI should use one or the other.
 
-### "INVALID_PARAMETER: user_confirmed not supported"
+### "CONFIRMATION_UNSUPPORTED: Destructive operation cannot be confirmed"
 
 ```json
 {
-  "error": "INVALID_PARAMETER",
-  "message": "user_confirmed parameter is not supported for this tool."
+  "error": "CONFIRMATION_UNSUPPORTED",
+  "message": "Destructive operation cannot be confirmed: some_tool_v1"
 }
 ```
 
-The AI tried to use `user_confirmed: true` on a tool that doesn't participate in the confirmation flow. Only tools whose schema declares a `confirm` parameter (the deletion tools: `delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) accept `user_confirmed`. Other tools don't need confirmation.
+The tool's ability is classified destructive (by annotation, or fail-closed because its annotations are missing or malformed) but its schema declares no usable `confirm` parameter, so the required confirmation flow cannot run and the server refuses to execute it. "Usable" means the `confirm` subschema can accept the boolean `true` the server sends: a missing key, a `false` boolean schema, a non-boolean `type`, or an enum without `true` all fail closed the same way. The built-in deletion tools (`delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) all declare `confirm` and are unaffected. If a third-party ability triggers this, fix its annotations or confirm support on the Dashboard side, or manage it explicitly with `allowedTools`/`blockedTools`.
 
 ---
 
