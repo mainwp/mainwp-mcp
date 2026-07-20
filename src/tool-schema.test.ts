@@ -165,4 +165,25 @@ describe('abilityToTool confirmation parameter injection', () => {
     expect(tool.description).not.toContain('preview what will be affected');
     expect(tool.description).toContain('confirmation_token');
   });
+
+  it('skips injection when the declared confirm channel cannot accept true', () => {
+    // Detection runs on the raw schema: conversion coerces `confirm: false`
+    // to {}, which would otherwise advertise a confirmation flow that the
+    // execution gate fails closed on.
+    const ability = makeAbility({
+      name: 'mainwp/delete-site-v1',
+      input_schema: {
+        type: 'object',
+        properties: { site_id: { type: 'integer', description: 'Site ID.' }, confirm: false },
+      },
+      meta: { annotations: { destructive: true, readonly: false, idempotent: false } },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp');
+
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.user_confirmed).toBeUndefined();
+    expect(props.confirmation_token).toBeUndefined();
+    expect(tool.description).not.toContain('confirmation_token');
+  });
 });

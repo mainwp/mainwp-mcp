@@ -74,3 +74,35 @@ export function classifyDestructive(annotations: { destructive?: boolean } | und
 export function isToolAllowed(config: Config, toolName: string): boolean {
   return decidePolicy(config, toolName) === 'allow';
 }
+
+/**
+ * Whether an ability's input-schema properties declare a parameter that can
+ * actually accept the literal `true` this server sends for it (confirm,
+ * dry_run). Presence alone is not capability: a `false` boolean subschema or
+ * `{type: "string"}` provably rejects `true`, so the declared channel is
+ * unusable and callers must treat it exactly like an absent key (fail closed
+ * for confirm, reject fabricated dry_run). Deliberately permissive otherwise —
+ * `{}`, a description-only subschema, or a missing `type` all accept `true`,
+ * and rejecting those would break legitimately sloppy abilities.
+ *
+ * Takes the RAW fetched properties, not a presentation-coerced copy: tool
+ * conversion rewrites non-object property values to `{}`, which would make an
+ * unusable channel look usable and split discovery from execution.
+ */
+export function declaresUsableBooleanParam(properties: unknown, name: string): boolean {
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return false;
+  }
+  if (!Object.hasOwn(properties, name)) return false;
+  const sub: unknown = (properties as Record<string, unknown>)[name];
+  if (sub === true) return true; // boolean schema: accepts any instance
+  if (sub === false) return false; // boolean schema: accepts nothing
+  if (sub === null || typeof sub !== 'object' || Array.isArray(sub)) return false;
+  const schema = sub as Record<string, unknown>;
+  const type: unknown = schema.type;
+  if (typeof type === 'string' && type !== 'boolean') return false;
+  if (Array.isArray(type) && !type.includes('boolean')) return false;
+  if (Array.isArray(schema.enum) && !schema.enum.includes(true)) return false;
+  if (Object.hasOwn(schema, 'const') && schema.const !== true) return false;
+  return true;
+}

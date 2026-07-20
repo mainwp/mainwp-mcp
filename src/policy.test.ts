@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { decidePolicy, classifyDestructive, isToolAllowed, type PolicyDecision } from './policy.js';
+import {
+  decidePolicy,
+  classifyDestructive,
+  declaresUsableBooleanParam,
+  isToolAllowed,
+  type PolicyDecision,
+} from './policy.js';
 import { makeBaseConfig } from '../tests/helpers/config.js';
 
 describe('decidePolicy', () => {
@@ -195,5 +201,39 @@ describe('isToolAllowed (policy wrapper)', () => {
   it('ignores safeMode and confirmation (listing is never destructive-gated)', () => {
     const config = makeBaseConfig({ safeMode: true, requireUserConfirmation: true });
     expect(isToolAllowed(config, 'delete_site_v1')).toBe(true);
+  });
+});
+
+describe('declaresUsableBooleanParam', () => {
+  it.each([
+    ['absent key', { other: {} }, false],
+    ['boolean-true subschema', { confirm: true }, true],
+    ['boolean-false subschema', { confirm: false }, false],
+    ['empty object subschema', { confirm: {} }, true],
+    ['description-only subschema', { confirm: { description: 'confirm it' } }, true],
+    ['type boolean', { confirm: { type: 'boolean' } }, true],
+    ['type string', { confirm: { type: 'string' } }, false],
+    ['type union including boolean', { confirm: { type: ['boolean', 'null'] } }, true],
+    ['type union excluding boolean', { confirm: { type: ['string', 'null'] } }, false],
+    ['enum containing true', { confirm: { type: 'boolean', enum: [true, false] } }, true],
+    ['enum without true', { confirm: { type: 'boolean', enum: [false] } }, false],
+    ['const true', { confirm: { const: true } }, true],
+    ['const false', { confirm: { const: false } }, false],
+    ['null subschema', { confirm: null }, false],
+    ['numeric subschema', { confirm: 42 }, false],
+    ['array subschema', { confirm: [] }, false],
+  ] as const)('%s', (_label, properties, expected) => {
+    expect(declaresUsableBooleanParam(properties, 'confirm')).toBe(expected);
+  });
+
+  it('returns false for non-object property maps', () => {
+    expect(declaresUsableBooleanParam(undefined, 'confirm')).toBe(false);
+    expect(declaresUsableBooleanParam(null, 'confirm')).toBe(false);
+    expect(declaresUsableBooleanParam('confirm', 'confirm')).toBe(false);
+    expect(declaresUsableBooleanParam(['confirm'], 'confirm')).toBe(false);
+  });
+
+  it('does not read inherited keys as declared parameters', () => {
+    expect(declaresUsableBooleanParam({}, 'constructor')).toBe(false);
   });
 });

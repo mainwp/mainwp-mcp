@@ -11,6 +11,7 @@ import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
+import { declaresUsableBooleanParam } from './policy.js';
 import { trackSessionData } from './session.js';
 import {
   buildConfirmationUnsupportedResponse,
@@ -169,12 +170,13 @@ export async function handleConfirmationFlow(
   const { config, ability, toolName, abilityName, args, effectiveArgs, logger, signal } = params;
   const ctx: ConfirmationContext = { tool: toolName, ability: abilityName };
 
-  // Check if tool supports confirmation parameter
+  // Check if tool supports confirmation parameter. Usable means the declared
+  // subschema can accept the literal `true` we send — a `confirm: false` or
+  // `confirm: {type: "string"}` declaration has no working channel and takes
+  // the same fail-closed path as an absent key.
   const schemaProps = ability.input_schema?.properties;
-  const hasConfirmParam =
-    schemaProps !== null && typeof schemaProps === 'object' && 'confirm' in schemaProps;
-  const hasDryRunParam =
-    schemaProps !== null && typeof schemaProps === 'object' && 'dry_run' in schemaProps;
+  const hasConfirmParam = declaresUsableBooleanParam(schemaProps, 'confirm');
+  const hasDryRunParam = declaresUsableBooleanParam(schemaProps, 'dry_run');
 
   // Fail closed: a destructive ability that declares no confirm parameter has
   // no confirmation channel, so while confirmation is required it can never

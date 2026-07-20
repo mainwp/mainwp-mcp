@@ -10,7 +10,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Ability, AbilityAnnotations } from './abilities.js';
 import type { SchemaVerbosity } from './config.js';
 import { abilityNameToToolName } from './naming.js';
-import { classifyDestructive } from './policy.js';
+import { classifyDestructive, declaresUsableBooleanParam } from './policy.js';
 
 /**
  * Convert an Ability's JSON Schema to MCP tool input schema format
@@ -419,10 +419,14 @@ export function abilityToTool(
   const meta = ability.meta?.annotations;
   let inputSchema = convertInputSchema(ability);
 
-  // Detect safety parameters in schema (before compression, needed for user_confirmed injection)
-  const props = (inputSchema.properties || {}) as Record<string, object>;
-  const hasDryRun = 'dry_run' in props;
-  const hasConfirm = 'confirm' in props;
+  // Detect safety parameters in schema (before compression, needed for
+  // user_confirmed injection). Detection runs on the RAW ability schema, not
+  // the converted copy: conversion coerces non-object property values to {},
+  // which would make an unusable channel (confirm: false) look usable here
+  // while the execution gate fails closed on it.
+  const rawSchemaProps: unknown = ability.input_schema?.properties;
+  const hasDryRun = declaresUsableBooleanParam(rawSchemaProps, 'dry_run');
+  const hasConfirm = declaresUsableBooleanParam(rawSchemaProps, 'confirm');
   // Fail-closed, same classifier as the execution policy. The old
   // `meta?.destructive ?? false` default advertised unannotated abilities as
   // non-destructive (and skipped their confirmation-parameter injection)

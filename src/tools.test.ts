@@ -1093,6 +1093,87 @@ describe('executeTool', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('fails closed when the declared confirm channel cannot accept true', async () => {
+    // The confirm key exists but its subschema provably rejects the boolean
+    // `true` this server sends — an unusable channel takes the same
+    // fail-closed path as an absent one instead of promising a preview.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...confirmlessDestructiveAbility,
+          input_schema: {
+            type: 'object',
+            properties: { site_id: { type: 'integer' }, confirm: { type: 'string' } },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'purge_logs_v1', { site_id: 1 }, mockLogger);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('CONFIRMATION_UNSUPPORTED');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when confirm is declared as the false boolean schema', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...confirmlessDestructiveAbility,
+          input_schema: {
+            type: 'object',
+            properties: { site_id: { type: 'integer' }, confirm: false },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(baseConfig, 'purge_logs_v1', { site_id: 1 }, mockLogger);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('CONFIRMATION_UNSUPPORTED');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects dry_run when its declared schema cannot accept true', async () => {
+    // dry_run declared as a string can never accept the boolean `true`, so
+    // forwarding it would rely on upstream ignoring an invalid value — the
+    // call is rejected before any upstream request, like undeclared dry_run.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...confirmlessDestructiveAbility,
+          input_schema: {
+            type: 'object',
+            properties: {
+              site_id: { type: 'integer' },
+              confirm: { type: 'boolean' },
+              dry_run: { type: 'string' },
+            },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'purge_logs_v1',
+      { site_id: 1, dry_run: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('dry_run parameter not supported');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('should handle confirmation flow - generate preview', async () => {
     // Abilities fetch
     mockFetch.mockResolvedValueOnce({

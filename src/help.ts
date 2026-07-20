@@ -6,6 +6,7 @@
  */
 
 import { abilityNameToToolName } from './naming.js';
+import { declaresUsableBooleanParam } from './policy.js';
 import type { Ability } from './abilities.js';
 
 /**
@@ -80,8 +81,8 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
       instructions: ability.meta?.annotations?.instructions,
     },
     safetyFeatures: {
-      supportsDryRun: 'dry_run' in props,
-      requiresConfirm: 'confirm' in props,
+      supportsDryRun: declaresUsableBooleanParam(props, 'dry_run'),
+      requiresConfirm: declaresUsableBooleanParam(props, 'confirm'),
     },
     parameters,
   };
