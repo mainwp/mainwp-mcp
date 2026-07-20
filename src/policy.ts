@@ -23,10 +23,7 @@ import type { Config } from './config.js';
  * 4. `allow`
  */
 export type PolicyDecision =
-  | 'allow'
-  | 'blocked-by-policy'
-  | 'safe-mode-blocked'
-  | 'needs-confirmation';
+  'allow' | 'blocked-by-policy' | 'safe-mode-blocked' | 'needs-confirmation';
 
 /**
  * Decide what the policy permits for a tool.
