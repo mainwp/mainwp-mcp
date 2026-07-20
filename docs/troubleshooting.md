@@ -185,7 +185,7 @@ The AI tried to pass both `user_confirmed: true` and `dry_run: true` simultaneou
 }
 ```
 
-The tool's ability is classified destructive (by annotation, or fail-closed because its annotations are missing or malformed) but its schema declares no `confirm` parameter, so the required confirmation flow cannot run and the server refuses to execute it. The built-in deletion tools (`delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) all declare `confirm` and are unaffected. If a third-party ability triggers this, fix its annotations or confirm support on the Dashboard side, or manage it explicitly with `allowedTools`/`blockedTools`.
+The tool's ability is classified destructive (by annotation, or fail-closed because its annotations are missing or malformed) but its schema declares no usable `confirm` parameter, so the required confirmation flow cannot run and the server refuses to execute it. "Usable" means the `confirm` subschema can accept the boolean `true` the server sends: a missing key, a `false` boolean schema, a non-boolean `type`, or an enum without `true` all fail closed the same way. The built-in deletion tools (`delete_site_v1`, `delete_client_v1`, `delete_tag_v1`, `delete_site_plugins_v1`, `delete_site_themes_v1`) all declare `confirm` and are unaffected. If a third-party ability triggers this, fix its annotations or confirm support on the Dashboard side, or manage it explicitly with `allowedTools`/`blockedTools`.
 
 ---
 
