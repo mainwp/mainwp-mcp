@@ -433,10 +433,14 @@ async function main(): Promise<void> {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
     if (error instanceof MissingConfigError) {
+      // Nothing has created handles yet (loadConfig threw first), so setting
+      // exitCode and returning lets the event loop drain and flush the
+      // guidance even when stderr is a pipe; process.exit() could drop it.
       console.error(getMissingConfigGuidance(error.missing));
-    } else {
-      startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
+      process.exitCode = 1;
+      return;
     }
+    startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
     process.exit(1);
   }
 }
