@@ -12,22 +12,19 @@
 
 _A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
-**AI proposes the work. MainWP decides what's permitted, performs it, and reports what actually happened.**
+Manage your whole WordPress network by talking to your AI assistant. [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) connects Claude, Cursor, OpenAI Codex, VS Code Copilot, and other MCP-compatible tools to your MainWP Dashboard, so you can ask in plain English:
 
-[MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client.
+> _"Which sites have pending plugin updates?"_
+>
+> _"Update WooCommerce everywhere it's behind."_
+>
+> _"Which client sites are disconnected right now?"_
 
-An MCP (Model Context Protocol) server that connects AI assistants to your MainWP Dashboard. This lets Cursor, Claude, OpenAI Codex, VS Code Copilot, and other AI tools manage your WordPress network through natural conversation.
+Your Dashboard stays in control. It exposes only the tools you allow, and anything destructive stops for your confirmation before it runs.
 
-## How It Works
-
-MainWP MCP is a layered system, and each layer has a distinct job:
-
-- **AI interprets intent.** The assistant turns a natural-language request into a plan and selects the tools that match it.
-- **MCP applies the boundary.** The server exposes only the ability namespaces and tools you permit, and rechecks that policy when a tool is actually called, not just when tools are listed.
-- **The MainWP Dashboard is the authority.** It holds your managed sites, defines the available abilities, and performs the WordPress operation.
-- **You approve what matters.** Destructive operations stop at a confirmation gate before anything runs.
-
-The AI stays flexible where flexibility helps. The Dashboard stays deterministic where consequences live.
+<p align="center">
+  <img src="docs/images/mainwp-mcp-talk-to-your-sites.png" alt="Terminal conversation through the MainWP MCP server: asking how many sites am I managing, then updating WooCommerce on every site where it is behind" width="800">
+</p>
 
 ## What You Can Do
 
@@ -39,7 +36,18 @@ The AI stays flexible where flexibility helps. The Dashboard stays deterministic
 
 Built for WordPress agencies and site managers who want AI assistance with their MainWP workflows.
 
-> **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set of abilities your workflow needs and widen from there. See [Limiting Exposed Tools](#limiting-exposed-tools).
+## How It Works
+
+**AI proposes the work. MainWP decides what's permitted, performs it, and reports what actually happened.**
+
+MCP (Model Context Protocol) is the open standard that lets AI assistants plug into external services. This server sits between your AI tool and your MainWP Dashboard, and each layer has a distinct job:
+
+- **AI interprets intent.** The assistant turns a natural-language request into a plan and selects the tools that match it.
+- **MCP applies the boundary.** The server exposes only the tools you permit, and enforces that policy every time a tool runs, not just when the AI first connects.
+- **The MainWP Dashboard is the authority.** It holds your managed sites, defines the available operations, and performs the WordPress work.
+- **You approve what matters.** Destructive operations stop at a confirmation gate before anything runs.
+
+The AI stays flexible where flexibility helps. The Dashboard stays deterministic where consequences live.
 
 ---
 
@@ -75,6 +83,8 @@ npm run build
 3. Start chatting: "What sites need updates?" or "Sync all my sites"
 
 Need inspiration? See the [Example Prompts](docs/example-prompts.md) for more ideas.
+
+> **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set of tools your workflow needs and widen from there. See [Limiting Exposed Tools](#limiting-exposed-tools).
 
 ---
 
@@ -537,19 +547,11 @@ sequenceDiagram
     AI->>User: Site deleted successfully
 ```
 
-**Example Conversation:**
+**Example:**
 
-```
-You: Delete site 3
-
-AI: I found site 3: Example Site (https://example.com)
-    This will permanently remove it from your MainWP Dashboard.
-    Do you want me to proceed with deletion?
-
-You: Yes
-
-AI: Site 3 has been deleted successfully.
-```
+<p align="center">
+  <img src="docs/images/mainwp-mcp-guard-rails.png" alt="Terminal conversation: a request to delete inactive plugins pauses with Confirmation required and a preview of 2 plugins, then completes with 2 plugins deleted, 0 errors after the user confirms" width="800">
+</p>
 
 ### Affected Operations
 
