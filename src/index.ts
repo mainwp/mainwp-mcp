@@ -50,7 +50,7 @@ import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from 
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '1.1.0';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;

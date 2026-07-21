@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-21
+
+### Added
+
+`--help` and `--version` CLI flags. `--help` prints usage, the required
+environment variables, and a ready-to-paste `claude mcp add` command;
+`--version` prints the server version. Both write to stdout, exit 0, and
+work with nothing configured.
+
+### Changed
+
+Starting the server with no configuration now prints setup guidance
+instead of a fatal error line. A bare `npx -y @mainwp/mcp` used to open
+with `[ERROR] Fatal error: MAINWP_URL is required`, which reads like a
+crash to someone who has not configured anything yet. The missing-URL and
+missing-credentials cases now say what is missing, list the three
+environment variables to set, and link the setup guide. The exit code
+stays 1 so MCP clients still register the launch as failed, and the
+process exits by letting the event loop drain so the guidance is not
+truncated when stderr is piped. Configuration that is present but invalid
+keeps the existing fatal-error behavior.
+
 ## [1.0.0] - 2026-07-20
 
 ### Security
