@@ -443,6 +443,21 @@ const MAINWP_ENV_VARS = [
 ] as const;
 
 /**
+ * First-run configuration is absent entirely (no dashboard URL or no
+ * credentials), as opposed to present but invalid. The CLI entry point
+ * renders this as getting-started guidance instead of a fatal error.
+ */
+export class MissingConfigError extends Error {
+  constructor(
+    message: string,
+    public readonly missing: 'MAINWP_URL' | 'credentials'
+  ) {
+    super(message);
+    this.name = 'MissingConfigError';
+  }
+}
+
+/**
  * Load configuration from environment variables and settings file
  * Precedence: environment variables > settings file > defaults
  */
@@ -657,15 +672,19 @@ export function loadConfig(): Config {
   }
 
   if (!dashboardUrl) {
-    throw new Error('MAINWP_URL is required (set via environment variable or settings.json)');
+    throw new MissingConfigError(
+      'MAINWP_URL is required (set via environment variable or settings.json)',
+      'MAINWP_URL'
+    );
   }
 
   const hasBasicAuth = username && appPassword;
   const hasBearerAuth = apiToken;
 
   if (!hasBasicAuth && !hasBearerAuth) {
-    throw new Error(
-      'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)'
+    throw new MissingConfigError(
+      'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)',
+      'credentials'
     );
   }
 

@@ -29,7 +29,7 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, Config } from './config.js';
+import { loadConfig, Config, MissingConfigError } from './config.js';
 import { getTools, executeTool } from './tools.js';
 import { decidePolicy, classifyDestructive } from './policy.js';
 import { formatBytes } from './session.js';
@@ -54,6 +54,57 @@ const SERVER_VERSION = '1.0.0';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
+
+const SETUP_GUIDE_URL = 'https://github.com/mainwp/mainwp-mcp#readme';
+
+export function getHelpText(): string {
+  return `MainWP MCP Server v${SERVER_VERSION}
+
+Connects AI assistants to a MainWP Dashboard over the Model Context
+Protocol. Normally launched by an MCP client (Claude Code, Claude Desktop,
+Cursor), not run by hand.
+
+Usage:
+  npx -y @mainwp/mcp              Start the server (stdio transport)
+  npx -y @mainwp/mcp --help       Show this help
+  npx -y @mainwp/mcp --version    Print the version
+
+Required environment variables:
+  MAINWP_URL            Your MainWP Dashboard URL (https://your-dashboard.com)
+  MAINWP_USER           WordPress admin username
+  MAINWP_APP_PASSWORD   WordPress Application Password for that user
+                        (create one under Users > Profile on the Dashboard site)
+
+Add to Claude Code:
+  claude mcp add --transport stdio mainwp \\
+    --env MAINWP_URL=https://your-dashboard.com \\
+    --env MAINWP_USER=admin \\
+    --env MAINWP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx" \\
+    -- npx -y @mainwp/mcp
+
+Other MCP clients and optional settings (safe mode, tool filtering, timeouts):
+  ${SETUP_GUIDE_URL}`;
+}
+
+export function getMissingConfigGuidance(missing: MissingConfigError['missing']): string {
+  const missingLine =
+    missing === 'MAINWP_URL'
+      ? 'Missing: MAINWP_URL (the address of your MainWP Dashboard)'
+      : 'Missing: login credentials (MAINWP_USER and MAINWP_APP_PASSWORD)';
+  return `MainWP MCP server is not configured yet.
+
+${missingLine}
+
+Set these environment variables, either in your shell or in the "env"
+block of this server's entry in your MCP client config:
+
+  MAINWP_URL            https://your-dashboard.com
+  MAINWP_USER           WordPress admin username
+  MAINWP_APP_PASSWORD   WordPress Application Password for that user
+
+Setup guide: ${SETUP_GUIDE_URL}
+Run "npx -y @mainwp/mcp --help" for more options.`;
+}
 
 /**
  * Create and configure the MCP server
@@ -307,6 +358,19 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
  * Main entry point
  */
 async function main(): Promise<void> {
+  // --help/--version are explicit CLI invocations, not MCP sessions, so
+  // stdout is the right stream and the process exits before any transport
+  // is created.
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${getHelpText()}\n`);
+    return;
+  }
+  if (args.includes('--version') || args.includes('-v')) {
+    process.stdout.write(`${SERVER_VERSION}\n`);
+    return;
+  }
+
   // Use stderr logger before server is initialized
   const startupLogger = createStderrLogger();
 
@@ -368,7 +432,11 @@ async function main(): Promise<void> {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
-    startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
+    if (error instanceof MissingConfigError) {
+      console.error(getMissingConfigGuidance(error.missing));
+    } else {
+      startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
+    }
     process.exit(1);
   }
 }

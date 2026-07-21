@@ -8,6 +8,7 @@ import {
   loadSettingsFile,
   getAbilitiesApiUrl,
   getAuthHeaders,
+  MissingConfigError,
   type Config,
 } from './config.js';
 import fs from 'fs';
@@ -156,10 +157,34 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/MAINWP_URL is required/);
   });
 
+  it('should throw MissingConfigError for missing URL so the CLI can show setup guidance', () => {
+    process.env = {};
+
+    try {
+      loadConfig();
+      expect.unreachable('loadConfig should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(MissingConfigError);
+      expect((error as MissingConfigError).missing).toBe('MAINWP_URL');
+    }
+  });
+
   it('should require authentication credentials', () => {
     process.env.MAINWP_URL = 'https://test.com';
 
     expect(() => loadConfig()).toThrow(/Authentication required/);
+  });
+
+  it('should throw MissingConfigError for missing credentials so the CLI can show setup guidance', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+
+    try {
+      loadConfig();
+      expect.unreachable('loadConfig should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(MissingConfigError);
+      expect((error as MissingConfigError).missing).toBe('credentials');
+    }
   });
 
   it('should load config with basic auth', () => {
