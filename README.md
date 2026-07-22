@@ -20,7 +20,7 @@ Manage your whole WordPress network by talking to your AI assistant. [MainWP MCP
 >
 > _"Which client sites are disconnected right now?"_
 
-The server is a small program that runs on your own computer, alongside your AI tool. Nothing new is installed on your Dashboard or your child sites. Your Dashboard stays in control: it exposes only the tools you allow, and anything destructive stops for your confirmation before it runs.
+The server is a small program that runs on your own computer, alongside your AI tool. Nothing new is installed on your Dashboard or your child sites. Your Dashboard stays in control: it exposes only the tools you allow, and by default anything classified as destructive stops for your confirmation before it runs.
 
 <p align="center">
   <img src="docs/images/mainwp-mcp-talk-to-your-sites.png" alt="Terminal conversation through the MainWP MCP server: asking how many sites am I managing, then updating WooCommerce on every site where it is behind" width="800">
@@ -141,7 +141,7 @@ Tool names drop the `mainwp/` namespace and use underscores: the ability `mainwp
 
 ## Safety
 
-Destructive operations (deletions) use a two-step flow by default: the server returns a preview and a one-time token, your AI shows you what will be affected, and only your explicit approval executes it. Safe mode (`MAINWP_SAFE_MODE=true`) blocks destructive operations entirely, and tool filtering can remove them from the AI's view altogether. The full model, including what safe mode does and does not protect against, is on [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety); the underlying trust and credential model is in the [Security Model](https://docs.mainwp.com/mcp-server/reference/security).
+Operations classified as destructive (the deletion tools, plus any ability that does not declare itself non-destructive) use a two-step flow by default: the server returns a preview and a one-time token, your AI shows you what will be affected, and only your explicit approval executes it. Disabling the flow (`MAINWP_REQUIRE_USER_CONFIRMATION=false`) removes that gate. Safe mode (`MAINWP_SAFE_MODE=true`) blocks destructive operations entirely, and tool filtering can remove them from the AI's view altogether. The full model, including what safe mode does and does not protect against, is on [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety); the underlying trust and credential model is in the [Security Model](https://docs.mainwp.com/mcp-server/reference/security).
 
 ## Contributing
 
