@@ -39,6 +39,12 @@ jobs:
       - name: Check version consistency
         run: npm run check-version
 
+      - name: Check Claude Code plugin content
+        run: npm run check-plugin
+
+      - name: Check skill copies are in sync
+        run: npm run check-skill-sync
+
       - name: Build
         run: npm run build
 

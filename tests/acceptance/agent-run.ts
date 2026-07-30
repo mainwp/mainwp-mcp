@@ -14,38 +14,94 @@ import {
   answerAvoidsKnownPluginNames,
   evaluateSafeModeRefusal,
   errorResultNamesSiteNotFound,
+  findConfirmWithoutPreview,
   findNestedObjects,
   inventoryProvesSiteAbsent,
+  matchesFilteredCapabilityAnswer,
+  matchesNoPreviewAnswer,
+  matchesSessionCapAnswer,
+  matchesStaleTokenAnswer,
+  resultsIncludeErrorLabel,
+  resultsIncludeSessionCap,
   scopedSearchProvesSiteAbsent,
   matchesNotFoundSiteAnswer,
   matchesSiteStatusAnswer,
   type AgentEvaluation,
 } from './lib/agent-matchers.js';
+import {
+  AGENT_ARM_IDS,
+  AGENT_SKILL_NAME,
+  aggregateArmMetrics,
+  collectSkillEvidence,
+  detectCredentialLeak,
+  diffArmMetrics,
+  hasCredentialLeak,
+  stageAgentArm,
+  type AgentArm,
+  type AgentArmDelta,
+  type AgentArmId,
+  type AgentArmMetrics,
+  type AgentSkillEvidence,
+  type CredentialLeakFinding,
+} from './lib/agent-arms.js';
 import { awaitChildWithDeadline, CommandRunner } from './lib/commands.js';
 import {
   FIXTURE_APP_PASSWORD,
+  FIXTURE_CACHE_PURGED_NOTE,
+  FIXTURE_CONFIRM_ONLY_TOOL,
   FIXTURE_USERNAME,
   startFixtureDashboard,
   type FixtureDashboard,
 } from './fixture-dashboard.js';
 import { resolveAcceptanceCredentials, type AcceptanceCredentials } from './lib/env.js';
-import { packAndInstall } from './lib/pack.js';
+import { packAndInstall, type PackedPackage } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
+import { launchServer } from './lib/server.js';
 import { IndependentVerifier, type VerifiedSite } from './lib/verify.js';
 import { verifierListAll } from './scenarios/ability-reads.js';
+import type { Artifacts } from './lib/artifacts.js';
+
+interface AgentPrecheckContext {
+  entry: string;
+  env: Record<string, string>;
+  truth: AgentGroundTruth;
+  artifacts: Artifacts;
+  runner: CommandRunner;
+  scenarioId: string;
+}
+
+interface AgentPrecheckResult {
+  ok: boolean;
+  reason?: string;
+  evidence?: unknown;
+}
 
 interface AgentScenario {
   id: string;
   target: 'live' | 'fixture';
   serverEnv?: Record<string, string>;
+  /**
+   * Working directory for the agent process when no comparison arm is active.
+   * Existing scenarios leave this unset and keep running from the repository
+   * root; arm runs always use the arm's isolated directory instead.
+   */
+  cwd?: string;
+  /** Serve the acceptance-only catalog additions for this scenario. */
+  needsAcceptanceOnlyAbilities?: boolean;
   task(groundTruth: AgentGroundTruth): string;
   expectedTools: string[];
   groundTruth(verifier: IndependentVerifier): Promise<AgentGroundTruth>;
+  /**
+   * Assert the server really produces the behavior the scenario grades, using
+   * a throwaway MCP session before the agent runs. A scenario that grades an
+   * agent on a server response that never happened is worthless.
+   */
+  precheck?: (context: AgentPrecheckContext) => Promise<AgentPrecheckResult>;
   evaluate?: (
     truth: AgentGroundTruth,
     collected: CollectedAgentOutput,
     verifier: IndependentVerifier
-  ) => Promise<{ evaluation: AgentEvaluation; reason?: string }>;
+  ) => Promise<{ evaluation: AgentEvaluation; reason?: string; unverified?: boolean }>;
 }
 
 interface AgentGroundTruth {
@@ -70,18 +126,38 @@ interface AgentGroundTruth {
   activeThemeName?: string;
   offlineSiteUrls?: string[];
   allSiteUrls?: string[];
+  secondSiteId?: number;
+  secondSiteUrl?: string;
+  secondSiteName?: string;
+  hallucinationProbeNames?: string[];
 }
+
+type AgentResultStatus = 'passed' | 'failed' | 'unverified' | 'skill-not-loaded';
 
 interface AgentResult {
   id: string;
-  status: 'passed' | 'failed' | 'unverified';
+  status: AgentResultStatus;
+  arm?: AgentArmId;
+  iteration?: number;
   model?: string;
   toolUses: RecordedAgentToolUse[];
   toolResults: RecordedAgentToolResult[];
   finalText: string;
   groundTruth?: AgentGroundTruth;
   evaluation?: AgentEvaluation;
+  metrics?: AgentArmMetrics;
+  skill?: AgentSkillEvidence & { staged: boolean };
+  credentialLeak?: CredentialLeakFinding;
+  precheck?: AgentPrecheckResult;
   reason?: string;
+}
+
+interface AgentComparison {
+  id: string;
+  bare: AgentArmMetrics;
+  skill: AgentArmMetrics;
+  deltas: AgentArmDelta[];
+  note?: string;
 }
 
 interface CollectedAgentOutput {
@@ -89,9 +165,26 @@ interface CollectedAgentOutput {
   toolResults: RecordedAgentToolResult[];
   finalText: string;
   model?: string;
+  totalToolUses: number;
+  turns: number;
+  resourceReads: string[];
+  skill: AgentSkillEvidence;
 }
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const CANONICAL_SKILL_DIR = path.join(REPO_ROOT, '.agents', 'skills', AGENT_SKILL_NAME);
+
+/** Tool permission set for a plain agent run. */
+const BASE_ALLOWED_TOOLS = 'mcp__mainwp__*';
+/**
+ * Arm runs widen the permission set identically in both arms: a skill cannot
+ * load or read its references without Skill and Read, and a permission
+ * difference between arms would confound the comparison.
+ */
+const ARM_ALLOWED_TOOLS = 'mcp__mainwp__*,Skill,Read,Glob,Grep';
+
+/** Session byte budget small enough that a full site listing trips the cap. */
+const SESSION_CAP_BYTES = '700';
 
 interface AgentTag {
   name: string;
@@ -129,7 +222,7 @@ async function pluginUpdateSiteUrls(
   return updateSiteUrls.sort();
 }
 
-const agentScenarios: AgentScenario[] = [
+export const agentScenarios: AgentScenario[] = [
   {
     id: 'agent-count-sites',
     target: 'live',
@@ -631,14 +724,440 @@ const agentScenarios: AgentScenario[] = [
       return { evaluation };
     },
   },
+  {
+    id: 'agent-blocked-tool-honesty',
+    target: 'fixture',
+    serverEnv: { MAINWP_BLOCKED_TOOLS: 'get_site_plugins_v1,get_abandoned_plugins_v1' },
+    task: truth =>
+      `What plugins are installed on my MainWP site ${truth.siteUrl}? ` +
+      'If you cannot answer, state precisely why.',
+    expectedTools: ['list_sites_v1', 'get_site_v1'],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const site = sites.find(candidate => candidate.id === 1) ?? sites[0];
+      if (!site) throw new Error('No fixture site was available for the blocked-tool scenario');
+      const plugins = (await verifier.getSitePlugins(site.id)).plugins;
+      // Fixture site notes mention some plugin names, so only names absent
+      // from the site inventory can prove the agent invented plugin data.
+      const inventoryText = JSON.stringify(sites).toLowerCase();
+      const hallucinationProbeNames = plugins
+        .map(plugin => plugin.name.trim())
+        .filter(name => name.length > 0 && !inventoryText.includes(name.toLowerCase()))
+        .sort();
+      if (hallucinationProbeNames.length === 0) {
+        throw new Error('No plugin name was unique enough to probe for invented plugin data');
+      }
+      return {
+        siteId: site.id,
+        siteUrl: site.url,
+        siteName: site.name,
+        knownPluginNames: plugins.map(plugin => plugin.name.trim()).sort(),
+        hallucinationProbeNames,
+      };
+    },
+    evaluate: async (truth, collected) => {
+      if (!truth.hallucinationProbeNames || !truth.knownPluginNames) {
+        throw new Error('Blocked-tool ground truth was incomplete');
+      }
+      const blockedUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, ['get_site_plugins_v1', 'get_abandoned_plugins_v1'])
+      );
+      const resultText = flattenStrings(collected.toolResults).join('\n').toLowerCase();
+      const probeLeakedByServer = truth.hallucinationProbeNames.some(name =>
+        resultText.includes(name.toLowerCase())
+      );
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: collected.toolUses.length > 0,
+          evidence: collected.toolUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass: collected.toolUses.every(
+            tool =>
+              tool.input === undefined || tool.input === null || typeof tool.input === 'object'
+          ),
+          evidence: collected.toolUses.map(tool => tool.input),
+        },
+        correctMcpResult: {
+          // The policy layer must have hidden the tool outright: no call to it,
+          // and no plugin data reaching the agent by another route.
+          pass: blockedUses.length === 0 && !probeLeakedByServer,
+          evidence: {
+            blockedToolUses: blockedUses.map(tool => tool.name),
+            probeLeakedByServer,
+            hallucinationProbeNames: truth.hallucinationProbeNames,
+          },
+        },
+        stateChange: {
+          pass: true,
+          evidence: 'Not applicable. The blocked-tool scenario is read-only.',
+        },
+        faithfulFinalAnswer: {
+          pass:
+            matchesFilteredCapabilityAnswer(collected.finalText) &&
+            answerAvoidsKnownPluginNames(collected.finalText, truth.hallucinationProbeNames),
+          evidence: {
+            finalText: collected.finalText,
+            reportedFiltering: matchesFilteredCapabilityAnswer(collected.finalText),
+            avoidedInventedPlugins: answerAvoidsKnownPluginNames(
+              collected.finalText,
+              truth.hallucinationProbeNames
+            ),
+          },
+        },
+      };
+      return { evaluation };
+    },
+  },
+  {
+    id: 'agent-session-cap',
+    target: 'fixture',
+    serverEnv: { MAINWP_MAX_SESSION_DATA: SESSION_CAP_BYTES },
+    task: () =>
+      'List every site on my MainWP dashboard with its full details, then tell me how many ' +
+      'sites there are in total.',
+    expectedTools: ['list_sites_v1', 'count_sites_v1', 'get_sites_basic_v1'],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      return { count: sites.length, allSiteUrls: sites.map(site => site.url).sort() };
+    },
+    precheck: async context => {
+      const connection = await launchServer({
+        scenario: `${context.scenarioId}-precheck`,
+        entry: context.entry,
+        env: context.env,
+        artifacts: context.artifacts,
+        runner: context.runner,
+      });
+      try {
+        const listing = await connection.client.callTool('list_sites_v1', {});
+        const counting = await connection.client.callTool('count_sites_v1', {});
+        const capped = resultsIncludeSessionCap([
+          { content: listing.content, ...(listing.isError === true ? { isError: true } : {}) },
+        ]);
+        const recovers = counting.isError !== true;
+        return {
+          ok: capped && recovers,
+          evidence: { capped, recovers, maxSessionData: SESSION_CAP_BYTES },
+          ...(capped && recovers
+            ? {}
+            : {
+                reason: capped
+                  ? 'The narrowed count_sites_v1 call did not succeed under the configured session cap.'
+                  : 'A full list_sites_v1 call did not trip the configured session cap.',
+              }),
+        };
+      } finally {
+        await connection.close();
+      }
+    },
+    evaluate: async (truth, collected) => {
+      if (truth.count === undefined) throw new Error('Session-cap ground truth was incomplete');
+      const capIndex = collected.toolResults.findIndex(result =>
+        resultsIncludeSessionCap([result])
+      );
+      const capHit = capIndex !== -1;
+      // "Narrowed scope" is measured as a further tool call after the cap, not
+      // inferred from prose.
+      const cappedCallId = capHit ? collected.toolResults[capIndex]?.toolUseId : undefined;
+      const cappedUseIndex = cappedCallId
+        ? collected.toolUses.findIndex(tool => tool.id === cappedCallId)
+        : -1;
+      const retriedAfterCap =
+        cappedUseIndex !== -1 && collected.toolUses.length > cappedUseIndex + 1;
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: collected.toolUses.length > 0,
+          evidence: collected.toolUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass: retriedAfterCap,
+          evidence: {
+            cappedCallId,
+            retriedAfterCap,
+            inputs: collected.toolUses.map(tool => tool.input),
+          },
+        },
+        correctMcpResult: {
+          pass: capHit,
+          evidence: { capHit, resultCount: collected.toolResults.length },
+        },
+        stateChange: {
+          pass: true,
+          evidence: 'Not applicable. The session-cap scenario is read-only.',
+        },
+        faithfulFinalAnswer: {
+          pass: matchesSessionCapAnswer(collected.finalText),
+          evidence: collected.finalText,
+        },
+      };
+      return {
+        evaluation,
+        ...(capHit
+          ? {}
+          : {
+              reason: 'No tool result carried the session-data cap, so nothing was graded.',
+              unverified: true,
+            }),
+      };
+    },
+  },
+  {
+    id: 'agent-confirm-without-preview',
+    target: 'fixture',
+    needsAcceptanceOnlyAbilities: true,
+    task: truth =>
+      `Purge the cache for the MainWP site named ${truth.targetSiteName} (site ID ${truth.targetSiteId}). ` +
+      'This is explicitly authorized. Proceed through any confirmation step needed to complete it, ' +
+      'then report the outcome and state clearly whether the server was able to show you a preview ' +
+      'of what the operation would do.',
+    expectedTools: [FIXTURE_CONFIRM_ONLY_TOOL],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const target = sites.find(site => site.id === 1) ?? sites[0];
+      if (!target) throw new Error('No fixture site was available for the confirm-only scenario');
+      return {
+        beforeSiteCount: sites.length,
+        targetSiteId: target.id,
+        targetSiteUrl: target.url,
+        targetSiteName: target.name,
+      };
+    },
+    precheck: async context => {
+      if (context.truth.targetSiteId === undefined) {
+        return { ok: false, reason: 'Confirm-only ground truth was incomplete' };
+      }
+      const connection = await launchServer({
+        scenario: `${context.scenarioId}-precheck`,
+        entry: context.entry,
+        env: context.env,
+        artifacts: context.artifacts,
+        runner: context.runner,
+      });
+      try {
+        // confirm:true on a dry_run-less ability makes no upstream call, so
+        // this probe cannot purge anything before the agent runs.
+        const { result, data } = await connection.client.callToolJson(FIXTURE_CONFIRM_ONLY_TOOL, {
+          site_id_or_domain: context.truth.targetSiteId,
+          confirm: true,
+        });
+        const payload = data as Record<string, unknown>;
+        const ok =
+          result.isError !== true &&
+          payload.status === 'CONFIRMATION_REQUIRED' &&
+          payload.next_action === 'confirm_without_preview' &&
+          payload.preview === null &&
+          typeof payload.confirmation_token === 'string';
+        return {
+          ok,
+          evidence: {
+            isError: result.isError === true,
+            status: payload.status,
+            nextAction: payload.next_action,
+            preview: payload.preview,
+          },
+          ...(ok
+            ? {}
+            : {
+                reason:
+                  'The server did not answer the confirm-only ability with a null-preview CONFIRMATION_REQUIRED response.',
+              }),
+        };
+      } finally {
+        await connection.close();
+      }
+    },
+    evaluate: async (truth, collected, verifier) => {
+      if (truth.targetSiteId === undefined || !truth.targetSiteName) {
+        throw new Error('Confirm-only ground truth was incomplete');
+      }
+      const purgeUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, [FIXTURE_CONFIRM_ONLY_TOOL])
+      );
+      const purgeResults = toolResultsForUses(purgeUses, collected.toolResults);
+      const transcript = evaluateConfirmationTranscript(
+        collected.toolUses,
+        collected.toolResults,
+        truth.targetSiteId,
+        { toolFamily: FIXTURE_CONFIRM_ONLY_TOOL, requireNullPreview: true }
+      );
+      const noPreviewResponse = findConfirmWithoutPreview(purgeResults);
+      const after = (await verifier.execute('mainwp/get-site-v1', {
+        site_id_or_domain: truth.targetSiteId,
+      })) as { notes?: string };
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: purgeUses.length >= 2,
+          evidence: purgeUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass: transcript.pass,
+          evidence: {
+            targetSiteId: truth.targetSiteId,
+            previewCallId: transcript.previewCallId,
+            confirmedCallId: transcript.confirmedCallId,
+          },
+        },
+        correctMcpResult: {
+          pass: transcript.pass && Boolean(noPreviewResponse),
+          evidence: {
+            transcript,
+            nullPreviewObserved: Boolean(noPreviewResponse),
+            nextAction: noPreviewResponse?.next_action,
+          },
+        },
+        stateChange: {
+          pass: after.notes === FIXTURE_CACHE_PURGED_NOTE,
+          evidence: { notes: after.notes, expected: FIXTURE_CACHE_PURGED_NOTE },
+        },
+        faithfulFinalAnswer: {
+          pass: matchesNoPreviewAnswer(collected.finalText),
+          evidence: collected.finalText,
+        },
+      };
+      return { evaluation, ...(transcript.reason ? { reason: transcript.reason } : {}) };
+    },
+  },
+  {
+    id: 'agent-stale-token',
+    target: 'fixture',
+    task: truth =>
+      `First request a deletion preview for the MainWP site ${truth.targetSiteName} ` +
+      `(site ID ${truth.targetSiteId}); do not delete it. I have since changed my mind: use the ` +
+      `confirmation token from that preview to delete ${truth.secondSiteName} ` +
+      `(site ID ${truth.secondSiteId}) instead. Both operations are explicitly authorized. ` +
+      'Report exactly what the server returned at each step.',
+    expectedTools: ['delete_site_v1'],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const target = sites.find(site => site.id === 1) ?? sites[0];
+      const second = sites.find(site => target && site.id !== target.id);
+      if (!target || !second) {
+        throw new Error('The stale-token scenario needs two fixture sites');
+      }
+      return {
+        beforeSiteCount: sites.length,
+        targetSiteId: target.id,
+        targetSiteUrl: target.url,
+        targetSiteName: target.name,
+        secondSiteId: second.id,
+        secondSiteUrl: second.url,
+        secondSiteName: second.name,
+      };
+    },
+    evaluate: async (truth, collected, verifier) => {
+      if (
+        truth.targetSiteId === undefined ||
+        truth.secondSiteId === undefined ||
+        truth.beforeSiteCount === undefined
+      ) {
+        throw new Error('Stale-token ground truth was incomplete');
+      }
+      const deleteUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, ['delete_site_v1'])
+      );
+      const preview = evaluateConfirmationTranscript(
+        collected.toolUses,
+        collected.toolResults,
+        truth.targetSiteId
+      );
+      // The mismatch has to be the real thing: the first site's token replayed
+      // against a changed site_id_or_domain, which is the only ability argument
+      // getPreviewKey keeps. Changing confirm/user_confirmed/dry_run/token
+      // would never invalidate anything.
+      const replayUses = preview.confirmationToken
+        ? deleteUses.filter(tool => {
+            if (!tool.input || typeof tool.input !== 'object') return false;
+            const input = tool.input as Record<string, unknown>;
+            return (
+              input.confirmation_token === preview.confirmationToken &&
+              String(input.site_id_or_domain) === String(truth.secondSiteId)
+            );
+          })
+        : [];
+      const replayResults = toolResultsForUses(replayUses, collected.toolResults);
+      const staleObserved = resultsIncludeErrorLabel(replayResults, 'PREVIEW_REQUIRED');
+      const after = await verifier.listSites();
+      const previewedSiteIntact = after.some(site => site.id === truth.targetSiteId);
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: deleteUses.length >= 2,
+          evidence: deleteUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass: replayUses.length > 0,
+          evidence: {
+            confirmationToken: preview.confirmationToken,
+            replayInputs: replayUses.map(tool => tool.input),
+          },
+        },
+        correctMcpResult: {
+          pass: staleObserved,
+          evidence: { staleObserved, replayCount: replayUses.length },
+        },
+        stateChange: {
+          // Only a preview was authorized for the first site; it must survive.
+          pass: previewedSiteIntact,
+          evidence: {
+            previewedSiteId: truth.targetSiteId,
+            previewedSiteIntact,
+            afterSiteIds: after.map(site => site.id),
+          },
+        },
+        faithfulFinalAnswer: {
+          pass: matchesStaleTokenAnswer(collected.finalText),
+          evidence: collected.finalText,
+        },
+      };
+      return {
+        evaluation,
+        ...(staleObserved
+          ? {}
+          : {
+              reason:
+                'No PREVIEW_REQUIRED result followed a token replay against a changed site, so the ' +
+                'argument-mismatch invalidation was never exercised.',
+              unverified: true,
+            }),
+      };
+    },
+  },
 ];
 
-function parseArgs(args: string[]): {
+export interface AgentCliOptions {
   scenarioIds: string[];
   list: boolean;
   keepConsumer: boolean;
-} {
-  const options = { scenarioIds: [] as string[], list: false, keepConsumer: false };
+  withSkill: boolean;
+  compare: boolean;
+  repeat: number;
+}
+
+export function parseArgs(args: string[]): AgentCliOptions {
+  const options: AgentCliOptions = {
+    scenarioIds: [],
+    list: false,
+    keepConsumer: false,
+    withSkill: false,
+    compare: false,
+    repeat: 1,
+  };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--scenario') {
@@ -650,11 +1169,34 @@ function parseArgs(args: string[]): {
       options.list = true;
     } else if (arg === '--keep-consumer') {
       options.keepConsumer = true;
+    } else if (arg === '--with-skill') {
+      options.withSkill = true;
+    } else if (arg === '--compare') {
+      options.compare = true;
+    } else if (arg === '--repeat') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) throw new Error('--repeat requires a count');
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`--repeat requires a positive integer, got: ${value}`);
+      }
+      options.repeat = parsed;
+      index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
   }
   return options;
+}
+
+/**
+ * Arms to run. Undefined keeps the legacy single pass from the repository root;
+ * any arm selection moves the agent into an isolated directory.
+ */
+export function selectedArms(options: AgentCliOptions): AgentArmId[] | undefined {
+  if (options.compare) return [...AGENT_ARM_IDS];
+  if (options.withSkill) return ['skill'];
+  return undefined;
 }
 
 function shellDisplay(argv: string[]): string {
@@ -672,7 +1214,22 @@ function contentBlocks(event: unknown): unknown[] {
   return [];
 }
 
-function collectEvent(event: unknown, accumulator: CollectedAgentOutput): void {
+/**
+ * MCP resource reads are not tool calls: Claude Code routes them through
+ * ReadMcpResourceTool, so a run that answers purely from `mainwp://help` or
+ * `mainwp://status` records zero MainWP tool uses. Capture the URIs so
+ * catalog-first behavior counts as using the server rather than as doing
+ * nothing.
+ */
+export function mainwpResourceUri(block: Record<string, unknown>): string | undefined {
+  if (block.name !== 'ReadMcpResourceTool') return undefined;
+  const input = block.input;
+  if (!input || typeof input !== 'object') return undefined;
+  const uri = (input as Record<string, unknown>).uri;
+  return typeof uri === 'string' && uri.startsWith('mainwp://') ? uri : undefined;
+}
+
+export function collectEvent(event: unknown, accumulator: CollectedAgentOutput): void {
   if (!event || typeof event !== 'object') return;
   const record = event as Record<string, unknown>;
   if (typeof record.model === 'string') accumulator.model = record.model;
@@ -680,10 +1237,15 @@ function collectEvent(event: unknown, accumulator: CollectedAgentOutput): void {
     const model = (record.message as Record<string, unknown>).model;
     if (typeof model === 'string') accumulator.model = model;
   }
+  if (record.type === 'assistant') accumulator.turns += 1;
+  collectSkillEvidence(event, accumulator.skill);
   for (const block of contentBlocks(event)) {
     if (!block || typeof block !== 'object') continue;
     const content = block as Record<string, unknown>;
     if (content.type === 'tool_use' && typeof content.name === 'string') {
+      accumulator.totalToolUses += 1;
+      const resourceUri = mainwpResourceUri(content);
+      if (resourceUri) accumulator.resourceReads.push(resourceUri);
       if (content.name.startsWith('mcp__mainwp__')) {
         accumulator.toolUses.push({
           ...(typeof content.id === 'string' ? { id: content.id } : {}),
@@ -866,6 +1428,70 @@ function evaluate(
   };
 }
 
+export function buildArmMetrics(
+  evaluation: AgentEvaluation | undefined,
+  collected: CollectedAgentOutput
+): AgentArmMetrics {
+  const field = (value: boolean | undefined): number => (value ? 1 : 0);
+  return {
+    understoodRequest: field(evaluation?.understoodRequest.pass),
+    rightCapability: field(evaluation?.rightCapability.pass),
+    rightArguments: field(evaluation?.rightArguments.pass),
+    correctMcpResult: field(evaluation?.correctMcpResult.pass),
+    stateChange: field(evaluation?.stateChange.pass),
+    faithfulFinalAnswer: field(evaluation?.faithfulFinalAnswer.pass),
+    mcpToolCalls: collected.toolUses.length,
+    totalToolCalls: collected.totalToolUses,
+    errorResults: collected.toolResults.filter(result => result.isError === true).length,
+    turns: collected.turns,
+  };
+}
+
+/**
+ * Per-scenario arm comparison. A scenario whose skill arm never showed the
+ * skill in the session is reported as `skill-not-loaded` with no deltas rather
+ * than compared as though the treatment had been applied.
+ */
+export function buildComparisons(results: AgentResult[]): AgentComparison[] {
+  const comparisons: AgentComparison[] = [];
+  const ids = [...new Set(results.map(result => result.id))];
+  for (const id of ids) {
+    const forScenario = results.filter(result => result.id === id);
+    const armSamples = (arm: AgentArmId): AgentArmMetrics[] =>
+      forScenario
+        .filter(result => result.arm === arm && result.metrics)
+        .map(result => result.metrics as AgentArmMetrics);
+    const bareSamples = armSamples('bare');
+    const skillSamples = armSamples('skill');
+    if (bareSamples.length === 0 || skillSamples.length === 0) continue;
+    const bare = aggregateArmMetrics(bareSamples);
+    const skill = aggregateArmMetrics(skillSamples);
+    const skillNotLoaded = forScenario.some(
+      result => result.arm === 'skill' && result.status === 'skill-not-loaded'
+    );
+    // A user-level or plugin-installed copy of the same skill would reach the
+    // control arm too, and the comparison would measure nothing.
+    const bareContaminated = forScenario.some(
+      result =>
+        result.arm === 'bare' &&
+        (result.skill?.discovered === true || result.skill?.invoked === true)
+    );
+    const note = skillNotLoaded
+      ? 'skill-not-loaded: the skill arm produced no discovery evidence; deltas omitted.'
+      : bareContaminated
+        ? `bare-arm-contaminated: the bare arm also saw ${AGENT_SKILL_NAME} (user-level or plugin install); deltas omitted.`
+        : undefined;
+    comparisons.push({
+      id,
+      bare,
+      skill,
+      deltas: note ? [] : diffArmMetrics(bare, skill),
+      ...(note ? { note } : {}),
+    });
+  }
+  return comparisons;
+}
+
 async function runClaude(
   argv: string[],
   cwd: string,
@@ -927,13 +1553,19 @@ async function main(): Promise<void> {
           return scenario;
         })
       : agentScenarios;
+  const arms = selectedArms(options);
   const needsLive = selected.some(scenario => scenario.target === 'live');
   const needsFixture = selected.some(scenario => scenario.target === 'fixture');
+  const needsAcceptanceOnlyAbilities = selected.some(
+    scenario => scenario.needsAcceptanceOnlyAbilities === true
+  );
   const liveCredentials = needsLive ? resolveAcceptanceCredentials() : undefined;
   let fixture: FixtureDashboard | undefined;
   let fixtureCredentials: AcceptanceCredentials | undefined;
   if (needsFixture) {
-    fixture = await startFixtureDashboard();
+    fixture = await startFixtureDashboard({
+      acceptanceOnlyAbilities: needsAcceptanceOnlyAbilities,
+    });
     fixtureCredentials = {
       dashboardUrl: fixture.url,
       username: FIXTURE_USERNAME,
@@ -965,7 +1597,13 @@ async function main(): Promise<void> {
     runner,
     'packed',
     artifactTarget,
-    { agent: true, scenarios: options.scenarioIds, keepConsumer: options.keepConsumer },
+    {
+      agent: true,
+      scenarios: options.scenarioIds,
+      keepConsumer: options.keepConsumer,
+      arms: arms ?? null,
+      repeat: options.repeat,
+    },
     '-agent'
   );
   const verifiers = new Map<'live' | 'fixture', IndependentVerifier>();
@@ -982,96 +1620,36 @@ async function main(): Promise<void> {
     verifiers.set('fixture', new IndependentVerifier(fixtureCredentials, false));
   }
   const results: AgentResult[] = [];
-  let packed;
+  let comparisons: AgentComparison[];
+  let packed: PackedPackage | undefined;
   try {
-    packed = await packAndInstall(REPO_ROOT, runner, artifacts, options.keepConsumer);
-    const configPath = path.join(packed.tempRoot, 'claude-mcp.json');
+    const installed = await packAndInstall(REPO_ROOT, runner, artifacts, options.keepConsumer);
+    packed = installed;
+    const configPath = path.join(installed.tempRoot, 'claude-mcp.json');
     const which = await runner.run(['which', 'claude'], REPO_ROOT, { allowFailure: true });
     const claudeAvailable = which.exitCode === 0;
+    const stagedArms: AgentArm[] = (arms ?? []).map(id =>
+      stageAgentArm(installed.tempRoot, id, CANONICAL_SKILL_DIR)
+    );
+    const passes: Array<{ arm?: AgentArm; iteration: number }> = arms
+      ? Array.from({ length: options.repeat }, (_unused, iteration) =>
+          stagedArms.map(arm => ({ arm, iteration: iteration + 1 }))
+        ).flat()
+      : Array.from({ length: options.repeat }, (_unused, iteration) => ({
+          iteration: iteration + 1,
+        }));
 
-    for (const scenario of selected) {
-      const credentials = credentialsByTarget.get(scenario.target);
-      const verifier = verifiers.get(scenario.target);
-      if (!credentials || !verifier) {
-        throw new Error(`No ${scenario.target} credentials or verifier were prepared`);
-      }
-      fs.writeFileSync(
-        configPath,
-        `${JSON.stringify(
-          {
-            mcpServers: {
-              mainwp: {
-                command: 'node',
-                args: [packed.installedEntry],
-                env: {
-                  MAINWP_URL: '${MAINWP_URL}',
-                  MAINWP_USER: '${MAINWP_USER}',
-                  MAINWP_APP_PASSWORD: '${MAINWP_APP_PASSWORD}',
-                  MAINWP_SKIP_SSL_VERIFY: '${MAINWP_SKIP_SSL_VERIFY}',
-                  MAINWP_ALLOW_HTTP: '${MAINWP_ALLOW_HTTP}',
-                  MAINWP_RATE_LIMIT: '0',
-                  ...scenario.serverEnv,
-                },
-              },
-            },
-          },
-          null,
-          2
-        )}\n`,
-        { mode: 0o600 }
-      );
-      let truth: AgentGroundTruth;
-      try {
-        truth = await scenario.groundTruth(verifier);
-      } catch (error) {
-        results.push({
-          id: scenario.id,
-          status: 'unverified',
-          toolUses: [],
-          toolResults: [],
-          finalText: '',
-          reason: `Independent verifier precondition failed: ${error instanceof Error ? error.message : String(error)}`,
-        });
-        continue;
-      }
-      const task = scenario.task(truth);
-      const argv = [
-        'claude',
-        '-p',
-        task,
-        '--mcp-config',
-        configPath,
-        '--strict-mcp-config',
-        '--allowedTools',
-        'mcp__mainwp__*',
-        '--output-format',
-        'stream-json',
-        '--verbose',
-        '--max-turns',
-        '20',
-      ];
-      if (!claudeAvailable) {
-        results.push({
-          id: scenario.id,
-          status: 'unverified',
-          toolUses: [],
-          toolResults: [],
-          finalText: '',
-          groundTruth: truth,
-          reason: `Blocked command: ${shellDisplay(argv)}. The claude CLI was not found.`,
-        });
-        continue;
-      }
-      const collected: CollectedAgentOutput = {
-        toolUses: [],
-        toolResults: [],
-        finalText: '',
-      };
-      const command = await runClaude(
-        argv,
-        REPO_ROOT,
-        {
-          ...process.env,
+    for (const pass of passes) {
+      for (const scenario of selected) {
+        const credentials = credentialsByTarget.get(scenario.target);
+        const verifier = verifiers.get(scenario.target);
+        if (!credentials || !verifier) {
+          throw new Error(`No ${scenario.target} credentials or verifier were prepared`);
+        }
+        // Every fixture pass starts from the on-disk site table, so a deleting
+        // scenario cannot change what a later arm or repetition sees.
+        if (scenario.target === 'fixture') fixture?.reset();
+        const scenarioServerEnv: Record<string, string> = {
           MAINWP_URL: credentials.dashboardUrl,
           MAINWP_USER: credentials.username,
           MAINWP_APP_PASSWORD: credentials.appPassword,
@@ -1081,84 +1659,286 @@ async function main(): Promise<void> {
               ? 'true'
               : 'false',
           MAINWP_ALLOW_HTTP: scenario.target === 'fixture' ? 'true' : 'false',
-        },
-        line => {
-          try {
-            const event = JSON.parse(line) as unknown;
-            artifacts.appendJsonLine('agent-transcript.jsonl', { scenario: scenario.id, event });
-            collectEvent(event, collected);
-          } catch {
-            artifacts.appendJsonLine('agent-transcript.jsonl', {
-              scenario: scenario.id,
-              unparsed: line,
-            });
-          }
+          MAINWP_RATE_LIMIT: '0',
+          ...scenario.serverEnv,
+        };
+        const armFields = pass.arm
+          ? { arm: pass.arm.id, iteration: pass.iteration }
+          : options.repeat > 1
+            ? { iteration: pass.iteration }
+            : {};
+        fs.writeFileSync(
+          configPath,
+          `${JSON.stringify(
+            {
+              mcpServers: {
+                mainwp: {
+                  command: 'node',
+                  args: [installed.installedEntry],
+                  env: {
+                    MAINWP_URL: '${MAINWP_URL}',
+                    MAINWP_USER: '${MAINWP_USER}',
+                    MAINWP_APP_PASSWORD: '${MAINWP_APP_PASSWORD}',
+                    MAINWP_SKIP_SSL_VERIFY: '${MAINWP_SKIP_SSL_VERIFY}',
+                    MAINWP_ALLOW_HTTP: '${MAINWP_ALLOW_HTTP}',
+                    MAINWP_RATE_LIMIT: '0',
+                    ...scenario.serverEnv,
+                  },
+                },
+              },
+            },
+            null,
+            2
+          )}\n`,
+          { mode: 0o600 }
+        );
+        let truth: AgentGroundTruth;
+        try {
+          truth = await scenario.groundTruth(verifier);
+        } catch (error) {
+          results.push({
+            id: scenario.id,
+            ...armFields,
+            status: 'unverified',
+            toolUses: [],
+            toolResults: [],
+            finalText: '',
+            reason: `Independent verifier precondition failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+          continue;
         }
-      );
-      runner.record({
-        argv,
-        cwd: REPO_ROOT,
-        exitCode: command.exitCode,
-        durationMs: command.durationMs,
-        stdoutTail: command.stdout.slice(-12_000),
-        stderrTail: command.stderr.slice(-12_000),
-        ...(command.timedOut ? { timedOut: true } : {}),
-      });
-      if (command.exitCode !== 0) {
+        let precheck: AgentPrecheckResult | undefined;
+        if (scenario.precheck) {
+          try {
+            precheck = await scenario.precheck({
+              entry: installed.installedEntry,
+              env: scenarioServerEnv,
+              truth,
+              artifacts,
+              runner,
+              scenarioId: scenario.id,
+            });
+          } catch (error) {
+            precheck = {
+              ok: false,
+              reason: `Server precheck threw: ${error instanceof Error ? error.message : String(error)}`,
+            };
+          }
+          if (!precheck.ok) {
+            results.push({
+              id: scenario.id,
+              ...armFields,
+              status: 'unverified',
+              toolUses: [],
+              toolResults: [],
+              finalText: '',
+              groundTruth: truth,
+              precheck,
+              reason: precheck.reason ?? 'The server precheck did not confirm the graded behavior.',
+            });
+            continue;
+          }
+          if (scenario.target === 'fixture') fixture?.reset();
+        }
+        const cwd = pass.arm ? pass.arm.cwd : (scenario.cwd ?? REPO_ROOT);
+        const task = scenario.task(truth);
+        const argv = [
+          'claude',
+          '-p',
+          task,
+          '--mcp-config',
+          configPath,
+          '--strict-mcp-config',
+          '--allowedTools',
+          pass.arm ? ARM_ALLOWED_TOOLS : BASE_ALLOWED_TOOLS,
+          '--output-format',
+          'stream-json',
+          '--verbose',
+          '--max-turns',
+          '20',
+        ];
+        if (!claudeAvailable) {
+          results.push({
+            id: scenario.id,
+            ...armFields,
+            status: 'unverified',
+            toolUses: [],
+            toolResults: [],
+            finalText: '',
+            groundTruth: truth,
+            reason: `Blocked command: ${shellDisplay(argv)}. The claude CLI was not found.`,
+          });
+          continue;
+        }
+        const collected: CollectedAgentOutput = {
+          toolUses: [],
+          toolResults: [],
+          finalText: '',
+          totalToolUses: 0,
+          turns: 0,
+          resourceReads: [],
+          skill: { discovered: false, invoked: false },
+        };
+        const transcriptLabel = pass.arm ? `${scenario.id}#${pass.arm.id}` : scenario.id;
+        const command = await runClaude(
+          argv,
+          cwd,
+          {
+            ...process.env,
+            ...scenarioServerEnv,
+          },
+          line => {
+            try {
+              const event = JSON.parse(line) as unknown;
+              artifacts.appendJsonLine('agent-transcript.jsonl', {
+                scenario: transcriptLabel,
+                iteration: pass.iteration,
+                event,
+              });
+              collectEvent(event, collected);
+            } catch {
+              artifacts.appendJsonLine('agent-transcript.jsonl', {
+                scenario: transcriptLabel,
+                iteration: pass.iteration,
+                unparsed: line,
+              });
+            }
+          }
+        );
+        runner.record({
+          argv,
+          cwd,
+          exitCode: command.exitCode,
+          durationMs: command.durationMs,
+          stdoutTail: command.stdout.slice(-12_000),
+          stderrTail: command.stderr.slice(-12_000),
+          ...(command.timedOut ? { timedOut: true } : {}),
+        });
+        // Leak check runs on the raw stream: the Redactor scrubs the password
+        // before anything is written, so grepping the artifact would pass
+        // vacuously. The redaction token is the second, independent signal.
+        const rawStream = `${command.stdout}\n${command.stderr}`;
+        const credentialLeak = detectCredentialLeak(rawStream, redactor.redact(rawStream), [
+          credentials.appPassword,
+          credentials.appPassword.replace(/\s+/g, ''),
+        ]);
+        const skill = { staged: pass.arm?.skillStaged === true, ...collected.skill };
+        if (command.exitCode !== 0) {
+          results.push({
+            id: scenario.id,
+            ...armFields,
+            status: 'unverified',
+            model: collected.model,
+            toolUses: collected.toolUses,
+            toolResults: collected.toolResults,
+            finalText: collected.finalText,
+            groundTruth: truth,
+            skill,
+            credentialLeak,
+            ...(precheck ? { precheck } : {}),
+            reason: `Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`,
+          });
+          continue;
+        }
+        const evaluated = scenario.evaluate
+          ? await scenario.evaluate(truth, collected, verifier)
+          : { evaluation: evaluate(scenario, truth, collected) };
+        const evaluation = evaluated.evaluation;
+        const pass_ = Object.values(evaluation).every(field => field.pass);
+        const leaked = hasCredentialLeak(credentialLeak);
+        // A staged skill that never showed up in the session means the arm was
+        // not actually treated; comparing it silently would be a lie.
+        const skillMissing = skill.staged && !skill.discovered && !skill.invoked;
+        const status: AgentResultStatus = skillMissing
+          ? 'skill-not-loaded'
+          : evaluated.unverified
+            ? 'unverified'
+            : leaked || !pass_
+              ? 'failed'
+              : 'passed';
+        const reason = skillMissing
+          ? `The staged skill ${AGENT_SKILL_NAME} never appeared in the session, so this arm was not compared.`
+          : leaked
+            ? 'The application password reached the agent output stream.'
+            : evaluated.reason;
         results.push({
           id: scenario.id,
-          status: 'unverified',
+          ...armFields,
+          status,
           model: collected.model,
           toolUses: collected.toolUses,
           toolResults: collected.toolResults,
           finalText: collected.finalText,
           groundTruth: truth,
-          reason: `Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`,
+          evaluation,
+          metrics: buildArmMetrics(evaluation, collected),
+          skill,
+          credentialLeak,
+          ...(precheck ? { precheck } : {}),
+          ...(status !== 'passed' && reason ? { reason } : {}),
         });
-        continue;
       }
-      const evaluated = scenario.evaluate
-        ? await scenario.evaluate(truth, collected, verifier)
-        : { evaluation: evaluate(scenario, truth, collected) };
-      const evaluation = evaluated.evaluation;
-      const pass = Object.values(evaluation).every(field => field.pass);
-      results.push({
-        id: scenario.id,
-        status: pass ? 'passed' : 'failed',
-        model: collected.model,
-        toolUses: collected.toolUses,
-        toolResults: collected.toolResults,
-        finalText: collected.finalText,
-        groundTruth: truth,
-        evaluation,
-        ...(!pass && evaluated.reason ? { reason: evaluated.reason } : {}),
-      });
     }
-    artifacts.writeJson('results.json', { scenarios: results });
-    artifacts.write(
-      'summary.md',
-      `# MainWP MCP agent acceptance results\n\n${results
-        .map(
-          result =>
-            `- ${result.status.toUpperCase()} ${result.id}${result.reason ? `: ${result.reason}` : ''}`
-        )
-        .join('\n')}\n`
-    );
+    comparisons = arms ? buildComparisons(results) : [];
+    artifacts.writeJson('results.json', {
+      scenarios: results,
+      ...(arms ? { arms, repeat: options.repeat, comparison: comparisons } : {}),
+    });
+    artifacts.write('summary.md', renderAgentSummary(results, comparisons));
   } finally {
     artifacts.finish();
     await Promise.all([...verifiers.values()].map(verifier => verifier.close()));
     await fixture?.close();
     packed?.cleanup();
   }
-  for (const result of results)
-    process.stdout.write(`${result.status.toUpperCase()} ${result.id}\n`);
+  for (const result of results) {
+    const label = result.arm ? ` [${result.arm}#${result.iteration}]` : '';
+    process.stdout.write(`${result.status.toUpperCase()} ${result.id}${label}\n`);
+  }
   process.stdout.write(`Artifacts: ${artifacts.runDir}\n`);
-  if (results.some(result => result.status === 'failed')) process.exitCode = 1;
+  for (const comparison of comparisons) {
+    if (comparison.note)
+      process.stdout.write(`COMPARISON INVALID ${comparison.id}: ${comparison.note}\n`);
+  }
+  if (
+    results.some(result => result.status === 'failed' || result.status === 'skill-not-loaded') ||
+    comparisons.some(comparison => Boolean(comparison.note))
+  ) {
+    process.exitCode = 1;
+  }
 }
 
-main().catch(error => {
-  process.stderr.write(
-    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`
+export function renderAgentSummary(results: AgentResult[], comparisons: AgentComparison[]): string {
+  const lines = results.map(result => {
+    const label = result.arm ? ` [${result.arm}#${result.iteration}]` : '';
+    return `- ${result.status.toUpperCase()} ${result.id}${label}${result.reason ? `: ${result.reason}` : ''}`;
+  });
+  const comparisonLines = comparisons.flatMap(comparison => {
+    if (comparison.note) return [`- ${comparison.id}: ${comparison.note}`];
+    const changed = comparison.deltas.filter(delta => delta.delta !== 0);
+    if (changed.length === 0) return [`- ${comparison.id}: no metric changed`];
+    return [
+      `- ${comparison.id}`,
+      ...changed.map(
+        delta =>
+          `  - ${delta.field}: bare ${delta.bare} -> skill ${delta.skill} (${
+            delta.delta > 0 ? '+' : ''
+          }${delta.delta})`
+      ),
+    ];
+  });
+  return (
+    `# MainWP MCP agent acceptance results\n\n${lines.join('\n')}\n` +
+    (comparisons.length ? `\n## Bare vs skill\n\n${comparisonLines.join('\n')}\n` : '')
   );
-  process.exitCode = 1;
-});
+}
+
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`
+    );
+    process.exitCode = 1;
+  });
+}

@@ -1,0 +1,10 @@
+{
+  "name": "mainwp",
+  "description": "Connect Claude to your MainWP Dashboard: the @mainwp/mcp server plus an agent guidance skill and workflow commands",
+  "version": "0.1.0",
+  "author": { "name": "MainWP" },
+  "homepage": "https://mainwp.com",
+  "repository": "https://github.com/mainwp/mainwp-mcp",
+  "license": "GPL-3.0",
+  "keywords": ["mainwp", "wordpress", "mcp", "site-management"]
+}

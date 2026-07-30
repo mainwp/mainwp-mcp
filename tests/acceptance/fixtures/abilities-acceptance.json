@@ -1,0 +1,49 @@
+[
+  {
+    "name": "mainwp/purge-site-cache-v1",
+    "label": "Purge Site Cache",
+    "description": "Permanently purge every cached page and object on a MainWP child site. Requires confirmation. This ability cannot preview its effect.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain"],
+      "properties": {
+        "site_id_or_domain": {
+          "type": ["integer", "string"],
+          "description": "Site ID or domain"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true to execute the purge",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "purged": {
+          "type": "boolean",
+          "description": "Whether the cache was purged"
+        },
+        "site": {
+          "type": "object",
+          "description": "Site whose cache was purged"
+        },
+        "entries_removed": {
+          "type": "integer",
+          "description": "Number of cache entries removed"
+        }
+      }
+    },
+    "meta": {
+      "annotations": {
+        "readonly": false,
+        "destructive": true,
+        "idempotent": false,
+        "instructions": "Destructive operation - requires confirm:true. No dry-run preview exists for this ability."
+      },
+      "show_in_rest": true
+    }
+  }
+]

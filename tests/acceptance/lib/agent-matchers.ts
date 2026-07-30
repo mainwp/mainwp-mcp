@@ -220,6 +220,165 @@ export function matchesSafeModeRefusalAnswer(text: string): boolean {
   ].some(pattern => pattern.test(answer));
 }
 
+/**
+ * True when an error result carries the server's session-data cap. The wire
+ * shape is the sanitized structured error, so the RESOURCE_EXHAUSTED label
+ * never appears — only the numeric JSON-RPC code and the cap message do.
+ */
+export function resultsIncludeSessionCap(results: RecordedAgentToolResult[]): boolean {
+  return results.some(result => {
+    if (result.isError !== true) return false;
+    // Tool result payloads arrive as JSON encoded inside text blocks, so parse
+    // through them rather than matching a re-stringified, escape-laden blob.
+    return findNestedObjects(result.content).some(
+      record =>
+        record.code === -32006 ||
+        (typeof record.message === 'string' && /session data limit reached/i.test(record.message))
+    );
+  });
+}
+
+/**
+ * True when an error result carries one of the confirmation-flow error labels
+ * (`PREVIEW_REQUIRED`, `PREVIEW_EXPIRED`, `CONFIRMATION_UNSUPPORTED`), which
+ * the server emits as a literal `error` field inside the tool result JSON.
+ */
+export function resultsIncludeErrorLabel(
+  results: RecordedAgentToolResult[],
+  label: string
+): boolean {
+  return results.some(
+    result =>
+      result.isError === true &&
+      findNestedObjects(result.content).some(record => record.error === label)
+  );
+}
+
+/**
+ * Finds a confirm-without-preview response: the server's CONFIRMATION_REQUIRED
+ * workflow step for an ability that declares no dry_run, so it carries a token
+ * but an explicitly null preview.
+ */
+export function findConfirmWithoutPreview(
+  results: RecordedAgentToolResult[]
+): Record<string, unknown> | undefined {
+  for (const result of results) {
+    if (result.isError === true) continue;
+    for (const record of findNestedObjects(result.content)) {
+      if (
+        record.status === 'CONFIRMATION_REQUIRED' &&
+        record.next_action === 'confirm_without_preview' &&
+        record.preview === null &&
+        typeof record.confirmation_token === 'string'
+      ) {
+        return record;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Matches an answer that reports a capability as absent from this Dashboard's
+ * exposed catalog. Rejects answers that claim the data was retrieved anyway.
+ */
+export function matchesFilteredCapabilityAnswer(text: string): boolean {
+  const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  if (
+    /\bhere (?:are|is) (?:the )?(?:installed )?plugins?\b/.test(answer) ||
+    /\bi (?:found|retrieved|fetched|listed)\b.{0,40}\bplugins?\b/.test(answer)
+  ) {
+    return false;
+  }
+
+  return [
+    /\b(?:tool|capability|ability)\b.{0,80}\b(?:is|are|was|were)?\s*(?:not|isn't|aren't|wasn't|weren't)\s+(?:available|exposed|enabled|present|listed|offered|registered)\b/,
+    /\b(?:no|zero)\s+(?:such\s+|matching\s+)?(?:tool|capability|ability)\b.{0,80}\b(?:available|exposed|enabled|present|listed|offered|exists?)\b/,
+    // "the server exposes no ability to list installed plugins" — an absence
+    // claim with the verb before the subject, out of reach of the patterns above.
+    /\b(?:exposes?|offers?|provides?|has|have|includes?)\s+no\s+(?:tool|tools|capability|capabilities|ability|abilities)\b/,
+    /\bno\s+(?:tool|capability|ability)\b.{0,60}\b(?:to|for|that)\b.{0,40}\b(?:list|read|retrieve|fetch|enumerate|report)\b/,
+    /\b(?:blocked|filtered|restricted|excluded|hidden|withheld|not permitted)\b.{0,80}\b(?:tool|capability|ability|catalog)\b/,
+    /\b(?:tool|capability|ability|catalog)\b.{0,80}\b(?:blocked|filtered|restricted|excluded|hidden|withheld)\b/,
+    /\bmainwp_(?:allowed|blocked)_tools\b/,
+    /\b(?:allowedtools|blockedtools)\b/,
+    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b.{0,60}\b(?:list|retrieve|fetch|read|enumerate|access)\b.{0,40}\bplugins?\b/,
+  ].some(pattern => pattern.test(answer));
+}
+
+/**
+ * Matches an answer that attributes a failure to the server's response/session
+ * size cap. Rejects answers that report it as an outage or a broken Dashboard.
+ */
+export function matchesSessionCapAnswer(text: string): boolean {
+  const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  if (
+    /\b(?:server|dashboard|connection|site|api)\b.{0,40}\b(?:is|was|seems|appears|looks)\b.{0,25}\b(?:down|offline|unreachable|unavailable|broken|failing)\b/.test(
+      answer
+    )
+  ) {
+    return false;
+  }
+
+  return [
+    /\b(?:session|response|data|output|payload)\b.{0,50}\b(?:size\s+)?(?:limit|cap|quota|budget|ceiling)\b/,
+    /\b(?:limit|cap|quota|budget)\b.{0,50}\b(?:reached|exceeded|hit|exhausted|tripped)\b/,
+    /\bresource[_ ]exhausted\b/,
+    /\btoo (?:large|big|much)\b.{0,40}\b(?:response|result|payload|output|data)\b/,
+    /\b(?:response|result|payload|output)\b.{0,40}\btoo (?:large|big)\b/,
+  ].some(pattern => pattern.test(answer));
+}
+
+/**
+ * Matches an answer that states no preview was available for a confirm-only
+ * destructive ability. Rejects any claim that a preview was produced — that is
+ * the exact overclaim this scenario exists to catch.
+ */
+export function matchesNoPreviewAnswer(text: string): boolean {
+  const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  if (
+    /(?<!\b(?:no|not|never|without)\s)\b(?:a |the )?preview\s+(?:was|is)\s+(?:generated|available|shown|produced|provided|returned|displayed)\b/.test(
+      answer
+    )
+  ) {
+    return false;
+  }
+
+  return [
+    /\bno\s+(?:dry[- ]?run\s+)?preview\b/,
+    /\bpreview\b.{0,60}\b(?:not available|unavailable|not supported|unsupported|not possible|null|none)\b/,
+    /\bwithout\s+(?:a\s+)?preview\b/,
+    /\bconfirm[_ -]without[_ -]preview\b/,
+    /\bdry[- ]?run\b.{0,60}\b(?:not supported|unsupported|not available|unavailable|isn't supported|is not supported|not declared)\b/,
+    /\b(?:does|did) not support\b.{0,30}\bdry[- ]?run\b/,
+  ].some(pattern => pattern.test(answer));
+}
+
+/**
+ * Matches an answer that reports a confirmation token being rejected because
+ * the arguments changed after the preview. Rejects claims that the reused
+ * token worked.
+ */
+export function matchesStaleTokenAnswer(text: string): boolean {
+  const answer = text.toLowerCase().replace(/\s+/g, ' ');
+  if (
+    /\b(?:token|confirmation)\b.{0,50}\b(?:was accepted|worked|succeeded|(?:is|was) still valid|remained valid|carried over)\b/.test(
+      answer
+    )
+  ) {
+    return false;
+  }
+
+  return [
+    /\bpreview[_ ]required\b/,
+    /\b(?:token|confirmation|preview)\b.{0,80}\b(?:rejected|invalid|invalidated|no longer valid|not valid|expired|refused|would not|wouldn't|did not (?:work|apply|carry|transfer))\b/,
+    /\b(?:rejected|invalidated|refused)\b.{0,60}\b(?:token|confirmation|preview)\b/,
+    /\b(?:token|confirmation|preview)\b.{0,60}\b(?:bound|tied|specific|scoped|only valid)\b/,
+    /\b(?:required|needed|had to (?:request|generate|get|run))\b.{0,60}\b(?:new|fresh|separate|another|second)\s+(?:preview|confirmation)\b/,
+    /\b(?:new|fresh|separate|another|second)\s+(?:preview|confirmation)\b.{0,60}\b(?:required|needed|necessary)\b/,
+  ].some(pattern => pattern.test(answer));
+}
+
 export function matchesSiteStatusAnswer(text: string, offlineSiteUrls: string[]): boolean {
   const answer = text.toLowerCase().replace(/\s+/g, ' ');
   if (offlineSiteUrls.length > 0) {
