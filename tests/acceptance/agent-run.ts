@@ -155,6 +155,8 @@ interface AgentResult {
   toolUses: RecordedAgentToolUse[];
   toolResults: RecordedAgentToolResult[];
   finalText: string;
+  /** The CLI's terminal message, when it ended on one. Not graded. */
+  cliResultText?: string;
   groundTruth?: AgentGroundTruth;
   evaluation?: AgentEvaluation;
   metrics?: AgentArmMetrics;
@@ -181,8 +183,10 @@ interface CollectedAgentOutput {
   turns: number;
   resourceReads: string[];
   skill: AgentSkillEvidence;
-  /** `finalText` is an assistant answer, not terminal CLI error text. */
+  /** `finalText` holds an assistant answer rather than nothing. */
   assistantText: boolean;
+  /** The CLI's own terminal message. Diagnostics only; never graded. */
+  cliResultText?: string;
 }
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -1366,16 +1370,25 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
         content: content.content,
         ...((content.is_error === true || content.isError === true) && { isError: true }),
       });
-    } else if (content.type === 'text' && typeof content.text === 'string') {
+    } else if (
+      content.type === 'text' &&
+      typeof content.text === 'string' &&
+      record.type === 'assistant'
+    ) {
       accumulator.finalText = content.text;
-      accumulator.assistantText = record.type === 'assistant';
+      accumulator.assistantText = true;
     }
   }
   if (record.type === 'result' && typeof record.result === 'string') {
-    accumulator.finalText = record.result;
-    // An error result carries the CLI's own message ("Execution error"), which
-    // must not be graded as though the agent had answered.
-    accumulator.assistantText = record.subtype === 'success' && record.is_error !== true;
+    // A successful result repeats the agent's answer. An error result carries
+    // the CLI's own message ("Execution error"), which must neither be graded
+    // nor overwrite the answer the agent did give before the crash.
+    if (record.subtype === 'success' && record.is_error !== true) {
+      accumulator.finalText = record.result;
+      accumulator.assistantText = true;
+    } else {
+      accumulator.cliResultText = record.result;
+    }
   }
 }
 
@@ -2139,6 +2152,7 @@ async function main(): Promise<void> {
             toolUses: collected.toolUses,
             toolResults: collected.toolResults,
             finalText: collected.finalText,
+            ...(collected.cliResultText ? { cliResultText: collected.cliResultText } : {}),
             groundTruth: truth,
             skill,
             credentialLeak,
@@ -2182,6 +2196,7 @@ async function main(): Promise<void> {
           toolUses: collected.toolUses,
           toolResults: collected.toolResults,
           finalText: collected.finalText,
+          ...(collected.cliResultText ? { cliResultText: collected.cliResultText } : {}),
           groundTruth: truth,
           evaluation,
           metrics: buildArmMetrics(evaluation, collected),

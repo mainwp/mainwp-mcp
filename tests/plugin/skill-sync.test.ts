@@ -284,6 +284,95 @@ describe('syncTree', () => {
   );
 
   it.skipIf(process.getuid?.() === 0)(
+    "keeps a crashed run's backup when there is no live mirror and staging fails",
+    () => {
+      const anchor = tmpTree();
+      const canonical = path.join(anchor, 'canonical');
+      fs.mkdirSync(canonical);
+      const source = path.join(canonical, 'SKILL.md');
+      fs.writeFileSync(source, 'new');
+
+      const parent = path.join(anchor, 'skills');
+      fs.mkdirSync(parent);
+      const mirror = path.join(parent, 'mainwp-dashboard');
+      // A previous run died between renaming the mirror aside and moving its
+      // new copy in, so the backup is the only surviving copy.
+      const backup = `${mirror}.replaced-m5x9z-deadbeef`;
+      fs.mkdirSync(backup);
+      fs.writeFileSync(path.join(backup, 'SKILL.md'), 'old');
+
+      fs.chmodSync(source, 0o000);
+      try {
+        expect(() => syncTree(canonical, mirror, anchor)).toThrow();
+        expect(fs.readFileSync(path.join(backup, 'SKILL.md'), 'utf8')).toBe('old');
+      } finally {
+        fs.chmodSync(source, 0o644);
+      }
+
+      // Recovery: the rerun rebuilds the mirror and only then clears the backup.
+      expect(syncTree(canonical, mirror, anchor).copied).toEqual(['SKILL.md']);
+      expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('new');
+      expect(fs.existsSync(backup)).toBe(false);
+    }
+  );
+
+  it('sweeps leftovers on a run with no drift', () => {
+    const anchor = tmpTree();
+    const canonical = path.join(anchor, 'canonical');
+    fs.mkdirSync(canonical);
+    fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
+
+    const parent = path.join(anchor, 'skills');
+    fs.mkdirSync(parent);
+    const mirror = path.join(parent, 'mainwp-dashboard');
+    fs.mkdirSync(mirror);
+    fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'body');
+
+    const backup = `${mirror}.replaced-m5x9z-deadbeef`;
+    fs.mkdirSync(backup);
+    fs.writeFileSync(path.join(backup, 'SKILL.md'), 'old');
+    const staging = path.join(parent, '.mainwp-dashboard-sync-abc123');
+    fs.mkdirSync(staging);
+
+    expect(syncTree(canonical, mirror, anchor)).toEqual({
+      copied: [],
+      removed: [],
+      warnings: [],
+    });
+    expect(fs.existsSync(backup)).toBe(false);
+    expect(fs.existsSync(staging)).toBe(false);
+    expect(listRelativeFiles(mirror)).toEqual(['SKILL.md']);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'warns about a leftover it cannot sweep on a run with no drift',
+    () => {
+      const anchor = tmpTree();
+      const canonical = path.join(anchor, 'canonical');
+      fs.mkdirSync(canonical);
+      fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
+
+      const parent = path.join(anchor, 'skills');
+      fs.mkdirSync(parent);
+      const mirror = path.join(parent, 'mainwp-dashboard');
+      fs.mkdirSync(mirror);
+      fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'body');
+
+      const backup = `${mirror}.replaced-m5x9z-deadbeef`;
+      fs.mkdirSync(backup);
+      fs.writeFileSync(path.join(backup, 'SKILL.md'), 'old');
+      fs.chmodSync(backup, 0o500);
+      try {
+        const result = syncTree(canonical, mirror, anchor);
+        expect(result.copied).toEqual([]);
+        expect(result.warnings).toEqual([expect.stringContaining('.replaced-')]);
+      } finally {
+        fs.chmodSync(backup, 0o700);
+      }
+    }
+  );
+
+  it.skipIf(process.getuid?.() === 0)(
     'leaves the old mirror in place when the new copy cannot be staged',
     () => {
       const canonical = tmpTree();

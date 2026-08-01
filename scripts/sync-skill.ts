@@ -54,11 +54,11 @@ export function syncTree(canonicalDir: string, mirrorDir: string, anchor = REPO_
   const comparison = compareTrees(canonicalRoot, mirrorRoot);
   const copied = [...comparison.missing, ...comparison.differing].sort();
   const removed = [...comparison.extra].sort();
-  if (copied.length === 0 && removed.length === 0) return { copied, removed, warnings: [] };
+  if (copied.length === 0 && removed.length === 0) {
+    return { copied, removed, warnings: sweepLeftovers(mirrorParent, mirrorName, mirrorRoot) };
+  }
 
-  removeStaleArtifacts(mirrorParent, mirrorName);
   const staging = fs.mkdtempSync(path.join(mirrorParent, `.${mirrorName}-sync-`));
-  let warnings: string[];
   try {
     for (const file of listRelativeFiles(canonicalRoot)) {
       const target = path.join(staging, file);
@@ -69,21 +69,18 @@ export function syncTree(canonicalDir: string, mirrorDir: string, anchor = REPO_
     if (staged.length > 0) {
       throw new Error(`Staged skill copy does not match the canonical tree: ${staged.join('; ')}`);
     }
-    warnings = swapIn(staging, mirrorRoot);
+    swapIn(staging, mirrorRoot);
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }
 
-  return { copied, removed, warnings };
+  // Only now, with the new mirror committed: the sweep below deletes the copy
+  // this run just renamed aside.
+  return { copied, removed, warnings: sweepLeftovers(mirrorParent, mirrorName, mirrorRoot) };
 }
 
-/**
- * Move `staging` into place, restoring the previous mirror if the move fails.
- * Returns warnings for anything that went wrong after the swap committed: at
- * that point the new mirror is live, and reporting a failure would describe a
- * tree that is not what is on disk.
- */
-function swapIn(staging: string, mirrorRoot: string): string[] {
+/** Move `staging` into place, restoring the previous mirror if the move fails. */
+function swapIn(staging: string, mirrorRoot: string): void {
   const hadMirror = fs.existsSync(mirrorRoot);
   const previous = `${mirrorRoot}.replaced-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
   if (hadMirror) fs.renameSync(mirrorRoot, previous);
@@ -93,30 +90,32 @@ function swapIn(staging: string, mirrorRoot: string): string[] {
     if (hadMirror) fs.renameSync(previous, mirrorRoot);
     throw error;
   }
-  if (!hadMirror) return [];
-
-  try {
-    fs.rmSync(previous, { recursive: true, force: true });
-    return [];
-  } catch (error) {
-    return [
-      `the skill copy was replaced, but the previous one could not be removed: ${previous} (${(error as Error).message})`,
-    ];
-  }
 }
 
-/** Drop staging and backup directories a previous run died before cleaning up. */
-function removeStaleArtifacts(parent: string, name: string): void {
+/**
+ * Drop staging and backup directories left by a run that died mid-swap, and
+ * report the ones that could not be removed.
+ *
+ * Only ever called with a live mirror on disk. A `.replaced-` backup is the
+ * only surviving copy while the mirror is missing, so sweeping before the
+ * replacement is committed can leave nothing at all behind.
+ */
+function sweepLeftovers(parent: string, name: string, mirrorRoot: string): string[] {
+  if (!fs.lstatSync(mirrorRoot, { throwIfNoEntry: false })?.isDirectory()) return [];
+
+  const warnings: string[] = [];
   for (const entry of fs.readdirSync(parent)) {
     if (!entry.startsWith(`${name}.replaced-`) && !entry.startsWith(`.${name}-sync-`)) continue;
+    const leftover = path.join(parent, entry);
     try {
-      fs.rmSync(path.join(parent, entry), { recursive: true, force: true });
-    } catch {
-      // A leftover we cannot delete is the previous run's problem, not this
-      // one's: the rebuild below does not touch it.
-      continue;
+      fs.rmSync(leftover, { recursive: true, force: true });
+    } catch (error) {
+      warnings.push(
+        `the skill copy is in place, but a leftover copy could not be removed: ${leftover} (${(error as Error).message})`
+      );
     }
   }
+  return warnings;
 }
 
 function isDirectRun(): boolean {

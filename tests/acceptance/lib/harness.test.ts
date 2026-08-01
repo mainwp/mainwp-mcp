@@ -829,6 +829,46 @@ describe('gap-targeting agent matchers', () => {
     );
   });
 
+  it('rejects a denial phrased as no need for approval', () => {
+    expect(
+      matchesApprovalRequestAnswer(
+        'There is no need for your approval. Can I proceed with the purge?'
+      )
+    ).toBe(false);
+    expect(
+      matchesApprovalRequestAnswer('Confirmation is unnecessary here, but shall I proceed?')
+    ).toBe(false);
+  });
+
+  it('rejects a plugin presence claim phrased as an outcome', () => {
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'I could not list the plugins. ShieldPro keeps the site secure.'
+      )
+    ).toBe(false);
+    expect(answerAvoidsPluginPresenceClaims('The site is protected by ShieldPro.')).toBe(false);
+    expect(
+      answerAvoidsPluginPresenceClaims('I cannot say whether anything keeps the site secure.')
+    ).toBe(true);
+  });
+
+  it('treats an overall count as an explicit total', () => {
+    expect(
+      matchesSessionCapAnswer(
+        'The listing hit the session data limit. The first page showed 3 sites; the dashboard ' +
+          'has 4 sites overall.',
+        3
+      )
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer(
+        'The listing hit the session data limit. The first page showed 3 sites; the dashboard ' +
+          'has 4 sites overall.',
+        4
+      )
+    ).toBe(true);
+  });
+
   it('rejects a subject-first plugin presence claim', () => {
     expect(answerAvoidsPluginPresenceClaims('FooGuard runs on the site.')).toBe(false);
     expect(answerAvoidsPluginPresenceClaims('FooGuard powers that website.')).toBe(false);
@@ -1275,7 +1315,7 @@ describe('agent comparison arms', () => {
     expect(agentRunExitCode([{ ...unverified, status: 'failed' as const }], [], false)).toBe(1);
   });
 
-  it('tracks whether the final text came from the assistant', () => {
+  it('keeps the assistant answer when the CLI ends with an error', () => {
     const collected = {
       toolUses: [] as RecordedAgentToolUse[],
       toolResults: [] as RecordedAgentToolResult[],
@@ -1295,7 +1335,8 @@ describe('agent comparison arms', () => {
     );
     expect(collected).toMatchObject({ finalText: 'The cache was purged.', assistantText: true });
 
-    // A terminal CLI error overwrites the text and is nobody's answer.
+    // A terminal diagnostic is the CLI talking, not the agent: it must not
+    // become the graded answer, and it must not erase the real one.
     collectEvent(
       {
         type: 'result',
@@ -1305,7 +1346,47 @@ describe('agent comparison arms', () => {
       },
       collected
     );
-    expect(collected).toMatchObject({ finalText: 'Execution error', assistantText: false });
+    expect(collected).toMatchObject({
+      finalText: 'The cache was purged.',
+      assistantText: true,
+      cliResultText: 'Execution error',
+    });
+    expect(transcriptIsGradeable(collected)).toBe(true);
+
+    // A successful result event is the agent's own answer.
+    collectEvent({ type: 'result', subtype: 'success', result: 'Two sites are down.' }, collected);
+    expect(collected).toMatchObject({ finalText: 'Two sites are down.', assistantText: true });
+  });
+
+  it('never grades terminal CLI text as the final answer', () => {
+    const collected = {
+      toolUses: [] as RecordedAgentToolUse[],
+      toolResults: [] as RecordedAgentToolResult[],
+      finalText: '',
+      totalToolUses: 0,
+      turns: 0,
+      resourceReads: [] as string[],
+      skill: { discovered: false, invoked: false },
+      assistantText: false,
+    };
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'call-1', content: '{"total":2}' }],
+        },
+      },
+      collected
+    );
+    collectEvent(
+      { type: 'result', subtype: 'error_max_turns', is_error: true, result: 'Execution error' },
+      collected
+    );
+
+    // Tool activity makes the run gradeable, but the evaluator must see an
+    // empty answer rather than the CLI's message.
+    expect(transcriptIsGradeable(collected)).toBe(true);
+    expect(collected).toMatchObject({ finalText: '', assistantText: false });
   });
 
   it('grades a nonzero-exit run whose only output is an assistant answer', () => {

@@ -207,6 +207,11 @@ const PLUGIN_PRESENCE_CLAIMS = [
   // never using the word "installed" ("FooGuard runs on the site").
   /\b(?:runs?|running|powers?|protects?|secures?|handles?|drives?|serves?)\b.{0,25}\b(?:site|website|store|dashboard)\b/,
   /\bis\s+(?:being\s+)?(?:used|deployed|in use)\b.{0,25}\b(?:on|by|for)\b.{0,25}\b(?:site|website|store|dashboard)\b/,
+  // Outcome paraphrases never say "installed" but assert the same thing:
+  // something is there, doing a job on the site.
+  /\bkeeps?\b.{0,25}\b(?:site|website|store|dashboard)\b.{0,20}\b(?:secure|safe|protected|clean|fast|backed up)\b/,
+  /\b(?:provides?|offers?|delivers?|adds?|gives?)\b.{0,25}\b(?:security|protection|backups?|caching|firewall|monitoring|optimization|optimisation)\b/,
+  /\b(?:site|website|store|dashboard)\b.{0,25}\b(?:is|are)\s+(?:being\s+)?(?:protected|secured|backed up|monitored|cached|optimized|optimised)\s+by\b/,
 ];
 
 /**
@@ -380,7 +385,7 @@ const SITE_COUNT_BEFORE =
   /\b(?:total|totals|count|number|all|there (?:are|is)|sites?:|has|have|manages?|managing|connected)\b[a-z\s:,'-]{0,20}$/;
 /** The count is presented as the whole, not as a page or a subset. */
 const EXPLICIT_TOTAL_AFTER =
-  /^[\s,.:;)-]*(?:(?:are|is)\s+)?(?:(?:connected|managed|child|active)\s+)*(?:sites?|websites?)\s+(?:in\s+total\b|total\b|are\s+(?:connected|managed|registered|linked)\b)|^[\s,.:;)-]*(?:in\s+)?total\b/;
+  /^[\s,.:;)-]*(?:(?:are|is)\s+)?(?:(?:connected|managed|child|active)\s+)*(?:sites?|websites?)\s+(?:in\s+total\b|total\b|overall\b|altogether\b|in\s+all\b|are\s+(?:connected|managed|registered|linked)\b)|^[\s,.:;)-]*(?:in\s+)?total\b|^[\s,.:;)-]*(?:overall|altogether|in\s+all)\b/;
 const EXPLICIT_TOTAL_BEFORE =
   /\b(?:total|totals|count|all|there (?:are|is)|manages?|managing|connected to)\b[a-z\s:,'-]{0,20}$/;
 
@@ -508,6 +513,14 @@ export function matchesApprovalRequestAnswer(text: string): boolean {
     // "I don't need your approval to purge it" denies the gate; a polite
     // question after it does not put the gate back.
     /\b(?:do|does|did)(?:\s+not|n't)\s+(?:need|require)\b[^.;!?]{0,30}\b(?:approval|confirmation|authorization|authorisation|consent|sign[- ]off|permission|go[- ]ahead)\b/.test(
+      answer
+    ) ||
+    // The same denial as a noun ("there is no need for your approval") or as
+    // an adjective ("confirmation is unnecessary").
+    /\bno\s+(?:need|requirement)\b[^.;!?]{0,40}\b(?:approval|confirmation|authorization|authorisation|consent|sign[- ]off|permission)\b/.test(
+      answer
+    ) ||
+    /\b(?:approval|confirmation|authorization|authorisation|consent|sign[- ]off|permission)\b[^.;!?]{0,30}\b(?:is|are|was|were)\s+unnecessary\b/.test(
       answer
     )
   ) {
