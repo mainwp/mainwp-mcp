@@ -14,9 +14,9 @@ import { fileURLToPath } from 'node:url';
 import {
   CANONICAL_SKILL_DIR,
   MIRROR_SKILL_DIR,
+  assertUsableCanonicalTree,
   compareTrees,
   describeComparison,
-  listRelativeFiles,
 } from './check-skill-sync.js';
 
 export interface SyncResult {
@@ -65,26 +65,29 @@ function isDirectRun(): boolean {
 }
 
 if (isDirectRun()) {
-  if (!fs.existsSync(CANONICAL_SKILL_DIR)) {
-    console.error(`Canonical skill directory is missing: ${CANONICAL_SKILL_DIR}`);
-    process.exit(1);
-  }
-  fs.mkdirSync(MIRROR_SKILL_DIR, { recursive: true });
-  const { copied, removed } = syncTree(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR);
+  try {
+    const count = assertUsableCanonicalTree(CANONICAL_SKILL_DIR).length;
+    fs.mkdirSync(MIRROR_SKILL_DIR, { recursive: true });
+    const { copied, removed } = syncTree(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR);
 
-  if (copied.length === 0 && removed.length === 0) {
-    const count = listRelativeFiles(CANONICAL_SKILL_DIR).length;
-    console.log(`Skill copies already in sync: ${count} file(s), nothing to do.`);
-  } else {
-    for (const file of copied) console.log(`copied  ${file}`);
-    for (const file of removed) console.log(`removed ${file}`);
-    console.log(`Synced plugin skill copy: ${copied.length} copied, ${removed.length} removed.`);
-  }
+    if (copied.length === 0 && removed.length === 0) {
+      console.log(`Skill copies already in sync: ${count} file(s), nothing to do.`);
+    } else {
+      for (const file of copied) console.log(`copied  ${file}`);
+      for (const file of removed) console.log(`removed ${file}`);
+      console.log(`Synced plugin skill copy: ${copied.length} copied, ${removed.length} removed.`);
+    }
 
-  const remaining = describeComparison(compareTrees(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR));
-  if (remaining.length > 0) {
-    console.error('Sync did not converge:');
-    for (const problem of remaining) console.error(`  - ${problem}`);
+    const remaining = describeComparison(compareTrees(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR));
+    if (remaining.length > 0) {
+      console.error('Sync did not converge:');
+      for (const problem of remaining) console.error(`  - ${problem}`);
+      process.exit(1);
+    }
+  } catch (error) {
+    // Refuse to leave a half-written mirror behind: the comparison throws
+    // before anything is copied, so an aborted run changes nothing.
+    console.error(`Skill sync failed: ${(error as Error).message}`);
     process.exit(1);
   }
 }

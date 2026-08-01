@@ -35,21 +35,61 @@ export interface TreeComparison {
   differing: string[];
 }
 
-/** Relative paths of every file under `dir`, POSIX-separated and sorted. */
-export function listRelativeFiles(dir: string): string[] {
+/**
+ * Absolute paths of every regular file under `dir`, sorted.
+ *
+ * Anything that is not a regular file or a real directory - a symlink first of
+ * all, but also a socket, fifo, or device node - throws instead of being
+ * skipped. A skipped entry is invisible to the byte comparison and to the
+ * mirror cleanup, so both trees would compare clean while the plugin copy
+ * pointed somewhere else entirely.
+ */
+export function listFilesUnder(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
+  const root = fs.realpathSync(dir);
   const out: string[] = [];
   const walk = (current: string): void => {
     for (const entry of fs
       .readdirSync(current, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name))) {
       const full = path.join(current, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) out.push(path.relative(dir, full).split(path.sep).join('/'));
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+        throw new Error(`Unsupported entry (not a regular file or directory): ${full}`);
+      }
+      if (entry.isDirectory()) {
+        const real = fs.realpathSync(full);
+        if (real !== root && !real.startsWith(root + path.sep)) {
+          throw new Error(`Directory escapes the skill tree: ${full}`);
+        }
+        walk(full);
+      } else {
+        out.push(full);
+      }
     }
   };
   walk(dir);
   return out.sort();
+}
+
+/** Relative paths of every file under `dir`, POSIX-separated and sorted. */
+export function listRelativeFiles(dir: string): string[] {
+  return listFilesUnder(dir).map(full => path.relative(dir, full).split(path.sep).join('/'));
+}
+
+/**
+ * Fail before "in sync" can be reported for a tree that holds nothing worth
+ * mirroring: an empty canonical directory and a missing mirror compare clean.
+ * Returns the canonical file list so callers do not walk twice.
+ */
+export function assertUsableCanonicalTree(dir: string): string[] {
+  const files = listRelativeFiles(dir);
+  if (!files.includes('SKILL.md')) {
+    throw new Error(`Canonical skill tree has no SKILL.md: ${dir}`);
+  }
+  if (fs.statSync(path.join(dir, 'SKILL.md')).size === 0) {
+    throw new Error(`Canonical SKILL.md is empty: ${path.join(dir, 'SKILL.md')}`);
+  }
+  return files;
 }
 
 export function compareTrees(canonicalDir: string, mirrorDir: string): TreeComparison {
@@ -89,17 +129,19 @@ function isDirectRun(): boolean {
 }
 
 if (isDirectRun()) {
-  if (!fs.existsSync(CANONICAL_SKILL_DIR)) {
-    console.error(`Canonical skill directory is missing: ${CANONICAL_SKILL_DIR}`);
+  let count: number;
+  try {
+    count = assertUsableCanonicalTree(CANONICAL_SKILL_DIR).length;
+    const problems = describeComparison(compareTrees(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR));
+    if (problems.length > 0) {
+      console.error(`Skill copies are out of sync (${problems.length} problem(s)):`);
+      for (const problem of problems) console.error(`  - ${problem}`);
+      console.error('Run `npm run sync-skill` to make the plugin copy match .agents/.');
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(`Skill sync check failed: ${(error as Error).message}`);
     process.exit(1);
   }
-  const problems = describeComparison(compareTrees(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR));
-  if (problems.length > 0) {
-    console.error(`Skill copies are out of sync (${problems.length} problem(s)):`);
-    for (const problem of problems) console.error(`  - ${problem}`);
-    console.error('Run `npm run sync-skill` to make the plugin copy match .agents/.');
-    process.exit(1);
-  }
-  const count = listRelativeFiles(CANONICAL_SKILL_DIR).length;
   console.log(`Skill copies are in sync: ${count} file(s) identical.`);
 }

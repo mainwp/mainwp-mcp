@@ -114,7 +114,7 @@ Full table with next actions: `references/errors-and-recovery.md`.
 
 | Result                     | Means                                                                     | Next                                                       |
 | -------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel                           | Stop, report; config change is the only path               |
+| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel                           | Stop, report; the Dashboard has to declare confirm         |
 | `PREVIEW_REQUIRED`         | No usable token: missing, unknown, used, wrong tool, or arguments changed | Restart the tool's confirmation flow from the preview step |
 | `PREVIEW_EXPIRED`          | Token older than about 5 minutes                                          | Request a fresh preview, ask the user again                |
 | `SAFE_MODE_BLOCKED`        | Destructive call while safe mode is on                                    | Report; no alternate route                                 |

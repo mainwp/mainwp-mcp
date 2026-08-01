@@ -18,6 +18,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Shared with the skill-sync gate so both walkers reject the same entries: a
+// symlink that neither script can see would pass every check below.
+import { listFilesUnder as listFiles } from './check-skill-sync.js';
 
 export const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -142,6 +145,19 @@ function requireString(
 // Manifest validation
 // ---------------------------------------------------------------------------
 
+const PLUGIN_SOURCE_PREFIX = './plugins/';
+
+/**
+ * A marketplace source must stay inside this repository's `plugins/`
+ * directory. A URL, an absolute path, or a `..` hop would install plugin code
+ * that nothing in this checkout reviews or gates.
+ */
+function isLocalPluginSource(source: string): boolean {
+  if (!source.startsWith(PLUGIN_SOURCE_PREFIX)) return false;
+  const segments = source.slice(PLUGIN_SOURCE_PREFIX.length).split('/');
+  return segments.length > 0 && segments.every(segment => segment !== '' && segment !== '..');
+}
+
 export function validateMarketplace(data: unknown, label: string): string[] {
   if (!isPlainObject(data)) return [`${label}: expected a JSON object, got ${show(data)}`];
 
@@ -157,14 +173,31 @@ export function validateMarketplace(data: unknown, label: string): string[] {
   if (!Array.isArray(data.plugins) || data.plugins.length === 0) {
     problems.push(`${label}: "plugins" must be a non-empty array`);
   } else {
+    const seen = new Set<string>();
     data.plugins.forEach((entry, index) => {
       const at = `${label}: plugins[${index}]`;
       if (!isPlainObject(entry)) {
         problems.push(`${at} must be an object`);
         return;
       }
+      // The entry name is the plugin's installed identity: it decides how the
+      // plugin is referenced and, with the marketplace name, what prefix its
+      // MCP tools get. An unnamed or renamed entry is a silent break.
+      const name = entry.name;
+      if (typeof name !== 'string' || name.trim() === '') {
+        problems.push(`${at} "name" must be a non-empty string (got ${show(name)})`);
+      } else if (seen.has(name)) {
+        problems.push(`${at} duplicate plugin name "${name}"`);
+      } else {
+        seen.add(name);
+      }
+
       if (typeof entry.source !== 'string' || entry.source.trim() === '') {
         problems.push(`${at} "source" must be a non-empty string`);
+      } else if (!isLocalPluginSource(entry.source)) {
+        problems.push(
+          `${at} "source" must be a relative path under ${PLUGIN_SOURCE_PREFIX} (got ${show(entry.source)})`
+        );
       }
     });
   }
@@ -172,12 +205,22 @@ export function validateMarketplace(data: unknown, label: string): string[] {
   return problems;
 }
 
-export function validatePluginManifest(data: unknown, label: string): string[] {
+export function validatePluginManifest(
+  data: unknown,
+  label: string,
+  expectedName?: string
+): string[] {
   if (!isPlainObject(data)) return [`${label}: expected a JSON object, got ${show(data)}`];
 
   const problems: string[] = [];
   for (const key of ['name', 'description', 'version', 'license']) {
     requireString(data, key, label, problems);
+  }
+
+  if (expectedName !== undefined && typeof data.name === 'string' && data.name !== expectedName) {
+    problems.push(
+      `${label}: "name" is ${show(data.name)} but the marketplace entry references it as "${expectedName}"`
+    );
   }
 
   const author = data.author;
@@ -291,21 +334,6 @@ export function scanContent(source: string, label: string): string[] {
 const SCANNED_TREES = ['plugins', '.agents'];
 const SCANNED_EXTENSIONS = new Set(['.md', '.json', '.yml', '.yaml', '.txt']);
 
-function byName(a: { name: string }, b: { name: string }): number {
-  return a.name.localeCompare(b.name);
-}
-
-function listFiles(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort(byName)) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...listFiles(full));
-    else if (entry.isFile()) out.push(full);
-  }
-  return out;
-}
-
 function rel(fullPath: string): string {
   return path.relative(REPO_ROOT, fullPath);
 }
@@ -331,15 +359,14 @@ export function checkRepository(repoRoot: string): string[] {
   const marketplace = readJson(marketplacePath, problems);
   problems.push(...validateMarketplace(marketplace, rel(marketplacePath)));
 
-  const sources =
+  const entries =
     isPlainObject(marketplace) && Array.isArray(marketplace.plugins)
-      ? marketplace.plugins
-          .filter(isPlainObject)
-          .map(entry => entry.source)
-          .filter((source): source is string => typeof source === 'string')
+      ? marketplace.plugins.filter(isPlainObject).filter(entry => typeof entry.source === 'string')
       : [];
 
-  for (const source of sources) {
+  for (const entry of entries) {
+    const source = entry.source as string;
+    const expectedName = typeof entry.name === 'string' ? entry.name : undefined;
     const pluginDir = path.resolve(repoRoot, source);
     if (!fs.existsSync(pluginDir) || !fs.statSync(pluginDir).isDirectory()) {
       problems.push(`marketplace.json: source "${source}" is not a directory`);
@@ -351,7 +378,9 @@ export function checkRepository(repoRoot: string): string[] {
       problems.push(`marketplace.json: source "${source}" has no .claude-plugin/plugin.json`);
       continue;
     }
-    problems.push(...validatePluginManifest(readJson(manifestPath, problems), rel(manifestPath)));
+    problems.push(
+      ...validatePluginManifest(readJson(manifestPath, problems), rel(manifestPath), expectedName)
+    );
 
     const mcpPath = path.join(pluginDir, '.mcp.json');
     if (!fs.existsSync(mcpPath)) {
@@ -409,7 +438,13 @@ function isDirectRun(): boolean {
 }
 
 if (isDirectRun()) {
-  const problems = checkRepository(REPO_ROOT);
+  let problems: string[];
+  try {
+    problems = checkRepository(REPO_ROOT);
+  } catch (error) {
+    console.error(`Plugin check failed: ${(error as Error).message}`);
+    process.exit(1);
+  }
   if (problems.length > 0) {
     console.error(`Plugin check failed with ${problems.length} problem(s):`);
     for (const problem of problems) console.error(`  - ${problem}`);

@@ -48,7 +48,7 @@ export function buildConfirmationUnsupportedResponse(ctx: ConfirmationContext): 
       reason:
         'This ability is classified destructive but does not declare a confirm parameter, so the required confirmation flow cannot run.',
       resolution:
-        'Have the Dashboard declare confirm support for this ability (or annotate it destructive: false if misclassified), or manage access explicitly with allowedTools/blockedTools.',
+        'Have the Dashboard declare confirm support for this ability (or annotate it destructive: false if misclassified). Tool filtering cannot make it executable; blockedTools can only remove it from the catalog.',
     },
   };
 }

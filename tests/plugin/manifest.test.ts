@@ -10,13 +10,15 @@
  *    cannot pass silently.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPromptList } from '../../src/prompts.js';
 import {
   EXPECTED_MCP_CONFIG,
+  checkRepository,
   diffJson,
   scanContent,
   validateMarketplace,
@@ -27,6 +29,21 @@ import {
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const COMMANDS_DIR = path.join(REPO_ROOT, 'plugins', 'mainwp', 'commands');
+const MARKETPLACE_PATH = path.join(REPO_ROOT, '.claude-plugin', 'marketplace.json');
+const PLUGIN_MANIFEST_PATH = path.join(
+  REPO_ROOT,
+  'plugins',
+  'mainwp',
+  '.claude-plugin',
+  'plugin.json'
+);
+
+/** The plugin identity the server registers under; a rename breaks tool names. */
+const PLUGIN_NAME = 'mainwp';
+
+function readJsonFile(file: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+}
 
 /** Commands that wrap an MCP prompt of the same name published by the server. */
 const PROMPT_WRAPPER_COMMANDS = [
@@ -255,6 +272,137 @@ describe('plugin manifest validation', () => {
       expect(validatePluginManifest(data, 'plugin.json')).toEqual([expect.stringContaining(field)]);
     }
   );
+});
+
+describe('real repository manifests', () => {
+  it('accepts the checked-in marketplace manifest', () => {
+    expect(validateMarketplace(readJsonFile(MARKETPLACE_PATH), 'marketplace.json')).toEqual([]);
+  });
+
+  it('accepts the checked-in plugin manifest under its marketplace entry name', () => {
+    expect(
+      validatePluginManifest(readJsonFile(PLUGIN_MANIFEST_PATH), 'plugin.json', PLUGIN_NAME)
+    ).toEqual([]);
+  });
+
+  it('rejects the real marketplace manifest with plugins[0].name removed', () => {
+    const data = readJsonFile(MARKETPLACE_PATH);
+    delete (data.plugins as Record<string, unknown>[])[0].name;
+    expect(validateMarketplace(data, 'marketplace.json')).toEqual([
+      expect.stringContaining('"name"'),
+    ]);
+  });
+
+  it('rejects the real plugin manifest renamed away from its marketplace entry', () => {
+    const data = readJsonFile(PLUGIN_MANIFEST_PATH);
+    data.name = 'mainwp-dashboard';
+    const problems = validatePluginManifest(data, 'plugin.json', PLUGIN_NAME);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('mainwp-dashboard');
+  });
+
+  it('rejects duplicate plugin names', () => {
+    const data = readJsonFile(MARKETPLACE_PATH);
+    const plugins = data.plugins as Record<string, unknown>[];
+    data.plugins = [plugins[0], { ...plugins[0] }];
+    expect(validateMarketplace(data, 'marketplace.json')).toEqual([
+      expect.stringContaining('duplicate'),
+    ]);
+  });
+
+  it.each([
+    '/etc/plugins/mainwp',
+    '../outside/mainwp',
+    './plugins/../../outside',
+    'https://example.com/mainwp',
+    'github:mainwp/other',
+    './commands/mainwp',
+    './plugins/',
+  ])('rejects a plugin source outside ./plugins/: %s', source => {
+    const data = readJsonFile(MARKETPLACE_PATH);
+    (data.plugins as Record<string, unknown>[])[0].source = source;
+    expect(validateMarketplace(data, 'marketplace.json')).toEqual([
+      expect.stringContaining('source'),
+    ]);
+  });
+
+  it('passes the whole repository through the plugin gate', () => {
+    expect(checkRepository(REPO_ROOT)).toEqual([]);
+  });
+});
+
+describe('checkRepository', () => {
+  const repos: string[] = [];
+
+  afterEach(() => {
+    for (const dir of repos.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeJson(file: string, data: unknown): void {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  }
+
+  /** Smallest tree checkRepository accepts, so each test breaks one thing. */
+  function fixtureRepo(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-plugin-repo-'));
+    repos.push(root);
+    writeJson(path.join(root, '.claude-plugin', 'marketplace.json'), {
+      name: 'mainwp-mcp',
+      owner: { name: 'MainWP' },
+      plugins: [{ name: PLUGIN_NAME, source: './plugins/mainwp' }],
+    });
+    const pluginDir = path.join(root, 'plugins', 'mainwp');
+    writeJson(path.join(pluginDir, '.claude-plugin', 'plugin.json'), {
+      name: PLUGIN_NAME,
+      description: 'Connect Claude to your MainWP Dashboard',
+      version: '0.1.0',
+      author: { name: 'MainWP' },
+      license: 'GPL-3.0',
+    });
+    writeJson(path.join(pluginDir, '.mcp.json'), EXPECTED_MCP_CONFIG);
+    fs.mkdirSync(path.join(pluginDir, 'commands'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, 'commands', 'tools.md'),
+      '---\ndescription: List the tools.\n---\n\nBody.\n'
+    );
+    const skillDir = path.join(pluginDir, 'skills', 'mainwp-dashboard');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: mainwp-dashboard\ndescription: Operating a MainWP Dashboard.\n---\n'
+    );
+    return root;
+  }
+
+  it('accepts a well-formed fixture repository', () => {
+    expect(checkRepository(fixtureRepo())).toEqual([]);
+  });
+
+  it('reports a plugin.json renamed away from its marketplace entry', () => {
+    const root = fixtureRepo();
+    const manifestPath = path.join(root, 'plugins', 'mainwp', '.claude-plugin', 'plugin.json');
+    writeJson(manifestPath, { ...readJsonFile(manifestPath), name: 'mainwp-dashboard' });
+    const problems = checkRepository(root);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('mainwp-dashboard');
+  });
+
+  it('reports a marketplace entry with no name', () => {
+    const root = fixtureRepo();
+    const marketplacePath = path.join(root, '.claude-plugin', 'marketplace.json');
+    const data = readJsonFile(marketplacePath);
+    delete (data.plugins as Record<string, unknown>[])[0].name;
+    writeJson(marketplacePath, data);
+    expect(checkRepository(root)).toEqual([expect.stringContaining('"name"')]);
+  });
+
+  it('fails on a symlink in a scanned tree instead of skipping it', () => {
+    const root = fixtureRepo();
+    const commandsDir = path.join(root, 'plugins', 'mainwp', 'commands');
+    fs.symlinkSync(path.join(commandsDir, 'tools.md'), path.join(commandsDir, 'shadow.md'));
+    expect(() => checkRepository(root)).toThrow(/shadow\.md/);
+  });
 });
 
 describe('command frontmatter validation', () => {
