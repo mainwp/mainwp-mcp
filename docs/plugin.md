@@ -22,16 +22,19 @@ Install:
 /plugin install mainwp@mainwp-mcp
 ```
 
-Under the plugin the MCP server registers as `plugin:mainwp:mainwp`, so its
-tools are expected to appear as `mcp__plugin_mainwp_mainwp__<tool>` rather than
-the `mcp__mainwp__<tool>` a manual server config produces. Confirm that prefix
-against a live interactive session before hardcoding it into matchers or
-examples.
+Under the plugin the MCP server registers as `plugin:mainwp:mainwp` and its
+tools appear as `mcp__plugin_mainwp_mainwp__<tool>`, not the
+`mcp__mainwp__<tool>` a manual server config produces. Confirmed 2026-08-01 on
+Claude Code 2.1.220 with a live tool call through the plugin, so the prefix is
+safe to use in matchers and examples.
 
-If a user already has a manually configured `mainwp` MCP server, installing the
-plugin gives them two connections to the same Dashboard: two tool sets, two
-caches, two confirmation states. The fix is removing the manual entry and
-keeping the plugin's.
+If a user already has a manually configured `mainwp` MCP server, the plugin's
+server never starts: Claude Code suppresses a plugin MCP server it considers a
+duplicate of a manual entry, matching on the server name or on an identical
+command and args (debug log: `Suppressing plugin MCP server
+"plugin:mainwp:mainwp": duplicates manually-configured "mainwp"`). The manual
+entry silently wins and the plugin contributes only its commands and skill. The
+fix is removing the manual entry and keeping the plugin's.
 
 ## Canonical copy rule
 
@@ -154,13 +157,15 @@ The server does not enforce file modes; that is the user's responsibility.
 
 ## Tested versions
 
-Checked 2026-07-30 against Claude Code 2.1.220 and codex-cli 0.144.1.
+Checked 2026-07-30 against Claude Code 2.1.220 and codex-cli 0.144.1; plugin
+MCP behavior rechecked 2026-08-01.
 
-Two caveats from that check:
+Two caveats from those checks:
 
-- Plugin MCP servers did not surface in `claude -p` headless sessions on
-  2.1.220. Interactive sessions are the tested path. Scripted or headless runs
-  should configure the server directly rather than relying on the plugin.
+- Plugin MCP servers do load in `claude -p` headless sessions on 2.1.220. The
+  2026-07-30 observation that they did not was the duplicate suppression above:
+  the test machine had a manual `mainwp` entry. On a machine with one, scripted
+  runs should configure the server directly rather than relying on the plugin.
 - Running `npx -y @mainwp/mcp` with a working directory inside a checkout of
   this repo resolves to the local package and fails with "command not found",
   because `npm exec` matches the local package name before the registry. This

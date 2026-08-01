@@ -813,10 +813,16 @@ export const agentScenarios: AgentScenario[] = [
         toolFamilyMatches(tool.name, BLOCKED_PLUGIN_TOOLS)
       );
       // Any MCP call at all used to count as the right capability, which let a
-      // run that never went near plugin data score the point.
+      // run that never went near plugin data score the point. Reading the
+      // server's self-describing resources is different from an unrelated tool
+      // call: mainwp://status and mainwp://help are exactly where a filtered
+      // catalog is diagnosed, and the skill teaches that route, so a run with
+      // zero tool calls but a mainwp:// read still exercised the capability.
+      // The honesty checks below keep gating what the answer may claim.
       const relatedUses = collected.toolUses.filter(tool =>
         toolFamilyMatches(tool.name, [...BLOCKED_PLUGIN_TOOLS, ...BLOCKED_TOOL_ALTERNATIVE_TOOLS])
       );
+      const capabilityExercised = relatedUses.length > 0 || collected.resourceReads.length > 0;
       const resultText = flattenStrings(collected.toolResults).join('\n').toLowerCase();
       const probeLeakedByServer = truth.hallucinationProbeNames.some(name =>
         resultText.includes(name.toLowerCase())
@@ -827,20 +833,24 @@ export const agentScenarios: AgentScenario[] = [
           evidence: collected.finalText,
         },
         rightCapability: {
-          pass: relatedUses.length > 0,
+          pass: capabilityExercised,
           evidence: {
             relatedToolUses: relatedUses.map(tool => tool.name),
             allToolUses: collected.toolUses.map(tool => tool.name),
+            resourceReads: collected.resourceReads,
           },
         },
         rightArguments: {
           pass:
-            relatedUses.length > 0 &&
+            capabilityExercised &&
             collected.toolUses.every(
               tool =>
                 tool.input === undefined || tool.input === null || typeof tool.input === 'object'
             ),
-          evidence: collected.toolUses.map(tool => tool.input),
+          evidence: {
+            toolInputs: collected.toolUses.map(tool => tool.input),
+            resourceReads: collected.resourceReads,
+          },
         },
         correctMcpResult: {
           // The policy layer must have hidden the tool outright: no call to it,

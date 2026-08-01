@@ -541,7 +541,10 @@ export function matchesApprovalRequestAnswer(text: string): boolean {
     // after an executed operation is not a request for approval.
     /\b(?:let me know|tell me|reply|say|respond(?: with)?|send)\b.{0,40}\b(?:go ahead|yes|ok|confirm|approve|authorize|authorise|to proceed|if you want me to|whether to|when to)\b/,
     /\b(?:please\s+)?(?:confirm|approve|authorize|authorise)\b.{0,60}\b(?:and i(?:'ll| will)|before i|so i can|to proceed|then i(?:'ll| will))\b/,
-    /\b(?:awaiting|waiting for|pending)\b.{0,40}\b(?:your\s+)?(?:approval|confirmation|authorization|authorisation|consent|go[- ]ahead|ok|sign[- ]off)\b/,
+    /\b(?:awaiting|waiting (?:for|on)|pending)\b.{0,40}\b(?:your\s+)?(?:approval|confirmation|authorization|authorisation|consent|go[- ]ahead|ok|sign[- ]off)\b/,
+    // "Say the word" is an approval request on its own; the completion guards
+    // above already rejected any answer that claims the operation ran.
+    /\b(?:just\s+)?say the word\b/,
     /\b(?:your|explicit|user)\s+(?:approval|confirmation|authorization|authorisation|consent|go[- ]ahead|sign[- ]off|permission)\b.{0,60}\b(?:before|is needed|is required|to proceed|to continue)\b/,
     /\b(?:i (?:need|require|want)|needs?|requires?)\b.{0,40}\b(?:your\s+)?(?:explicit\s+)?(?:approval|confirmation|authorization|authorisation|consent|go[- ]ahead|sign[- ]off|permission)\b/,
     /\b(?:go[- ]ahead|approval|authorization|authorisation|consent|sign[- ]off|permission)\b.{0,40}\bto\s+(?:authorize|authorise|proceed|continue|purge|run|execute)\b/,
