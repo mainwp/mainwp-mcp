@@ -112,7 +112,8 @@ export function generateHelpDocument(abilities: Ability[], primaryNamespace: str
       categories,
       safetyConventions: {
         dryRun: 'Pass dry_run: true to preview the operation without making changes',
-        confirm: 'Pass confirm: true to execute destructive operations',
+        confirm:
+          'Pass confirm: true to begin the confirmation flow for destructive operations; execution requires a follow-up call with user_confirmed: true and the issued confirmation_token',
         destructive: 'These tools can permanently delete or modify data',
         readonly: 'These tools only read data and never modify anything',
       },

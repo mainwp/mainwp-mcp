@@ -344,7 +344,8 @@ function buildStandardDescription(
           '2) Ask the user for confirmation. ') +
       '3) If confirmed, call again with user_confirmed:true and the confirmation_token ' +
       'from the first response to execute. ' +
-      'Do NOT set user_confirmed:true without explicit user consent.';
+      'A bare request for the operation is not approval: require explicit prior ' +
+      'authorization to proceed through confirmation, or an approving reply after step 2.';
   }
 
   return description;
