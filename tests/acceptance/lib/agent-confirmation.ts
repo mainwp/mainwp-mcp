@@ -29,7 +29,9 @@ export interface ConfirmationTranscriptOptions {
 }
 
 function matchesToolFamily(name: string, family: string): boolean {
-  return name === `mcp__mainwp__${family}` || name.endsWith(family);
+  // The separator boundary keeps a longer tool name from matching a family it
+  // merely ends with (undelete_site_v1 is not in the delete_site_v1 family).
+  return name === `mcp__mainwp__${family}` || name.endsWith(`__${family}`);
 }
 
 function inputTargetsSite(input: unknown, targetSiteId: number): boolean {

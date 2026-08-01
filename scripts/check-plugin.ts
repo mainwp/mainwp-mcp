@@ -363,9 +363,13 @@ export function checkRepository(repoRoot: string): string[] {
   const marketplace = readJson(marketplacePath, problems);
   problems.push(...validateMarketplace(marketplace, rel(marketplacePath)));
 
+  // validateMarketplace already reported invalid sources; traversing them
+  // anyway would resolve and stat paths outside the containment boundary.
   const entries =
     isPlainObject(marketplace) && Array.isArray(marketplace.plugins)
-      ? marketplace.plugins.filter(isPlainObject).filter(entry => typeof entry.source === 'string')
+      ? marketplace.plugins
+          .filter(isPlainObject)
+          .filter(entry => typeof entry.source === 'string' && isLocalPluginSource(entry.source))
       : [];
 
   for (const entry of entries) {

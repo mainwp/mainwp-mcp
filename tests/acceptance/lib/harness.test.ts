@@ -191,6 +191,43 @@ MAINWP_APP_PASSWORD='abcd $HOME ijkl' # application password
     });
   });
 
+  it('does not count a longer tool name as part of the family it merely ends with', () => {
+    const evaluation = evaluateConfirmationTranscript(
+      [
+        {
+          id: 'preview-call',
+          name: 'mcp__mainwp__undelete_site_v1',
+          input: { site_id_or_domain: 1 },
+        },
+        {
+          id: 'confirmed-call',
+          name: 'mcp__mainwp__undelete_site_v1',
+          input: {
+            site_id_or_domain: 1,
+            user_confirmed: true,
+            confirmation_token: 'fixture-token',
+          },
+        },
+      ],
+      [
+        {
+          toolUseId: 'preview-call',
+          content: JSON.stringify({
+            status: 'CONFIRMATION_REQUIRED',
+            confirmation_token: 'fixture-token',
+          }),
+        },
+        {
+          toolUseId: 'confirmed-call',
+          content: JSON.stringify({ restored: true }),
+        },
+      ],
+      1,
+      { toolFamily: 'delete_site_v1' }
+    );
+    expect(evaluation.pass).toBe(false);
+  });
+
   it('reports a clear failure when the agent stops after the confirmation request', () => {
     const evaluation = evaluateConfirmationTranscript(
       [

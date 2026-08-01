@@ -2184,7 +2184,12 @@ async function main(): Promise<void> {
           unverified: evaluated.unverified === true || commandFailed,
         });
         const reason = skillMissing
-          ? `The staged skill ${AGENT_SKILL_NAME} never appeared in the session, so this arm was not compared.`
+          ? [
+              `The staged skill ${AGENT_SKILL_NAME} never appeared in the session, so this arm was not compared.`,
+              leaked ? CREDENTIAL_LEAK_REASON : undefined,
+            ]
+              .filter(Boolean)
+              .join(' ')
           : [leaked ? CREDENTIAL_LEAK_REASON : undefined, commandFailure, evaluated.reason]
               .filter(Boolean)
               .join(' ') || undefined;

@@ -88,7 +88,7 @@ Config file locations and variants for each client are in the [client setup guid
 
 Claude Code can install the server, an agent skill, and a set of `/mainwp:*` workflow commands in two steps:
 
-```
+```text
 /plugin marketplace add mainwp/mainwp-mcp
 /plugin install mainwp@mainwp-mcp
 ```

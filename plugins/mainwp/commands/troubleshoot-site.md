@@ -9,7 +9,7 @@ Steps:
 
 1. Resolve the site from `$ARGUMENTS`. If it is empty, list the managed sites and ask the user which one, then stop until they answer.
 2. Check the tool catalog for site-detail and update-inventory capabilities, then pull the site's current record: connection state, WordPress version, last sync.
-3. Judge the sync: a stale or failing sync usually means a connectivity or child-plugin problem, so treat it as the first suspect.
+3. Judge the sync from the exact error the Dashboard reports, not from a default suspect: authentication and credential failures, Dashboard-side errors, server or connectivity problems, and local policy blocks all surface here. Point at the child plugin only when the site record's evidence supports it.
 4. Check pending updates for that site, and note anything that looks related to the symptom the user described.
 5. Collect the errors and warnings the Dashboard reports for the site, without paraphrasing them into something cleaner than they are.
 6. Report the current status, the issues found, and the fixes in the order they should be tried.

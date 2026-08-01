@@ -6,7 +6,7 @@ people editing the plugin.
 
 ## What ships
 
-```
+```text
 .claude-plugin/marketplace.json          marketplace manifest (name: mainwp-mcp, owner: MainWP)
 plugins/mainwp/.claude-plugin/plugin.json  plugin manifest (name: mainwp)
 plugins/mainwp/.mcp.json                 MCP server config, no env map
@@ -17,7 +17,7 @@ plugins/mainwp/skills/mainwp-dashboard/  synced mirror of the skill
 
 Install:
 
-```
+```text
 /plugin marketplace add mainwp/mainwp-mcp
 /plugin install mainwp@mainwp-mcp
 ```

@@ -8,9 +8,9 @@ Report which managed sites are backed up, how recently, and which are not covere
 Steps:
 
 1. Check the tool catalog for site-listing and backup-related capabilities, then scope to the sites in `$ARGUMENTS`, or to all managed sites when it is empty.
-2. Determine which sites have a backup solution the Dashboard can see, and which have none.
-3. Group the covered sites by backup age: recent, aging, and nothing recorded.
-4. Call out sites with no backup coverage or no recorded backup at all as the highest priority.
+2. Sort every site into one of three states and keep them separate: the Dashboard reports backup coverage, the Dashboard reports no coverage, or the Dashboard has no backup data for the site at all. Missing data is unknown, not "no coverage".
+3. For covered sites, report the exact age of the last recorded backup rather than vague buckets; if grouping helps, use under 7 days as recent and over 30 days as aging, and say so.
+4. Call out reported-uncovered sites as the highest priority, and unknown-state sites right behind them as needing verification.
 5. Finish with what to fix first, and state plainly which backup details the Dashboard does not expose.
 
 Rules:

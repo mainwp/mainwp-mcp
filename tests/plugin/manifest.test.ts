@@ -407,6 +407,23 @@ describe('checkRepository', () => {
     fs.symlinkSync(path.join(commandsDir, 'tools.md'), path.join(commandsDir, 'shadow.md'));
     expect(() => checkRepository(root)).toThrow(/shadow\.md/);
   });
+
+  it('does not traverse a rejected source even when its target exists', () => {
+    const root = fixtureRepo();
+    // A sibling outside the fixture repo that a resolved "../" source would hit.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-plugin-escape-'));
+    repos.push(outside);
+    const escapedSource = `./plugins/../../${path.basename(outside)}`;
+    const marketplacePath = path.join(root, '.claude-plugin', 'marketplace.json');
+    const data = readJsonFile(marketplacePath);
+    (data.plugins as Record<string, unknown>[]).push({ name: 'escape', source: escapedSource });
+    writeJson(marketplacePath, data);
+    const problems = checkRepository(root);
+    // The invalid source is reported once by manifest validation; traversal
+    // problems (missing plugin.json etc.) would mean the path was resolved.
+    expect(problems.some(problem => problem.includes('source'))).toBe(true);
+    expect(problems.some(problem => problem.includes('.claude-plugin/plugin.json'))).toBe(false);
+  });
 });
 
 describe('command frontmatter validation', () => {

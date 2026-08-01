@@ -15,5 +15,5 @@ Related guides that also lived on this page:
 
 A summary table of all environment variables remains in the
 [README](../README.md#configuration). Changing an option also touches the
-bundled Claude Code plugin's skill; the three-way update rule is in
-[plugin.md](plugin.md).
+bundled Claude Code plugin's skill when the skill teaches that option's
+semantics; the three-way update rule is in [plugin.md](plugin.md).
