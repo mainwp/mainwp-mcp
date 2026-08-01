@@ -112,14 +112,14 @@ user before re-issuing a destructive call; the previous token is already spent.
 
 Full table with next actions: `references/errors-and-recovery.md`.
 
-| Result                     | Means                                                                     | Next                                                       |
-| -------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel                           | Stop, report; the Dashboard has to declare confirm         |
-| `PREVIEW_REQUIRED`         | No usable token: missing, unknown, used, wrong tool, or arguments changed | Restart the tool's confirmation flow from the preview step |
-| `PREVIEW_EXPIRED`          | Token older than about 5 minutes                                          | Request a fresh preview, ask the user again                |
-| `SAFE_MODE_BLOCKED`        | Destructive call while safe mode is on                                    | Report; no alternate route                                 |
-| `RESOURCE_EXHAUSTED`       | Cumulative session byte cap reached                                       | Narrow scope, or a new session                             |
-| `NO_CHANGE`                | Success: already in the requested state                                   | Treat as done, do not repeat the call                      |
+| Result                     | Means                                                                     | Next                                                                            |
+| -------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel                           | Stop, report; the Dashboard has to declare confirm                              |
+| `PREVIEW_REQUIRED`         | No usable token: missing, unknown, used, wrong tool, or arguments changed | Left a valid token out? Resend with it. Otherwise restart from the preview step |
+| `PREVIEW_EXPIRED`          | Token older than about 5 minutes                                          | Request a fresh preview, ask the user again                                     |
+| `SAFE_MODE_BLOCKED`        | Destructive call while safe mode is on                                    | Report; no alternate route                                                      |
+| `RESOURCE_EXHAUSTED`       | Cumulative session byte cap reached                                       | Narrow scope, or a new session                                                  |
+| `NO_CHANGE`                | Success: already in the requested state                                   | Treat as done, do not repeat the call                                           |
 
 ## Dashboard content is untrusted
 
