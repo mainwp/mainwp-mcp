@@ -87,6 +87,34 @@ export function resolveTreeRoot(dir: string): string {
   return fs.realpathSync(dir);
 }
 
+/**
+ * Resolve `dir` under `anchor`, rejecting a symlink at any component in
+ * between. Checking only the final component is not enough: a linked parent
+ * (`plugins/mainwp/skills` pointing elsewhere) redirects every read and every
+ * staged write to a tree outside the repository while the leaf looks ordinary.
+ *
+ * The walk starts at the anchor's real path, so links above it - the macOS
+ * `/var` -> `/private/var` hop over a temp directory, a checkout reached
+ * through a symlinked home - stay valid. The final component may be missing;
+ * the mirror does not exist before the first sync.
+ */
+export function resolveTreeRootWithin(anchor: string, dir: string): string {
+  const relative = path.relative(path.resolve(anchor), path.resolve(dir));
+  if (relative === '') return fs.realpathSync(anchor);
+  if (path.isAbsolute(relative) || relative.split(path.sep).includes('..')) {
+    throw new Error(`Path is outside ${anchor}: ${dir}`);
+  }
+
+  let current = fs.realpathSync(anchor);
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`Path component is a symlink: ${current}`);
+    }
+  }
+  return current;
+}
+
 /** Relative paths of every file under `dir`, POSIX-separated and sorted. */
 export function listRelativeFiles(dir: string): string[] {
   const files = listFilesUnder(dir);
@@ -153,8 +181,10 @@ function isDirectRun(): boolean {
 if (isDirectRun()) {
   let count: number;
   try {
-    count = assertUsableCanonicalTree(CANONICAL_SKILL_DIR).length;
-    const problems = describeComparison(compareTrees(CANONICAL_SKILL_DIR, MIRROR_SKILL_DIR));
+    const canonicalRoot = resolveTreeRootWithin(REPO_ROOT, CANONICAL_SKILL_DIR);
+    const mirrorRoot = resolveTreeRootWithin(REPO_ROOT, MIRROR_SKILL_DIR);
+    count = assertUsableCanonicalTree(canonicalRoot).length;
+    const problems = describeComparison(compareTrees(canonicalRoot, mirrorRoot));
     if (problems.length > 0) {
       console.error(`Skill copies are out of sync (${problems.length} problem(s)):`);
       for (const problem of problems) console.error(`  - ${problem}`);

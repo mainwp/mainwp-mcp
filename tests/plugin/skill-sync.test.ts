@@ -17,8 +17,17 @@ import {
   compareTrees,
   listFilesUnder,
   listRelativeFiles,
+  resolveTreeRootWithin,
 } from '../../scripts/check-skill-sync.js';
 import { syncTree } from '../../scripts/sync-skill.js';
+
+/**
+ * Anchor for the fixture trees below. Every path component under the anchor is
+ * symlink-checked, so the fixtures must anchor here and not at the repository
+ * root: on macOS the temp directory itself sits behind the /var -> /private/var
+ * link, which is above the anchor and therefore legitimately resolved.
+ */
+const ANCHOR = os.tmpdir();
 
 const created: string[] = [];
 
@@ -114,13 +123,50 @@ describe('compareTrees', () => {
   });
 });
 
+describe('resolveTreeRootWithin', () => {
+  it('resolves a tree that exists under the anchor', () => {
+    const anchor = tmpTree();
+    const dir = path.join(anchor, 'skills', 'mainwp-dashboard');
+    fs.mkdirSync(dir, { recursive: true });
+    expect(resolveTreeRootWithin(anchor, dir)).toBe(
+      path.join(fs.realpathSync(anchor), 'skills', 'mainwp-dashboard')
+    );
+  });
+
+  it('resolves a path that does not exist yet', () => {
+    const anchor = tmpTree();
+    expect(resolveTreeRootWithin(anchor, path.join(anchor, 'skills', 'mainwp-dashboard'))).toBe(
+      path.join(fs.realpathSync(anchor), 'skills', 'mainwp-dashboard')
+    );
+  });
+
+  it('rejects a symlinked intermediate component', () => {
+    const anchor = tmpTree();
+    const outside = tmpTree();
+    fs.mkdirSync(path.join(outside, 'mainwp-dashboard'));
+    fs.symlinkSync(outside, path.join(anchor, 'skills'));
+    expect(() =>
+      resolveTreeRootWithin(anchor, path.join(anchor, 'skills', 'mainwp-dashboard'))
+    ).toThrow(/skills/);
+  });
+
+  it('rejects a path outside the anchor', () => {
+    const anchor = tmpTree();
+    expect(() => resolveTreeRootWithin(anchor, tmpTree())).toThrow(/outside/);
+  });
+});
+
 describe('syncTree', () => {
   it('copies missing files and removes extra ones', () => {
     const canonical = tmpTree();
     const mirror = tmpTree();
     fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
     fs.writeFileSync(path.join(mirror, 'stale.md'), 'body');
-    expect(syncTree(canonical, mirror)).toEqual({ copied: ['SKILL.md'], removed: ['stale.md'] });
+    expect(syncTree(canonical, mirror, ANCHOR)).toEqual({
+      copied: ['SKILL.md'],
+      removed: ['stale.md'],
+      warnings: [],
+    });
     expect(listRelativeFiles(mirror)).toEqual(['SKILL.md']);
   });
 
@@ -129,7 +175,7 @@ describe('syncTree', () => {
     const mirror = tmpTree();
     fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
     fs.symlinkSync(path.join(canonical, 'SKILL.md'), path.join(mirror, 'shadow.md'));
-    expect(() => syncTree(canonical, mirror)).toThrow(/shadow\.md/);
+    expect(() => syncTree(canonical, mirror, ANCHOR)).toThrow(/shadow\.md/);
     expect(fs.existsSync(path.join(mirror, 'SKILL.md'))).toBe(false);
   });
 
@@ -138,7 +184,7 @@ describe('syncTree', () => {
     const mirror = tmpTree();
     fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
     fs.symlinkSync(path.join(canonical, 'SKILL.md'), path.join(canonical, 'shadow.md'));
-    expect(() => syncTree(canonical, mirror)).toThrow(/shadow\.md/);
+    expect(() => syncTree(canonical, mirror, ANCHOR)).toThrow(/shadow\.md/);
   });
 
   it('refuses to write through a symlinked mirror root', () => {
@@ -147,7 +193,7 @@ describe('syncTree', () => {
     const target = tmpTree();
     const mirrorLink = path.join(tmpTree(), 'linked-mirror');
     fs.symlinkSync(target, mirrorLink);
-    expect(() => syncTree(canonical, mirrorLink)).toThrow(/linked-mirror/);
+    expect(() => syncTree(canonical, mirrorLink, ANCHOR)).toThrow(/linked-mirror/);
     expect(fs.existsSync(path.join(target, 'SKILL.md'))).toBe(false);
   });
 
@@ -163,10 +209,79 @@ describe('syncTree', () => {
     // partway through, after SKILL.md has already been overwritten.
     fs.writeFileSync(path.join(mirror, 'references'), 'not a directory');
 
-    expect(syncTree(canonical, mirror).copied).toEqual(['SKILL.md', 'references/errors.md']);
+    expect(syncTree(canonical, mirror, ANCHOR).copied).toEqual([
+      'SKILL.md',
+      'references/errors.md',
+    ]);
     expect(listRelativeFiles(mirror)).toEqual(['SKILL.md', 'references/errors.md']);
     expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('new');
   });
+
+  it('refuses to write through a symlinked ancestor of the mirror root', () => {
+    const anchor = tmpTree();
+    const canonical = path.join(anchor, 'canonical');
+    fs.mkdirSync(canonical);
+    fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
+
+    const outside = tmpTree();
+    fs.mkdirSync(path.join(outside, 'mainwp-dashboard'));
+    fs.symlinkSync(outside, path.join(anchor, 'skills'));
+
+    const mirror = path.join(anchor, 'skills', 'mainwp-dashboard');
+    expect(() => syncTree(canonical, mirror, anchor)).toThrow(/skills/);
+    // Nothing staged, copied, or renamed on the far side of the link.
+    expect(fs.readdirSync(path.join(outside, 'mainwp-dashboard'))).toEqual([]);
+    expect(fs.readdirSync(outside)).toEqual(['mainwp-dashboard']);
+  });
+
+  it('refuses to read through a symlinked ancestor of the canonical root', () => {
+    const anchor = tmpTree();
+    const mirror = path.join(anchor, 'mirror');
+    fs.mkdirSync(mirror);
+
+    const outside = tmpTree();
+    fs.mkdirSync(path.join(outside, 'mainwp-dashboard'));
+    fs.writeFileSync(path.join(outside, 'mainwp-dashboard', 'SKILL.md'), 'body');
+    fs.symlinkSync(outside, path.join(anchor, 'agents'));
+
+    const canonical = path.join(anchor, 'agents', 'mainwp-dashboard');
+    expect(() => syncTree(canonical, mirror, anchor)).toThrow(/agents/);
+    expect(fs.readdirSync(mirror)).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'reports success with a warning when the replaced mirror cannot be removed',
+    () => {
+      const anchor = tmpTree();
+      const canonical = path.join(anchor, 'canonical');
+      fs.mkdirSync(canonical);
+      fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'new');
+
+      const mirror = path.join(anchor, 'mirror');
+      fs.mkdirSync(mirror);
+      fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'old');
+      // Read-only directory: it can still be renamed aside, but its contents
+      // cannot be unlinked, so removing the replaced copy fails after the
+      // swap has already committed.
+      fs.chmodSync(mirror, 0o500);
+      try {
+        const result = syncTree(canonical, mirror, anchor);
+        expect(result.copied).toEqual(['SKILL.md']);
+        expect(result.warnings).toEqual([expect.stringContaining('.replaced-')]);
+        expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('new');
+
+        // A rerun still converges despite the leftover backup.
+        fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'newer');
+        expect(syncTree(canonical, mirror, anchor).copied).toEqual(['SKILL.md']);
+        expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('newer');
+      } finally {
+        for (const entry of fs.readdirSync(anchor)) {
+          const full = path.join(anchor, entry);
+          if (fs.statSync(full).isDirectory()) fs.chmodSync(full, 0o700);
+        }
+      }
+    }
+  );
 
   it.skipIf(process.getuid?.() === 0)(
     'leaves the old mirror in place when the new copy cannot be staged',
@@ -180,7 +295,7 @@ describe('syncTree', () => {
       fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'old');
       fs.chmodSync(parent, 0o500);
       try {
-        expect(() => syncTree(canonical, mirror)).toThrow();
+        expect(() => syncTree(canonical, mirror, ANCHOR)).toThrow();
         expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('old');
       } finally {
         fs.chmodSync(parent, 0o700);
