@@ -17,6 +17,8 @@ import {
   assertUsableCanonicalTree,
   compareTrees,
   describeComparison,
+  listRelativeFiles,
+  resolveTreeRoot,
 } from './check-skill-sync.js';
 
 export interface SyncResult {
@@ -24,34 +26,53 @@ export interface SyncResult {
   removed: string[];
 }
 
-/** Copy every canonical file over the mirror and delete anything else there. */
+/**
+ * Rebuild the mirror from the canonical tree.
+ *
+ * The new copy is staged in a sibling directory and only swapped in once it
+ * compares equal to the canonical tree, so a copy that fails partway through
+ * (a target colliding with a file, an unwritable path) leaves the old mirror
+ * exactly as it was instead of a half-written mixture of both.
+ */
 export function syncTree(canonicalDir: string, mirrorDir: string): SyncResult {
   const comparison = compareTrees(canonicalDir, mirrorDir);
   const copied = [...comparison.missing, ...comparison.differing].sort();
+  const removed = [...comparison.extra].sort();
+  if (copied.length === 0 && removed.length === 0) return { copied, removed };
 
-  for (const file of copied) {
-    const target = path.join(mirrorDir, file);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(canonicalDir, file), target);
+  const canonicalRoot = resolveTreeRoot(canonicalDir);
+  const parent = path.dirname(mirrorDir);
+  const staging = fs.mkdtempSync(path.join(parent, `.${path.basename(mirrorDir)}-sync-`));
+  try {
+    for (const file of listRelativeFiles(canonicalRoot)) {
+      const target = path.join(staging, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(path.join(canonicalRoot, file), target);
+    }
+    const staged = describeComparison(compareTrees(canonicalRoot, staging));
+    if (staged.length > 0) {
+      throw new Error(`Staged skill copy does not match the canonical tree: ${staged.join('; ')}`);
+    }
+    swapIn(staging, mirrorDir);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
   }
 
-  for (const file of comparison.extra) {
-    fs.rmSync(path.join(mirrorDir, file), { force: true });
-  }
-  pruneEmptyDirs(mirrorDir);
-
-  return { copied, removed: [...comparison.extra].sort() };
+  return { copied, removed };
 }
 
-/** Remove directories left behind by deleted files, but keep the root. */
-function pruneEmptyDirs(dir: string): void {
-  if (!fs.existsSync(dir)) return;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const child = path.join(dir, entry.name);
-    pruneEmptyDirs(child);
-    if (fs.readdirSync(child).length === 0) fs.rmdirSync(child);
+/** Move `staging` into place, restoring the previous mirror if the move fails. */
+function swapIn(staging: string, mirrorDir: string): void {
+  const hadMirror = fs.existsSync(mirrorDir);
+  const previous = `${mirrorDir}.replaced-${process.pid}`;
+  if (hadMirror) fs.renameSync(mirrorDir, previous);
+  try {
+    fs.renameSync(staging, mirrorDir);
+  } catch (error) {
+    if (hadMirror) fs.renameSync(previous, mirrorDir);
+    throw error;
   }
+  if (hadMirror) fs.rmSync(previous, { recursive: true, force: true });
 }
 
 function isDirectRun(): boolean {
@@ -85,8 +106,8 @@ if (isDirectRun()) {
       process.exit(1);
     }
   } catch (error) {
-    // Refuse to leave a half-written mirror behind: the comparison throws
-    // before anything is copied, so an aborted run changes nothing.
+    // The new copy is staged and verified before it replaces the mirror, so a
+    // failed run leaves the previous mirror in place.
     console.error(`Skill sync failed: ${(error as Error).message}`);
     process.exit(1);
   }

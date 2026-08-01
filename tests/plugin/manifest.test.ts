@@ -318,6 +318,10 @@ describe('real repository manifests', () => {
     'github:mainwp/other',
     './commands/mainwp',
     './plugins/',
+    // Backslashes are path separators on Windows, so these escape plugins/
+    // there while looking like ordinary segment names to a POSIX split.
+    './plugins/..\\outside',
+    './plugins/mainwp\\..\\..\\outside',
   ])('rejects a plugin source outside ./plugins/: %s', source => {
     const data = readJsonFile(MARKETPLACE_PATH);
     (data.plugins as Record<string, unknown>[])[0].source = source;

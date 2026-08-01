@@ -43,10 +43,15 @@ export interface TreeComparison {
  * skipped. A skipped entry is invisible to the byte comparison and to the
  * mirror cleanup, so both trees would compare clean while the plugin copy
  * pointed somewhere else entirely.
+ *
+ * That includes `dir` itself: resolving a symlinked root would walk (and let
+ * the sync write into) a tree somewhere else, which is the same hole one level
+ * up. Paths are returned under the resolved root, so callers never traverse
+ * the link either.
  */
 export function listFilesUnder(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
-  const root = fs.realpathSync(dir);
+  const root = resolveTreeRoot(dir);
   const out: string[] = [];
   const walk = (current: string): void => {
     for (const entry of fs
@@ -67,13 +72,27 @@ export function listFilesUnder(dir: string): string[] {
       }
     }
   };
-  walk(dir);
+  walk(root);
   return out.sort();
+}
+
+/**
+ * Real path of a tree root, refusing a root that is itself a symlink. Callers
+ * that read or write inside the tree use the result, not the given path.
+ */
+export function resolveTreeRoot(dir: string): string {
+  if (fs.lstatSync(dir).isSymbolicLink()) {
+    throw new Error(`Skill tree root is a symlink: ${dir}`);
+  }
+  return fs.realpathSync(dir);
 }
 
 /** Relative paths of every file under `dir`, POSIX-separated and sorted. */
 export function listRelativeFiles(dir: string): string[] {
-  return listFilesUnder(dir).map(full => path.relative(dir, full).split(path.sep).join('/'));
+  const files = listFilesUnder(dir);
+  if (files.length === 0) return [];
+  const root = resolveTreeRoot(dir);
+  return files.map(full => path.relative(root, full).split(path.sep).join('/'));
 }
 
 /**
@@ -86,8 +105,9 @@ export function assertUsableCanonicalTree(dir: string): string[] {
   if (!files.includes('SKILL.md')) {
     throw new Error(`Canonical skill tree has no SKILL.md: ${dir}`);
   }
-  if (fs.statSync(path.join(dir, 'SKILL.md')).size === 0) {
-    throw new Error(`Canonical SKILL.md is empty: ${path.join(dir, 'SKILL.md')}`);
+  const skillFile = path.join(resolveTreeRoot(dir), 'SKILL.md');
+  if (fs.statSync(skillFile).size === 0) {
+    throw new Error(`Canonical SKILL.md is empty: ${skillFile}`);
   }
   return files;
 }
@@ -98,14 +118,16 @@ export function compareTrees(canonicalDir: string, mirrorDir: string): TreeCompa
 
   const missing = [...canonical].filter(file => !mirror.has(file));
   const extra = [...mirror].filter(file => !canonical.has(file));
-  const differing = [...canonical]
-    .filter(file => mirror.has(file))
-    .filter(
-      file =>
-        !fs
-          .readFileSync(path.join(canonicalDir, file))
-          .equals(fs.readFileSync(path.join(mirrorDir, file)))
-    );
+  const shared = [...canonical].filter(file => mirror.has(file));
+  // Both roots exist and are not symlinks once a shared file was listed.
+  const canonicalRoot = shared.length > 0 ? resolveTreeRoot(canonicalDir) : canonicalDir;
+  const mirrorRoot = shared.length > 0 ? resolveTreeRoot(mirrorDir) : mirrorDir;
+  const differing = shared.filter(
+    file =>
+      !fs
+        .readFileSync(path.join(canonicalRoot, file))
+        .equals(fs.readFileSync(path.join(mirrorRoot, file)))
+  );
 
   return { missing, extra, differing };
 }

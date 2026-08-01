@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   assertUsableCanonicalTree,
   compareTrees,
+  listFilesUnder,
   listRelativeFiles,
 } from '../../scripts/check-skill-sync.js';
 import { syncTree } from '../../scripts/sync-skill.js';
@@ -45,6 +46,15 @@ describe('listRelativeFiles', () => {
     fs.writeFileSync(path.join(root, 'SKILL.md'), 'body');
     fs.symlinkSync(path.join(root, 'SKILL.md'), path.join(root, 'linked.md'));
     expect(() => listRelativeFiles(root)).toThrow(/linked\.md/);
+  });
+
+  it('fails on a symlinked tree root instead of following it', () => {
+    const real = tmpTree();
+    fs.writeFileSync(path.join(real, 'SKILL.md'), 'body');
+    const link = path.join(tmpTree(), 'linked-root');
+    fs.symlinkSync(real, link);
+    expect(() => listFilesUnder(link)).toThrow(/linked-root/);
+    expect(() => listRelativeFiles(link)).toThrow(/linked-root/);
   });
 
   it('fails on a symlinked directory instead of ignoring it', () => {
@@ -130,4 +140,51 @@ describe('syncTree', () => {
     fs.symlinkSync(path.join(canonical, 'SKILL.md'), path.join(canonical, 'shadow.md'));
     expect(() => syncTree(canonical, mirror)).toThrow(/shadow\.md/);
   });
+
+  it('refuses to write through a symlinked mirror root', () => {
+    const canonical = tmpTree();
+    fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'body');
+    const target = tmpTree();
+    const mirrorLink = path.join(tmpTree(), 'linked-mirror');
+    fs.symlinkSync(target, mirrorLink);
+    expect(() => syncTree(canonical, mirrorLink)).toThrow(/linked-mirror/);
+    expect(fs.existsSync(path.join(target, 'SKILL.md'))).toBe(false);
+  });
+
+  it('replaces a colliding mirror wholesale instead of half-writing it', () => {
+    const canonical = tmpTree();
+    fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'new');
+    fs.mkdirSync(path.join(canonical, 'references'));
+    fs.writeFileSync(path.join(canonical, 'references', 'errors.md'), 'new');
+
+    const mirror = tmpTree();
+    fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'old');
+    // A file where the canonical tree has a directory: copying in place fails
+    // partway through, after SKILL.md has already been overwritten.
+    fs.writeFileSync(path.join(mirror, 'references'), 'not a directory');
+
+    expect(syncTree(canonical, mirror).copied).toEqual(['SKILL.md', 'references/errors.md']);
+    expect(listRelativeFiles(mirror)).toEqual(['SKILL.md', 'references/errors.md']);
+    expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('new');
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'leaves the old mirror in place when the new copy cannot be staged',
+    () => {
+      const canonical = tmpTree();
+      fs.writeFileSync(path.join(canonical, 'SKILL.md'), 'new');
+
+      const parent = tmpTree();
+      const mirror = path.join(parent, 'mainwp-dashboard');
+      fs.mkdirSync(mirror);
+      fs.writeFileSync(path.join(mirror, 'SKILL.md'), 'old');
+      fs.chmodSync(parent, 0o500);
+      try {
+        expect(() => syncTree(canonical, mirror)).toThrow();
+        expect(fs.readFileSync(path.join(mirror, 'SKILL.md'), 'utf8')).toBe('old');
+      } finally {
+        fs.chmodSync(parent, 0o700);
+      }
+    }
+  );
 });

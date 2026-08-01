@@ -144,12 +144,14 @@ export function hasCredentialLeak(finding: CredentialLeakFinding): boolean {
 }
 
 /**
- * Any credential token the Redactor emits. Matching the whole family rather
- * than one hardcoded token is what keeps a new credential (the Basic
- * authorization header, for one) from leaking undetected. The `<dashboard>`
- * origin placeholder is deliberately outside the pattern: it is not a secret.
+ * The secret tokens the Redactor emits (see `redact.ts`): the application
+ * password and the Basic authorization header. Matching the family rather than
+ * one hardcoded token is what keeps a new credential from leaking undetected,
+ * but the vocabulary is enumerated rather than wildcarded — `<redacted:username>`
+ * and `<dashboard>` name a principal and an origin, not secrets, and the
+ * username replacement fires inside ordinary substrings (`admin_username`).
  */
-const REDACTION_TOKEN_PATTERN = /<redacted:[a-z0-9-]+>/i;
+const SECRET_REDACTION_TOKENS = ['<redacted:app-password>', '<redacted:authorization>'];
 
 /**
  * Two independent leak signals for one agent run.
@@ -168,6 +170,8 @@ export function detectCredentialLeak(
     sentinelInRawStream: sentinels.some(
       sentinel => sentinel.length > 0 && rawStream.includes(sentinel)
     ),
-    redactedTokenInTranscript: REDACTION_TOKEN_PATTERN.test(redactedStream),
+    redactedTokenInTranscript: SECRET_REDACTION_TOKENS.some(token =>
+      redactedStream.includes(token)
+    ),
   };
 }

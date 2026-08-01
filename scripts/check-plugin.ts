@@ -153,6 +153,10 @@ const PLUGIN_SOURCE_PREFIX = './plugins/';
  * that nothing in this checkout reviews or gates.
  */
 function isLocalPluginSource(source: string): boolean {
+  // Sources are POSIX paths. A backslash is an ordinary character to the split
+  // below but a separator on Windows, where "./plugins/..\outside" resolves
+  // outside plugins/ entirely.
+  if (source.includes('\\')) return false;
   if (!source.startsWith(PLUGIN_SOURCE_PREFIX)) return false;
   const segments = source.slice(PLUGIN_SOURCE_PREFIX.length).split('/');
   return segments.length > 0 && segments.every(segment => segment !== '' && segment !== '..');
