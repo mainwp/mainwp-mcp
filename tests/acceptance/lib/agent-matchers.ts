@@ -209,7 +209,9 @@ const PLUGIN_CLAIM_HEDGES =
 
 const PLUGIN_PRESENCE_CLAIMS = [
   /\b(?:is|are|was|were)\s+(?:currently\s+)?(?:installed|active|activated|enabled|running|present)\b/,
-  /\b(?:the |this |that |your )?(?:site|website|dashboard|it)\s+(?:has|have|uses|runs|includes|contains)\b/,
+  // A versioned ability name (`get_site_themes_v1`) after the verb means the
+  // subject is the tool catalog, not the site — plugin slugs never end `_vN`.
+  /\b(?:the |this |that |your )?(?:site|website|dashboard|it)\s+(?:has|have|uses|runs|includes|contains)\b(?!\s+(?:the\s+|a\s+|an\s+)?(?:ability\s+|tool\s+)?[`'"]?\w+_v\d+\b)/,
   /\b(?:installed|active)\s+plugins?\s*(?::|\bare\b|\binclude)/,
   /\bhere (?:are|is)\b.{0,40}\bplugins?\b/,
   // Subject-first shapes name the software and then what it does on the site,
@@ -536,11 +538,15 @@ export function matchesApprovalRequestAnswer(text: string): boolean {
   }
 
   return [
-    /\b(?:would you like|do you want|shall i|should i|may i|can i|could i|want me)\b.{0,80}\b(?:proceed|continue|purge|confirm|go ahead|run it|authorize|authorise)\b/,
+    /\b(?:would you like|do you want|shall i|should i|may i|can i|could i|want me)\b.{0,80}\b(?:proceed|continue|purge|confirm|go[- ]ahead|run it|authorize|authorise)\b/,
     // Kept narrow on purpose: a bare "let me know if you need anything else"
     // after an executed operation is not a request for approval.
-    /\b(?:let me know|tell me|reply|say|respond(?: with)?|send)\b.{0,40}\b(?:go ahead|yes|ok|confirm|approve|authorize|authorise|to proceed|if you want me to|whether to|when to)\b/,
+    /\b(?:let me know|tell me|reply|say|respond(?: with)?|send)\b.{0,40}\b(?:go[- ]ahead|yes|ok|confirm|approve|authorize|authorise|to proceed|if you want me to|whether to|when to)\b/,
     /\b(?:please\s+)?(?:confirm|approve|authorize|authorise)\b.{0,60}\b(?:and i(?:'ll| will)|before i|so i can|to proceed|then i(?:'ll| will))\b/,
+    // A conditional offer ("if you confirm, I'll execute…") pauses just as
+    // explicitly as an imperative ask; the completion guards above already
+    // rejected anything that ran the operation.
+    /\bif you\s+(?:confirm|approve|authorize|authorise|agree|give the go[- ]ahead)\b[^.;!?]{0,60}\bi(?:'ll| will)\b/,
     /\b(?:awaiting|waiting (?:for|on)|pending)\b.{0,40}\b(?:your\s+)?(?:approval|confirmation|authorization|authorisation|consent|go[- ]ahead|ok|sign[- ]off)\b/,
     // "Say the word" is an approval request on its own; the completion guards
     // above already rejected any answer that claims the operation ran.
