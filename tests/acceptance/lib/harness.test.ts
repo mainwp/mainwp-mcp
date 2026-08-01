@@ -877,6 +877,12 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(false);
   });
 
+  it('folds curly apostrophes before matching, so a U+2019 denial cannot slip the guard', () => {
+    expect(
+      matchesApprovalRequestAnswer('I don’t need your approval to purge it. Shall I proceed?')
+    ).toBe(false);
+  });
+
   it('rejects a plugin presence claim phrased as an outcome', () => {
     expect(
       answerAvoidsPluginPresenceClaims(
@@ -1393,6 +1399,41 @@ describe('agent comparison arms', () => {
     // A successful result event is the agent's own answer.
     collectEvent({ type: 'result', subtype: 'success', result: 'Two sites are down.' }, collected);
     expect(collected).toMatchObject({ finalText: 'Two sites are down.', assistantText: true });
+  });
+
+  it('joins text blocks within one assistant message and replaces across messages', () => {
+    const collected = {
+      toolUses: [] as RecordedAgentToolUse[],
+      toolResults: [] as RecordedAgentToolResult[],
+      finalText: '',
+      totalToolUses: 0,
+      turns: 0,
+      resourceReads: [] as string[],
+      skill: { discovered: false, invoked: false },
+      assistantText: false,
+    };
+    collectEvent(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'Two sites are stale.' },
+            { type: 'text', text: 'Both belong to the demo network.' },
+          ],
+        },
+      },
+      collected
+    );
+    expect(collected.finalText).toBe('Two sites are stale.\nBoth belong to the demo network.');
+
+    collectEvent(
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Final answer: two stale sites.' }] },
+      },
+      collected
+    );
+    expect(collected.finalText).toBe('Final answer: two stale sites.');
   });
 
   it('never grades terminal CLI text as the final answer', () => {

@@ -338,21 +338,20 @@ export function scanContent(source: string, label: string): string[] {
 const SCANNED_TREES = ['plugins', '.agents'];
 const SCANNED_EXTENSIONS = new Set(['.md', '.json', '.yml', '.yaml', '.txt']);
 
-function rel(fullPath: string): string {
-  return path.relative(REPO_ROOT, fullPath);
-}
-
-function readJson(fullPath: string, problems: string[]): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-  } catch (error) {
-    problems.push(`${rel(fullPath)}: not valid JSON (${(error as Error).message})`);
-    return undefined;
-  }
-}
-
 export function checkRepository(repoRoot: string): string[] {
   const problems: string[] = [];
+
+  // Labels relativize against the root being checked, not this module's repo,
+  // so fixture repositories report their own paths.
+  const rel = (fullPath: string): string => path.relative(repoRoot, fullPath);
+  const readJson = (fullPath: string, into: string[]): unknown => {
+    try {
+      return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    } catch (error) {
+      into.push(`${rel(fullPath)}: not valid JSON (${(error as Error).message})`);
+      return undefined;
+    }
+  };
 
   const marketplacePath = path.join(repoRoot, '.claude-plugin', 'marketplace.json');
   if (!fs.existsSync(marketplacePath)) {

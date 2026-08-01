@@ -408,6 +408,12 @@ describe('checkRepository', () => {
     expect(() => checkRepository(root)).toThrow(/shadow\.md/);
   });
 
+  it('labels problems relative to the repository being checked', () => {
+    const root = fixtureRepo();
+    fs.rmSync(path.join(root, '.claude-plugin'), { recursive: true });
+    expect(checkRepository(root)).toEqual(['.claude-plugin/marketplace.json: missing']);
+  });
+
   it('does not traverse a rejected source even when its target exists', () => {
     const root = fixtureRepo();
     // A sibling outside the fixture repo that a resolved "../" source would hit.

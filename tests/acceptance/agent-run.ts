@@ -1350,6 +1350,9 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
   }
   if (record.type === 'assistant') accumulator.turns += 1;
   collectSkillEvidence(event, accumulator.skill);
+  // Joined per event: several text blocks in one assistant message are one
+  // answer, while a later assistant message replaces the previous answer.
+  const textBlocks: string[] = [];
   for (const block of contentBlocks(event)) {
     if (!block || typeof block !== 'object') continue;
     const content = block as Record<string, unknown>;
@@ -1375,9 +1378,12 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
       typeof content.text === 'string' &&
       record.type === 'assistant'
     ) {
-      accumulator.finalText = content.text;
-      accumulator.assistantText = true;
+      textBlocks.push(content.text);
     }
+  }
+  if (textBlocks.length > 0) {
+    accumulator.finalText = textBlocks.join('\n');
+    accumulator.assistantText = true;
   }
   if (record.type === 'result' && typeof record.result === 'string') {
     // A successful result repeats the agent's answer. An error result carries
