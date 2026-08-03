@@ -25,6 +25,8 @@ export interface AcceptanceManifest {
   tarball: TarballManifest | null;
   nodeVersion: string;
   npmVersion: string;
+  /** Agent runs only, and null when the CLI is absent or refuses to report. */
+  claudeVersion: string | null;
   os: string;
   arch: string;
   harnessVersion: string;
@@ -119,6 +121,16 @@ export class Artifacts {
     this.writeJson('manifest.json', this.manifest);
   }
 
+  /**
+   * `--plugin-dir` and the stream-json event shapes the agent layer grades are
+   * CLI-version-dependent, so a reproduced failure needs the version that
+   * produced it.
+   */
+  setClaudeVersion(version: string | null): void {
+    this.manifest.claudeVersion = version;
+    this.writeJson('manifest.json', this.manifest);
+  }
+
   finish(): void {
     this.manifest.endTime = new Date().toISOString();
     this.writeJson('manifest.json', this.manifest);
@@ -157,6 +169,7 @@ export async function createArtifacts(
     tarball: null,
     nodeVersion: process.version,
     npmVersion,
+    claudeVersion: null,
     os: `${os.platform()} ${os.release()}`,
     arch: os.arch(),
     harnessVersion: HARNESS_VERSION,

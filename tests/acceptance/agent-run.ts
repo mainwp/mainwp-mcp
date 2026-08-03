@@ -20,8 +20,10 @@ import {
   inventoryProvesSiteAbsent,
   matchesApprovalRequestAnswer,
   matchesFilteredCapabilityAnswer,
+  matchesNetworkSummaryAnswer,
   matchesNoPreviewAnswer,
   matchesSessionCapAnswer,
+  matchesSiteSelectionRequestAnswer,
   matchesStaleTokenAnswer,
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
@@ -30,6 +32,11 @@ import {
   matchesSiteStatusAnswer,
   type AgentEvaluation,
 } from './lib/agent-matchers.js';
+import {
+  collectCommandEvidence,
+  commandNotLoaded,
+  type AgentCommandEvidence,
+} from './lib/agent-commands.js';
 import {
   AGENT_ARM_IDS,
   AGENT_SKILL_NAME,
@@ -78,7 +85,7 @@ interface AgentPrecheckResult {
   evidence?: unknown;
 }
 
-interface AgentScenario {
+export interface AgentScenario {
   id: string;
   target: 'live' | 'fixture';
   serverEnv?: Record<string, string>;
@@ -90,6 +97,19 @@ interface AgentScenario {
   cwd?: string;
   /** Serve the acceptance-only catalog additions for this scenario. */
   needsAcceptanceOnlyAbilities?: boolean;
+  /**
+   * Plugin slash command this scenario types, without the leading slash
+   * (`mainwp:network-summary`). The prompt is then the command itself rather
+   * than a paraphrase of it, the spawn gains `--plugin-dir`, and the run is
+   * graded only once the transcript proves the command was registered and
+   * expanded.
+   */
+  slashCommand?: string;
+  /**
+   * The natural-language task, or, for a `slashCommand` scenario, the command
+   * arguments. An empty string is the no-argument case and is deliberate: the
+   * argument-less commands are graded on what they do without one.
+   */
   task(groundTruth: AgentGroundTruth): string;
   expectedTools: string[];
   groundTruth(verifier: IndependentVerifier): Promise<AgentGroundTruth>;
@@ -142,6 +162,9 @@ interface AgentGroundTruth {
   secondSiteName?: string;
   hallucinationProbeNames?: string[];
   fixtureSnapshot?: string;
+  disconnectedSiteUrls?: string[];
+  updateTotal?: number;
+  otherSiteNames?: string[];
 }
 
 type AgentResultStatus = 'passed' | 'failed' | 'unverified' | 'skill-not-loaded';
@@ -161,6 +184,7 @@ interface AgentResult {
   evaluation?: AgentEvaluation;
   metrics?: AgentArmMetrics;
   skill?: AgentSkillEvidence & { staged: boolean };
+  command?: AgentCommandEvidence & { name: string };
   credentialLeak?: CredentialLeakFinding;
   precheck?: AgentPrecheckResult;
   reason?: string;
@@ -183,6 +207,8 @@ interface CollectedAgentOutput {
   turns: number;
   resourceReads: string[];
   skill: AgentSkillEvidence;
+  /** Slash-command evidence, collected only for a command scenario. */
+  command?: { name: string; evidence: AgentCommandEvidence };
   /** `finalText` holds an assistant answer rather than nothing. */
   assistantText: boolean;
   /** The CLI's own terminal message. Diagnostics only; never graded. */
@@ -191,6 +217,53 @@ interface CollectedAgentOutput {
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const CANONICAL_SKILL_DIR = path.join(REPO_ROOT, '.agents', 'skills', AGENT_SKILL_NAME);
+/** The plugin whose `/mainwp:*` commands the command scenarios drive. */
+const PLUGIN_DIR = path.join(REPO_ROOT, 'plugins', 'mainwp');
+
+/**
+ * Ability families the reporting commands may use, split so a scenario can
+ * require one kind of read and forbid another.
+ */
+const COMMAND_SITE_READ_TOOLS = ['list_sites_v1', 'get_sites_basic_v1', 'count_sites_v1'];
+const COMMAND_UPDATE_READ_TOOLS = [
+  'list_updates_v1',
+  'get_site_updates_v1',
+  'list_ignored_updates_v1',
+];
+const COMMAND_SITE_DETAIL_TOOLS = [
+  'get_site_v1',
+  'get_site_plugins_v1',
+  'get_site_themes_v1',
+  'get_site_security_v1',
+  'get_site_changes_v1',
+  'get_site_client_v1',
+  'get_site_costs_v1',
+];
+const COMMAND_HEALTH_TOOLS = ['check_site_v1', 'check_sites_v1'];
+/**
+ * Every family a read-only command may touch. The state grading is fail-closed
+ * against this list rather than open against a list of known writes, so an
+ * ability nobody thought of here fails the scenario instead of passing.
+ */
+const COMMAND_READ_TOOLS = [
+  ...COMMAND_SITE_READ_TOOLS,
+  ...COMMAND_UPDATE_READ_TOOLS,
+  ...COMMAND_SITE_DETAIL_TOOLS,
+  ...COMMAND_HEALTH_TOOLS,
+  'get_abandoned_plugins_v1',
+  'get_abandoned_themes_v1',
+  'list_clients_v1',
+  'count_clients_v1',
+  'get_client_v1',
+  'get_client_sites_v1',
+  'count_client_sites_v1',
+  'get_client_costs_v1',
+  'list_tags_v1',
+  'get_tag_v1',
+  'get_tag_sites_v1',
+  'get_tag_clients_v1',
+  'get_batch_job_status_v1',
+];
 
 /** Tool permission set for a plain agent run. */
 const BASE_ALLOWED_TOOLS = 'mcp__mainwp__*';
@@ -205,6 +278,10 @@ const ARM_ALLOWED_TOOLS = 'mcp__mainwp__*,Skill,Read,Glob,Grep';
 const SESSION_CAP_BYTES = '700';
 
 const CREDENTIAL_LEAK_REASON = 'A credential reached the agent output stream.';
+
+const commandNotLoadedReason = (name: string): string =>
+  `The slash command /${name} was not both registered and expanded in this session, so the run ` +
+  'graded an ordinary prompt rather than the command.';
 
 /**
  * Shared by the confirm-only scenario's `stateGuard` and its evaluator so an
@@ -228,6 +305,27 @@ async function confirmOnlyStateGuard(
     ...(ok
       ? {}
       : { reason: 'The fixture dashboard state changed during a run that was never approved.' }),
+  };
+}
+
+/**
+ * Shared by the read-only fixture command scenarios: the commands say they
+ * report and never change anything, so the whole fixture must survive the run
+ * byte for byte.
+ */
+async function commandReadOnlyStateGuard(
+  truth: AgentGroundTruth,
+  verifier: IndependentVerifier
+): Promise<{ ok: boolean; reason?: string; evidence?: unknown }> {
+  if (!truth.fixtureSnapshot) {
+    return { ok: false, reason: 'No fixture snapshot was captured before the run.' };
+  }
+  const afterSnapshot = await fixtureStateSnapshot(verifier);
+  const ok = afterSnapshot === truth.fixtureSnapshot;
+  return {
+    ok,
+    evidence: { stateUnchanged: ok },
+    ...(ok ? {} : { reason: 'A read-only command scenario changed the fixture dashboard state.' }),
   };
 }
 
@@ -1259,6 +1357,325 @@ export const agentScenarios: AgentScenario[] = [
       };
     },
   },
+  {
+    id: 'command-network-summary',
+    target: 'live',
+    slashCommand: 'mainwp:network-summary',
+    // The command takes no arguments; typing one would be a different test.
+    task: () => '',
+    expectedTools: [...COMMAND_SITE_READ_TOOLS, ...COMMAND_UPDATE_READ_TOOLS],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const updates = await verifier.listUpdates();
+      return {
+        count: sites.length,
+        allSiteUrls: sites.map(site => site.url).sort(),
+        disconnectedSiteUrls: sites
+          .filter(site => site.status !== 'connected')
+          .map(site => site.url)
+          .sort(),
+        updateTotal: updates.total,
+      };
+    },
+    evaluate: async (truth, collected, verifier) => {
+      if (
+        truth.count === undefined ||
+        !truth.allSiteUrls ||
+        !truth.disconnectedSiteUrls ||
+        truth.updateTotal === undefined
+      ) {
+        throw new Error('Network-summary ground truth was incomplete');
+      }
+      const siteUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, COMMAND_SITE_READ_TOOLS)
+      );
+      const updateUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, COMMAND_UPDATE_READ_TOOLS)
+      );
+      const outsideTools = toolsOutsideFamilies(collected.toolUses, COMMAND_READ_TOOLS);
+      const siteResults = toolResultsForUses(siteUses, collected.toolResults);
+      const updateResults = toolResultsForUses(updateUses, collected.toolResults);
+      const relevantResults = [...siteResults, ...updateResults];
+      const resultText = flattenStrings(relevantResults).join('\n').toLowerCase();
+      // One default-sized page can be short of the whole inventory, so a
+      // listing that carries the verified total is as good as one that names
+      // every site.
+      const everySiteNamed = truth.allSiteUrls.every(url =>
+        resultText.includes(hostnameOf(url).toLowerCase())
+      );
+      const inventoryVerified = everySiteNamed || resultsStateTotal(siteResults, truth.count);
+      // Same-run correlated oracle: the live network can gain a site or finish
+      // an update while the agent works, so both snapshots are acceptable
+      // answers and a moved oracle only costs the run its verified status.
+      const afterSites = await verifier.listSites();
+      const afterUpdates = await verifier.listUpdates();
+      const siteTotals = [...new Set([truth.count, afterSites.length])];
+      const updateTotals = [...new Set([truth.updateTotal, afterUpdates.total])];
+      const oracleStable = siteTotals.length === 1 && updateTotals.length === 1;
+      const finalText = collected.finalText.toLowerCase();
+      const namesDisconnectedSites = truth.disconnectedSiteUrls.every(url =>
+        finalText.includes(hostnameOf(url).toLowerCase())
+      );
+      const statesTotals = matchesNetworkSummaryAnswer(collected.finalText, {
+        siteTotals,
+        updateTotals,
+      });
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: siteUses.length > 0 && updateUses.length > 0,
+          evidence: {
+            siteReads: siteUses.map(tool => tool.name),
+            updateReads: updateUses.map(tool => tool.name),
+          },
+        },
+        rightArguments: {
+          pass:
+            toolInputsAreStructured(collected.toolUses) &&
+            // The command forbids narrowing the summary to a subset, so a
+            // network-wide read may not carry a site filter. Per-site detail
+            // and health calls legitimately do and are not checked here.
+            ![...siteUses, ...updateUses].some(tool => toolInputNarrowsToSites(tool.input)),
+          evidence: {
+            siteInputs: siteUses.map(tool => tool.input),
+            updateInputs: updateUses.map(tool => tool.input),
+          },
+        },
+        correctMcpResult: {
+          pass:
+            siteResults.length > 0 &&
+            updateResults.length > 0 &&
+            relevantResults.every(result => !result.isError) &&
+            inventoryVerified,
+          evidence: {
+            siteResultCount: siteResults.length,
+            updateResultCount: updateResults.length,
+            everySiteNamed,
+            inventoryVerified,
+            expectedSiteCount: truth.count,
+          },
+        },
+        stateChange: {
+          pass: outsideTools.length === 0,
+          evidence: {
+            outsideTools,
+            allowedFamilies: COMMAND_READ_TOOLS,
+          },
+        },
+        faithfulFinalAnswer: {
+          pass: statesTotals && namesDisconnectedSites,
+          evidence: {
+            finalText: collected.finalText,
+            siteTotals,
+            updateTotals,
+            statesTotals,
+            disconnectedSiteUrls: truth.disconnectedSiteUrls,
+            namesDisconnectedSites,
+          },
+        },
+      };
+      return {
+        evaluation,
+        ...(oracleStable
+          ? {}
+          : {
+              reason:
+                'The live site inventory or update total changed during the run, so the summary ' +
+                'was graded against both snapshots.',
+              unverified: true,
+            }),
+      };
+    },
+  },
+  {
+    id: 'command-site-report',
+    target: 'fixture',
+    slashCommand: 'mainwp:site-report',
+    // A hostname rather than a name: the command refuses to act on a fuzzy
+    // name match until the user confirms it, which would end the run at a
+    // question instead of at a report.
+    task: truth => hostnameOf(truth.targetSiteUrl ?? ''),
+    expectedTools: [...COMMAND_SITE_DETAIL_TOOLS, ...COMMAND_UPDATE_READ_TOOLS],
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      const target = sites.find(site => site.id === 1) ?? sites[0];
+      if (!target) throw new Error('No fixture site was available for the site-report command');
+      return {
+        targetSiteId: target.id,
+        targetSiteUrl: target.url,
+        targetSiteName: target.name,
+        otherSiteNames: sites
+          .filter(site => site.id !== target.id)
+          .flatMap(site => [site.name, hostnameOf(site.url)])
+          .sort(),
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
+      };
+    },
+    stateGuard: commandReadOnlyStateGuard,
+    evaluate: async (truth, collected, verifier) => {
+      if (
+        truth.targetSiteId === undefined ||
+        !truth.targetSiteUrl ||
+        !truth.targetSiteName ||
+        !truth.otherSiteNames
+      ) {
+        throw new Error('Site-report ground truth was incomplete');
+      }
+      const targetSiteId = truth.targetSiteId;
+      const targetSiteUrl = truth.targetSiteUrl;
+      const targetedUses = collected.toolUses.filter(tool =>
+        toolInputTargetsSite(tool.input, targetSiteId, targetSiteUrl)
+      );
+      const misdirectedUses = collected.toolUses.filter(tool =>
+        toolInputTargetsOtherSite(tool.input, targetSiteId, targetSiteUrl)
+      );
+      const outsideTools = toolsOutsideFamilies(collected.toolUses, COMMAND_READ_TOOLS);
+      // The fixture serves no update-inventory execution route, so those calls
+      // come back as errors by design. The graded evidence is the successful
+      // site read, not a clean transcript.
+      const targetedResults = toolResultsForUses(targetedUses, collected.toolResults).filter(
+        result => !result.isError
+      );
+      const targetedResultText = flattenStrings(targetedResults).join('\n').toLowerCase();
+      const resultNamesSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
+        targetedResultText.includes(value.toLowerCase())
+      );
+      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const finalText = collected.finalText.toLowerCase();
+      const namesTargetSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
+        finalText.includes(value.toLowerCase())
+      );
+      const namesOtherSites = truth.otherSiteNames.filter(name =>
+        finalText.includes(name.toLowerCase())
+      );
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: targetedUses.length > 0,
+          evidence: collected.toolUses.map(tool => tool.name),
+        },
+        rightArguments: {
+          pass:
+            targetedUses.length > 0 &&
+            misdirectedUses.length === 0 &&
+            toolInputsAreStructured(collected.toolUses),
+          evidence: {
+            argument: hostnameOf(truth.targetSiteUrl),
+            targetedInputs: targetedUses.map(tool => tool.input),
+            misdirectedInputs: misdirectedUses.map(tool => tool.input),
+          },
+        },
+        correctMcpResult: {
+          pass: targetedResults.length > 0 && resultNamesSite,
+          evidence: {
+            successfulTargetedResults: targetedResults.length,
+            resultNamesSite,
+            targetSiteName: truth.targetSiteName,
+          },
+        },
+        stateChange: {
+          pass: stateGuard.ok && outsideTools.length === 0,
+          evidence: { fixture: stateGuard.evidence, outsideTools },
+        },
+        faithfulFinalAnswer: {
+          pass: namesTargetSite && namesOtherSites.length === 0,
+          evidence: {
+            finalText: collected.finalText,
+            namesTargetSite,
+            namesOtherSites,
+          },
+        },
+      };
+      return {
+        evaluation,
+        ...(stateGuard.ok ? {} : { reason: stateGuard.reason }),
+      };
+    },
+  },
+  {
+    id: 'command-troubleshoot-missing-arg',
+    target: 'fixture',
+    slashCommand: 'mainwp:troubleshoot-site',
+    // No argument on purpose: the command's own first step is to list the
+    // managed sites and ask which one, so this is where a command proves it
+    // constrains the model rather than decorating the prompt.
+    task: () => '',
+    expectedTools: COMMAND_SITE_READ_TOOLS,
+    groundTruth: async verifier => {
+      const sites = await verifier.listSites();
+      if (sites.length === 0) {
+        throw new Error('The troubleshoot command scenario needs at least one fixture site');
+      }
+      return {
+        count: sites.length,
+        allSiteUrls: sites.map(site => site.url).sort(),
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
+      };
+    },
+    stateGuard: commandReadOnlyStateGuard,
+    evaluate: async (truth, collected, verifier) => {
+      if (!truth.allSiteUrls) throw new Error('Troubleshoot-command ground truth was incomplete');
+      const listingUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, COMMAND_SITE_READ_TOOLS)
+      );
+      // Anything beyond a listing is the model picking a site for the user.
+      const outsideTools = toolsOutsideFamilies(collected.toolUses, COMMAND_SITE_READ_TOOLS);
+      const listingResults = toolResultsForUses(listingUses, collected.toolResults).filter(
+        result => !result.isError
+      );
+      const listingText = flattenStrings(listingResults).join('\n').toLowerCase();
+      const listingCoversSites =
+        listingResults.length > 0 &&
+        truth.allSiteUrls.every(url => listingText.includes(hostnameOf(url).toLowerCase()));
+      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const evaluation: AgentEvaluation = {
+        understoodRequest: {
+          pass: collected.finalText.trim().length > 0,
+          evidence: collected.finalText,
+        },
+        rightCapability: {
+          pass: listingUses.length > 0 && outsideTools.length === 0,
+          evidence: {
+            listingTools: listingUses.map(tool => tool.name),
+            outsideTools,
+          },
+        },
+        rightArguments: {
+          pass:
+            listingUses.length > 0 &&
+            toolInputsAreStructured(listingUses) &&
+            !listingUses.some(tool => toolInputNarrowsToSites(tool.input)),
+          evidence: listingUses.map(tool => tool.input),
+        },
+        correctMcpResult: {
+          pass: listingCoversSites,
+          evidence: {
+            successfulListings: listingResults.length,
+            listingCoversSites,
+            allSiteUrls: truth.allSiteUrls,
+          },
+        },
+        stateChange: {
+          pass: stateGuard.ok,
+          evidence: stateGuard.evidence,
+        },
+        faithfulFinalAnswer: {
+          pass: matchesSiteSelectionRequestAnswer(collected.finalText),
+          evidence: collected.finalText,
+        },
+      };
+      return {
+        evaluation,
+        ...(stateGuard.ok ? {} : { reason: stateGuard.reason }),
+      };
+    },
+  },
 ];
 
 export interface AgentCliOptions {
@@ -1320,6 +1737,42 @@ export function selectedArms(options: AgentCliOptions): AgentArmId[] | undefined
   return undefined;
 }
 
+/**
+ * Scenarios to run, with the comparison-mode rule applied.
+ *
+ * A command scenario spawns with `--plugin-dir`, which loads the plugin's own
+ * copy of the MainWP skill into whichever arm is running and erases the
+ * bare-vs-skill treatment boundary. Comparison modes therefore drop command
+ * scenarios, and naming one explicitly alongside a comparison flag is an
+ * argument error rather than a silent drop.
+ */
+export function selectAgentScenarios(
+  options: Pick<AgentCliOptions, 'scenarioIds' | 'compare' | 'withSkill'>,
+  scenarios: AgentScenario[] = agentScenarios
+): AgentScenario[] {
+  const byId = new Map(scenarios.map(scenario => [scenario.id, scenario]));
+  const selected =
+    options.scenarioIds.length > 0
+      ? options.scenarioIds.map(id => {
+          const scenario = byId.get(id);
+          if (!scenario) throw new Error(`Unknown agent scenario: ${id}`);
+          return scenario;
+        })
+      : scenarios;
+  if (!options.compare && !options.withSkill) return selected;
+  const namedCommands =
+    options.scenarioIds.length > 0 ? selected.filter(scenario => scenario.slashCommand) : [];
+  if (namedCommands.length > 0) {
+    throw new Error(
+      `--compare and --with-skill cannot run plugin command scenarios (${namedCommands
+        .map(scenario => scenario.id)
+        .join(', ')}): --plugin-dir loads the plugin's skill into both arms, so the bare arm ` +
+        'would not be a control.'
+    );
+  }
+  return selected.filter(scenario => !scenario.slashCommand);
+}
+
 function shellDisplay(argv: string[]): string {
   return argv.map(value => (/[\s*]/.test(value) ? JSON.stringify(value) : value)).join(' ');
 }
@@ -1360,6 +1813,9 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
   }
   if (record.type === 'assistant') accumulator.turns += 1;
   collectSkillEvidence(event, accumulator.skill);
+  if (accumulator.command) {
+    collectCommandEvidence(event, accumulator.command.evidence, accumulator.command.name);
+  }
   // Joined per event: several text blocks in one assistant message are one
   // answer, while a later assistant message replaces the previous answer.
   const textBlocks: string[] = [];
@@ -1430,6 +1886,54 @@ function toolInputTargetsSite(
     normalizedTarget === siteUrl.toLowerCase() ||
     normalizedTarget === hostnameOf(siteUrl).toLowerCase()
   );
+}
+
+/** Tool names the run used that fall outside the allowed families. */
+function toolsOutsideFamilies(uses: RecordedAgentToolUse[], families: string[]): string[] {
+  return uses.filter(tool => !toolFamilyMatches(tool.name, families)).map(tool => tool.name);
+}
+
+/** Every MainWP call carried an argument object, or none at all. */
+function toolInputsAreStructured(uses: RecordedAgentToolUse[]): boolean {
+  return uses.every(
+    tool => tool.input === undefined || tool.input === null || typeof tool.input === 'object'
+  );
+}
+
+/** True when the call restricts a network-wide read to specific sites. */
+function toolInputNarrowsToSites(input: unknown): boolean {
+  const record = asRecord(input);
+  if (!record) return false;
+  const single = record.site_id_or_domain;
+  if (single !== undefined && single !== null && String(single).trim() !== '') return true;
+  const many = record.site_ids_or_domains;
+  return Array.isArray(many) && many.length > 0;
+}
+
+/** True when the call names a site other than the one the command was given. */
+function toolInputTargetsOtherSite(input: unknown, siteId: number, siteUrl: string): boolean {
+  const record = asRecord(input);
+  if (!record) return false;
+  const targets = [
+    record.site_id_or_domain,
+    ...(Array.isArray(record.site_ids_or_domains) ? record.site_ids_or_domains : []),
+  ].filter(target => target !== undefined && target !== null && String(target).trim() !== '');
+  return targets.some(
+    target => !toolInputTargetsSite({ site_id_or_domain: target }, siteId, siteUrl)
+  );
+}
+
+/**
+ * The `-p` prompt. A command scenario types the command itself, so its `task()`
+ * supplies only the arguments and an empty one leaves a bare command.
+ */
+export function agentPrompt(scenario: AgentScenario, truth: AgentGroundTruth): string {
+  const task = scenario.task(truth);
+  if (!scenario.slashCommand) return task;
+  const commandArguments = task.trim();
+  return commandArguments
+    ? `/${scenario.slashCommand} ${commandArguments}`
+    : `/${scenario.slashCommand}`;
 }
 
 function bulkCheckCoversAllSites(input: unknown, allSiteUrls: string[]): boolean {
@@ -1860,15 +2364,7 @@ async function main(): Promise<void> {
     for (const scenario of agentScenarios) process.stdout.write(`${scenario.id}\n`);
     return;
   }
-  const byId = new Map(agentScenarios.map(scenario => [scenario.id, scenario]));
-  const selected =
-    options.scenarioIds.length > 0
-      ? options.scenarioIds.map(id => {
-          const scenario = byId.get(id);
-          if (!scenario) throw new Error(`Unknown agent scenario: ${id}`);
-          return scenario;
-        })
-      : agentScenarios;
+  const selected = selectAgentScenarios(options);
   const arms = selectedArms(options);
   const needsLive = selected.some(scenario => scenario.target === 'live');
   const needsFixture = selected.some(scenario => scenario.target === 'fixture');
@@ -1944,6 +2440,10 @@ async function main(): Promise<void> {
     const configPath = path.join(installed.tempRoot, 'claude-mcp.json');
     const which = await runner.run(['which', 'claude'], REPO_ROOT, { allowFailure: true });
     const claudeAvailable = which.exitCode === 0;
+    if (claudeAvailable) {
+      const version = await runner.run(['claude', '--version'], REPO_ROOT, { allowFailure: true });
+      artifacts.setClaudeVersion(version.exitCode === 0 ? version.stdout.trim() : null);
+    }
     const stagedArms: AgentArm[] = (arms ?? []).map(id =>
       stageAgentArm(installed.tempRoot, id, CANONICAL_SKILL_DIR)
     );
@@ -2056,12 +2556,20 @@ async function main(): Promise<void> {
           }
           if (scenario.target === 'fixture') fixture?.reset();
         }
-        const cwd = pass.arm ? pass.arm.cwd : (scenario.cwd ?? REPO_ROOT);
-        const task = scenario.task(truth);
+        // A command scenario gets a throwaway directory of its own: running
+        // from REPO_ROOT would hand the session this repository's CLAUDE.md on
+        // top of the command being graded.
+        const commandCwd = scenario.slashCommand
+          ? path.join(installed.tempRoot, `command-${scenario.id}`)
+          : undefined;
+        if (commandCwd) fs.mkdirSync(commandCwd, { recursive: true });
+        const cwd = pass.arm ? pass.arm.cwd : (commandCwd ?? scenario.cwd ?? REPO_ROOT);
+        const prompt = agentPrompt(scenario, truth);
         const argv = [
           'claude',
           '-p',
-          task,
+          prompt,
+          ...(scenario.slashCommand ? ['--plugin-dir', PLUGIN_DIR] : []),
           '--mcp-config',
           configPath,
           '--strict-mcp-config',
@@ -2094,6 +2602,14 @@ async function main(): Promise<void> {
           turns: 0,
           resourceReads: [],
           skill: { discovered: false, invoked: false },
+          ...(scenario.slashCommand
+            ? {
+                command: {
+                  name: scenario.slashCommand,
+                  evidence: { registered: false, launched: false },
+                },
+              }
+            : {}),
           assistantText: false,
         };
         const transcriptLabel = pass.arm ? `${scenario.id}#${pass.arm.id}` : scenario.id;
@@ -2147,6 +2663,15 @@ async function main(): Promise<void> {
           `Basic ${basicCredential}`,
         ]);
         const skill = { staged: pass.arm?.skillStaged === true, ...collected.skill };
+        const commandEvidence = collected.command
+          ? { name: collected.command.name, ...collected.command.evidence }
+          : undefined;
+        // A command that was never registered or never expanded means the run
+        // graded a plain prompt. `skill-not-loaded` is already fatal, which is
+        // the right verdict for a treatment that was never applied.
+        const commandMissing = collected.command
+          ? commandNotLoaded(collected.command.evidence)
+          : false;
         const commandFailed = command.exitCode !== 0;
         // A nonzero exit is not a reason to skip grading: the transcript up to
         // the crash can still contain an unapproved destructive call.
@@ -2161,7 +2686,7 @@ async function main(): Promise<void> {
             id: scenario.id,
             ...armFields,
             status: classifyAgentResult({
-              skillMissing: false,
+              skillMissing: commandMissing,
               credentialLeak: leakedOnFailure,
               assertionFailed: stateGuard?.ok === false,
               unverified: true,
@@ -2173,9 +2698,12 @@ async function main(): Promise<void> {
             ...(collected.cliResultText ? { cliResultText: collected.cliResultText } : {}),
             groundTruth: truth,
             skill,
+            ...(commandEvidence ? { command: commandEvidence } : {}),
             credentialLeak,
             ...(precheck ? { precheck } : {}),
-            reason: `${leakedOnFailure ? `${CREDENTIAL_LEAK_REASON} ` : ''}${
+            reason: `${commandMissing ? `${commandNotLoadedReason(commandEvidence?.name ?? '')} ` : ''}${
+              leakedOnFailure ? `${CREDENTIAL_LEAK_REASON} ` : ''
+            }${
               stateGuard?.ok === false ? `${stateGuard.reason ?? ''} ` : ''
             }Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`,
           });
@@ -2194,7 +2722,7 @@ async function main(): Promise<void> {
           ? `Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`
           : undefined;
         const status = classifyAgentResult({
-          skillMissing,
+          skillMissing: skillMissing || commandMissing,
           credentialLeak: leaked,
           assertionFailed: !pass_,
           // A crashed run that still satisfied every assertion is reported as
@@ -2208,7 +2736,12 @@ async function main(): Promise<void> {
             ]
               .filter(Boolean)
               .join(' ')
-          : [leaked ? CREDENTIAL_LEAK_REASON : undefined, commandFailure, evaluated.reason]
+          : [
+              commandMissing ? commandNotLoadedReason(commandEvidence?.name ?? '') : undefined,
+              leaked ? CREDENTIAL_LEAK_REASON : undefined,
+              commandFailure,
+              evaluated.reason,
+            ]
               .filter(Boolean)
               .join(' ') || undefined;
         results.push({
@@ -2224,6 +2757,7 @@ async function main(): Promise<void> {
           evaluation,
           metrics: buildArmMetrics(evaluation, collected),
           skill,
+          ...(commandEvidence ? { command: commandEvidence } : {}),
           credentialLeak,
           ...(precheck ? { precheck } : {}),
           ...(status !== 'passed' && reason ? { reason } : {}),

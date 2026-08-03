@@ -41,6 +41,17 @@ export interface VerifiedPluginResponse {
   total: number;
 }
 
+export interface VerifiedUpdateInventory {
+  summary: {
+    core: number;
+    plugins: number;
+    themes: number;
+    translations: number;
+    total: number;
+  };
+  total: number;
+}
+
 export function serializeToPhpQueryString(input: Record<string, unknown>): string {
   const params: string[] = [];
   for (const [key, value] of Object.entries(input)) {
@@ -175,6 +186,23 @@ export class IndependentVerifier {
     return (await this.execute('mainwp/get-site-v1', {
       site_id_or_domain: siteIdOrDomain,
     })) as VerifiedSite;
+  }
+
+  /**
+   * Network-wide pending updates. `per_page` is the ability's maximum so a
+   * single request covers the testbed; the graded oracle is the response's own
+   * `total` and `summary`, which the ability documents as counts across the
+   * whole filter rather than the returned page.
+   */
+  async listUpdates(): Promise<VerifiedUpdateInventory> {
+    const response = (await this.execute('mainwp/list-updates-v1', {
+      page: 1,
+      per_page: 200,
+    })) as VerifiedUpdateInventory;
+    if (typeof response?.total !== 'number' || typeof response?.summary?.total !== 'number') {
+      throw new Error('Independent verifier expected a list-updates-v1 total and summary');
+    }
+    return response;
   }
 
   async getSitePlugins(siteIdOrDomain: number | string): Promise<VerifiedPluginResponse> {

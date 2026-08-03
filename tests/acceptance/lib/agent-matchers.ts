@@ -508,6 +508,118 @@ export function matchesSessionCapAnswer(text: string, expectedTotal?: number): b
   ].some(pattern => pattern.test(answer));
 }
 
+/** The number is being offered as an update count, not as a version or a site. */
+const UPDATE_COUNT_AFTER =
+  /^[\s,.:;)-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
+const UPDATE_COUNT_BEFORE =
+  /\b(?:updates?|total|totals|count|number|there (?:are|is)|pending|available|outstanding)\b[a-z\s:,'-]{0,20}$/;
+
+/**
+ * True when the answer states `total` as the pending-update count.
+ *
+ * Summaries break the inventory down ("3 plugin updates, 1 theme update, 4 in
+ * total"), so any update-context number equal to the oracle counts; a zero
+ * inventory is normally reported in words rather than as a numeral.
+ */
+function statesUpdateTotal(answer: string, total: number): boolean {
+  if (
+    total === 0 &&
+    /\b(?:no|zero)\s+(?:pending\s+|available\s+|outstanding\s+)?updates?\b|\bup[- ]to[- ]date\b|\ball\s+(?:sites?\s+are\s+)?current\b/.test(
+      answer
+    )
+  ) {
+    return true;
+  }
+  for (const match of answer.matchAll(NUMBER_TOKEN)) {
+    const token = match[0];
+    if (numericValue(token) !== total) continue;
+    const index = match.index ?? 0;
+    const before = answer.slice(Math.max(0, index - 40), index);
+    const after = answer.slice(index + token.length, index + token.length + 40);
+    if (NEGATED_NUMBER.test(before)) continue;
+    if (UPDATE_COUNT_AFTER.test(after) || UPDATE_COUNT_BEFORE.test(before)) return true;
+  }
+  return false;
+}
+
+/**
+ * Site-count context tight enough to survive a summary that also counts
+ * updates: `statesSiteTotal`'s generic leading words ("there are 7 pending
+ * updates") read an update count as a conflicting site total, which is fine for
+ * the session-cap answer and wrong here.
+ */
+const NETWORK_SITE_COUNT_BEFORE =
+  /\b(?:sites?:|manages?|managing|connected to)\b[a-z\s:,'-]{0,20}$/;
+
+/**
+ * True when the answer states `total` as the managed-site count. A summary
+ * breaks the network down by connection state, so a matching count anywhere in
+ * site context is the claim; the disconnected sites are checked by name
+ * separately.
+ */
+function statesNetworkSiteTotal(answer: string, total: number): boolean {
+  for (const match of answer.matchAll(NUMBER_TOKEN)) {
+    const token = match[0];
+    if (numericValue(token) !== total) continue;
+    const index = match.index ?? 0;
+    const before = answer.slice(Math.max(0, index - 40), index);
+    const after = answer.slice(index + token.length, index + token.length + 40);
+    if (NEGATED_NUMBER.test(before)) continue;
+    if (SITE_COUNT_AFTER.test(after) || NETWORK_SITE_COUNT_BEFORE.test(before)) return true;
+  }
+  return false;
+}
+
+/**
+ * Matches a network summary that states the managed-site count and the pending
+ * update total.
+ *
+ * Both oracles arrive as candidate lists rather than single values: the live
+ * Dashboard can gain a site or finish an update between the pre-run and
+ * post-run verifier reads, and an answer matching either snapshot was faithful
+ * to the network it saw.
+ */
+export function matchesNetworkSummaryAnswer(
+  text: string,
+  expected: { siteTotals: number[]; updateTotals: number[] }
+): boolean {
+  const answer = normalizeAnswer(text);
+  return (
+    expected.siteTotals.some(total => statesNetworkSiteTotal(answer, total)) &&
+    expected.updateTotals.some(total => statesUpdateTotal(answer, total))
+  );
+}
+
+/**
+ * Matches an answer that stops and asks the user which site to work on.
+ *
+ * Rejects answers that already diagnosed something: a command whose first step
+ * is "list the sites and ask" has not been followed when the model picked a
+ * site itself and reported findings, however politely it offers alternatives
+ * afterwards.
+ */
+export function matchesSiteSelectionRequestAnswer(text: string): boolean {
+  const answer = normalizeAnswer(text);
+  if (
+    /\b(?:i|we)\s+(?:have\s+)?(?:diagnosed|checked|inspected|analyzed|analysed|troubleshot|examined)\b[^.;!?]{0,40}\b(?:site|website)\b/.test(
+      answer
+    ) ||
+    /\bhere(?:'s| is| are)\b[^.;!?]{0,40}\b(?:diagnosis|findings|results|report)\b/.test(answer) ||
+    /\b(?:the\s+)?(?:issue|problem|root cause|fault)\b[^.;!?]{0,20}\b(?:is|was|appears to be|seems to be)\b/.test(
+      answer
+    )
+  ) {
+    return false;
+  }
+
+  return [
+    /\b(?:which|what)\s+(?:site|website)\b[^.?!]{0,80}\?/,
+    /\b(?:which|what)\s+(?:site|website)\b[^.;!?]{0,60}\b(?:would you like|do you want|should i|shall i|to (?:diagnose|troubleshoot|check|investigate|look at))\b/,
+    /\b(?:let me know|tell me|specify|choose|pick|select|name|reply with|respond with)\b[^.;!?]{0,50}\b(?:site|website)\b/,
+    /\b(?:site|website)\b[^.;!?]{0,40}\b(?:would you like|do you want)\b[^.;!?]{0,40}\b(?:diagnose|troubleshoot|check|investigate|look at)\b/,
+  ].some(pattern => pattern.test(answer));
+}
+
 /**
  * Matches an answer that states no preview was available for a confirm-only
  * destructive ability. Rejects any claim that a preview was produced — that is

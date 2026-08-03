@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   evaluateConfirmationTranscript,
   type RecordedAgentToolResult,
@@ -16,8 +17,10 @@ import {
   inventoryProvesSiteAbsent,
   matchesApprovalRequestAnswer,
   matchesFilteredCapabilityAnswer,
+  matchesNetworkSummaryAnswer,
   matchesNoPreviewAnswer,
   matchesSessionCapAnswer,
+  matchesSiteSelectionRequestAnswer,
   matchesStaleTokenAnswer,
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
@@ -48,6 +51,7 @@ import {
   startFixtureDashboard,
 } from '../fixture-dashboard.js';
 import {
+  agentPrompt,
   agentRunExitCode,
   agentScenarios,
   buildComparisons,
@@ -55,11 +59,13 @@ import {
   collectEvent,
   fixtureStateSnapshot,
   parseArgs as parseAgentArgs,
+  selectAgentScenarios,
   selectedArms,
   summarizeAgentRun,
   toolFamilyMatches,
   transcriptIsGradeable,
 } from '../agent-run.js';
+import { commandNotLoaded } from './agent-commands.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
@@ -2253,6 +2259,207 @@ describe('agent comparison arms', () => {
     expect(ids).toContain('agent-safemode-refusal');
     // Existing scenarios keep the repo-root working directory.
     expect(agentScenarios.every(scenario => scenario.cwd === undefined)).toBe(true);
+  });
+});
+
+describe('plugin command scenarios', () => {
+  const commandScenarios = agentScenarios.filter(scenario => scenario.slashCommand);
+  const commandsDir = fileURLToPath(new URL('../../../plugins/mainwp/commands', import.meta.url));
+  const collectedWithCommand = (
+    name: string
+  ): {
+    toolUses: RecordedAgentToolUse[];
+    toolResults: RecordedAgentToolResult[];
+    finalText: string;
+    totalToolUses: number;
+    turns: number;
+    resourceReads: string[];
+    skill: AgentSkillEvidence;
+    command: { name: string; evidence: { registered: boolean; launched: boolean } };
+    assistantText: boolean;
+  } => ({
+    toolUses: [],
+    toolResults: [],
+    finalText: '',
+    totalToolUses: 0,
+    turns: 0,
+    resourceReads: [],
+    skill: { discovered: false, invoked: false },
+    command: { name, evidence: { registered: false, launched: false } },
+    assistantText: false,
+  });
+
+  it('names a command the plugin actually ships', () => {
+    expect(commandScenarios.map(scenario => scenario.id)).toEqual([
+      'command-network-summary',
+      'command-site-report',
+      'command-troubleshoot-missing-arg',
+    ]);
+    for (const scenario of commandScenarios) {
+      const [namespace, name] = (scenario.slashCommand as string).split(':');
+      expect(namespace).toBe('mainwp');
+      // A typo would otherwise only surface as a failed live run.
+      expect(fs.existsSync(path.join(commandsDir, `${name}.md`))).toBe(true);
+    }
+  });
+
+  it('types the command itself, with its arguments, as the prompt', () => {
+    const summary = agentScenarios.find(scenario => scenario.id === 'command-network-summary');
+    const report = agentScenarios.find(scenario => scenario.id === 'command-site-report');
+    const plain = agentScenarios.find(scenario => scenario.id === 'agent-count-sites');
+    if (!summary || !report || !plain) throw new Error('An expected agent scenario is missing');
+
+    expect(agentPrompt(summary, {})).toBe('/mainwp:network-summary');
+    expect(agentPrompt(report, { targetSiteUrl: 'https://alpine.example.test' })).toBe(
+      '/mainwp:site-report alpine.example.test'
+    );
+    expect(agentPrompt(plain, {})).toBe(
+      'How many sites are currently connected to my MainWP dashboard?'
+    );
+  });
+
+  it('classifies a command that never registered or expanded as skill-not-loaded', () => {
+    const collected = collectedWithCommand('mainwp:network-summary');
+    const classify = (): string =>
+      classifyAgentResult({
+        skillMissing: commandNotLoaded(collected.command.evidence),
+        credentialLeak: false,
+        assertionFailed: false,
+        unverified: false,
+      });
+
+    // A session that never heard of the command, and a launch marker for a
+    // different one: without this evidence the run graded a plain prompt.
+    collectEvent({ type: 'system', subtype: 'init', slash_commands: ['mainwp:setup'] }, collected);
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:setup' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence).toEqual({ registered: false, launched: false });
+    expect(classify()).toBe('skill-not-loaded');
+
+    collectEvent(
+      {
+        type: 'system',
+        subtype: 'init',
+        slash_commands: ['mainwp:setup', 'mainwp:network-summary'],
+      },
+      collected
+    );
+    // Registration without expansion is still an ungraded command.
+    expect(collected.command.evidence).toEqual({ registered: true, launched: false });
+    expect(classify()).toBe('skill-not-loaded');
+
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:network-summary' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence).toEqual({ registered: true, launched: true });
+    expect(classify()).toBe('passed');
+  });
+
+  it('accepts a tool_reference expansion marker', () => {
+    const collected = collectedWithCommand('mainwp:site-report');
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              content: [{ type: 'tool_reference', name: 'mcp__mainwp__get_site_v1' }],
+            },
+          ],
+        },
+      },
+      collected
+    );
+
+    expect(collected.command.evidence).toEqual({ registered: false, launched: true });
+  });
+
+  it('leaves comparison modes without command scenarios', () => {
+    const plainRun = selectAgentScenarios({ scenarioIds: [], compare: false, withSkill: false });
+    expect(plainRun).toHaveLength(agentScenarios.length);
+
+    for (const options of [
+      { scenarioIds: [], compare: true, withSkill: false },
+      { scenarioIds: [], compare: false, withSkill: true },
+    ]) {
+      const selected = selectAgentScenarios(options);
+      expect(selected.some(scenario => scenario.slashCommand)).toBe(false);
+      expect(selected).toHaveLength(agentScenarios.length - commandScenarios.length);
+    }
+
+    // Silently dropping an explicitly named scenario would report a comparison
+    // the operator asked for and never got.
+    expect(() =>
+      selectAgentScenarios({
+        scenarioIds: ['command-network-summary'],
+        compare: true,
+        withSkill: false,
+      })
+    ).toThrow(/cannot run plugin command scenarios/);
+    expect(() =>
+      selectAgentScenarios({ scenarioIds: ['nope'], compare: false, withSkill: false })
+    ).toThrow(/Unknown agent scenario/);
+  });
+
+  it('grades a network summary on the site count and the update total', () => {
+    expect(
+      matchesNetworkSummaryAnswer(
+        'You manage 4 sites: 3 connected, 1 disconnected. There are 7 pending updates in total.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
+    // Either side of a moved live oracle is faithful; a wrong number is not.
+    expect(
+      matchesNetworkSummaryAnswer('All 4 sites are connected and fully up to date.', {
+        siteTotals: [4, 5],
+        updateTotals: [0],
+      })
+    ).toBe(true);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 4 sites with 7 pending updates in total.', {
+        siteTotals: [5],
+        updateTotals: [7],
+      })
+    ).toBe(false);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 4 sites with 7 pending updates in total.', {
+        siteTotals: [4],
+        updateTotals: [2],
+      })
+    ).toBe(false);
+  });
+
+  it('grades the missing-argument answer on asking which site', () => {
+    expect(
+      matchesSiteSelectionRequestAnswer(
+        'You have 3 managed sites: Alpine Bakery, Beacon Studio, Cedar Nonprofit. ' +
+          'Which site would you like me to troubleshoot?'
+      )
+    ).toBe(true);
+    expect(
+      matchesSiteSelectionRequestAnswer('Tell me which site to diagnose and I will start there.')
+    ).toBe(true);
+    // Picking a site for the user is the failure this scenario exists to catch.
+    expect(
+      matchesSiteSelectionRequestAnswer(
+        'I checked the first site, Alpine Bakery. The issue is a stale sync. ' +
+          'Want me to look at another site?'
+      )
+    ).toBe(false);
   });
 });
 
