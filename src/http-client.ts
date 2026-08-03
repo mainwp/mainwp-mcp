@@ -103,6 +103,14 @@ export function createFetch(config: Config, perCallTimeout?: number) {
           ...getAuthHeaders(config),
           ...options.headers,
         },
+        // Do not auto-follow redirects. The remote Dashboard response is hostile
+        // per the threat model, and a 3xx Location chosen by a compromised/MITM'd
+        // Dashboard would make this host issue authenticated requests to
+        // attacker-picked URLs (internal services, cloud metadata) and stream
+        // their bodies back. The MainWP Abilities REST endpoints always return a
+        // direct 2xx/4xx/5xx response, so a redirect is anomalous and fails closed
+        // below. Placed after `...options` so no caller can opt back into following.
+        redirect: 'manual',
       };
 
       // Per-request TLS bypass via undici dispatcher — avoids process-global
@@ -113,11 +121,35 @@ export function createFetch(config: Config, perCallTimeout?: number) {
 
       const response = await fetch(url, fetchOptions as RequestInit);
 
+      // Fail closed on redirects instead of following the Location header.
+      // With `redirect: 'manual'`, fetch surfaces the 3xx response instead of
+      // following it. Depending on the undici version this is either the real
+      // 3xx status (type 'basic') or an opaque-redirect placeholder (status 0,
+      // type 'opaqueredirect'); reject both. We never read the Location value —
+      // it is attacker-controlled — so the target host is never contacted.
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        const redirectStatus = response.status || 302;
+        // undici keeps the connection checked out until the body is consumed or
+        // canceled, so a discarded response leaks it until GC. Fire-and-forget:
+        // a rejected cancel() must not race the throw below.
+        void response.body?.cancel().catch(() => {});
+        throw createHttpError(
+          redirectStatus,
+          'redirect_not_allowed',
+          // No URL in the message: it can carry remote-influenced path/query
+          // data, and this string propagates to clients and logs.
+          `Refusing to follow HTTP redirect (status ${redirectStatus}) from the MainWP Dashboard`
+        );
+      }
+
       // Check response size before parsing (if content-length is provided)
       const contentLength = response.headers.get('content-length');
       if (contentLength) {
         const size = parseInt(contentLength, 10);
         if (size > config.maxResponseSize) {
+          // Same connection-leak reason as the redirect path above: nobody ever
+          // reads this body, so cancel it before discarding the response.
+          void response.body?.cancel().catch(() => {});
           throw new Error(
             `Response size ${size} bytes exceeds maximum allowed ${config.maxResponseSize} bytes`
           );

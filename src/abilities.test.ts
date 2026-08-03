@@ -1599,6 +1599,157 @@ describe('generateHelpDocument', () => {
   });
 });
 
+describe('help generation with hostile remote schema field types', () => {
+  // The remote catalog is hostile per project doctrine: input_schema.required
+  // and per-property `type` can arrive as ANY JSON type (abilities.ts bounds
+  // their string lengths but not their types). Before the fix, help.ts
+  // bare-cast `required` to string[] and called .includes(), throwing
+  // TypeError on a truthy non-array (42, {}, true). One malformed ability then
+  // aborted generateToolHelp mid-map, so mainwp://help failed for the ENTIRE
+  // catalog while ListTools kept advertising the tool.
+
+  // required is a number and a property `type` is an object — both invalid
+  // JSON Schema shapes a hostile Dashboard could ship.
+  const hostileSchemaAbility: Ability = {
+    name: 'mainwp/hostile-schema-v1',
+    label: 'Hostile Schema',
+    description: 'Ability with malformed schema field types',
+    category: 'mainwp-sites',
+    input_schema: {
+      type: 'object',
+      properties: {
+        weird: { type: {}, description: 'Weird param' },
+        ok: { type: 'string', description: 'Normal param' },
+      },
+      required: 42,
+    },
+    meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+  };
+
+  it('generateToolHelp tolerates null, primitive, and array property entries', () => {
+    const ability = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-props-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          nul: null,
+          num: 7,
+          arr: [1, 2],
+          ok: { type: 'string', description: 'fine' },
+        },
+        required: ['ok'],
+      },
+    } as unknown as Ability;
+
+    expect(() => generateToolHelp(ability, 'mainwp')).not.toThrow();
+    const help = generateToolHelp(ability, 'mainwp');
+    expect(help.parameters).toContainEqual(
+      expect.objectContaining({ name: 'ok', type: 'string', required: true })
+    );
+    expect(help.parameters.find(p => p.name === 'nul')?.type).toBe('unknown');
+  });
+
+  it('generateToolHelp does not advertise dry_run/confirm for false or malformed schemas', () => {
+    // declaresUsableBooleanParam must see the RAW properties: normalizing
+    // false/malformed entries to {} would turn "accepts nothing" into
+    // "accepts anything" and falsely advertise safety capabilities that
+    // execution (which reads raw properties) will refuse.
+    const ability = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-safety-v1',
+      input_schema: {
+        type: 'object',
+        properties: { dry_run: false, confirm: [1, 2] },
+      },
+    } as unknown as Ability;
+
+    const help = generateToolHelp(ability, 'mainwp');
+    expect(help.safetyFeatures.supportsDryRun).toBe(false);
+    expect(help.safetyFeatures.requiresConfirm).toBe(false);
+  });
+
+  it('generateToolHelp tolerates a non-record properties value and non-string descriptions', () => {
+    const arrayProps = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-array-props-v1',
+      input_schema: { type: 'object', properties: [1, 2, 3] },
+    } as unknown as Ability;
+    expect(() => generateToolHelp(arrayProps, 'mainwp')).not.toThrow();
+    expect(generateToolHelp(arrayProps, 'mainwp').parameters).toEqual([]);
+
+    const badDesc = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-desc-v1',
+      input_schema: {
+        type: 'object',
+        properties: { p: { type: 'string', description: { evil: true } } },
+      },
+    } as unknown as Ability;
+    expect(generateToolHelp(badDesc, 'mainwp').parameters[0]?.description).toBeUndefined();
+  });
+
+  it('generateToolHelp does not throw when required is a non-array and a type is an object', () => {
+    expect(() => generateToolHelp(hostileSchemaAbility, 'mainwp')).not.toThrow();
+
+    const help = generateToolHelp(hostileSchemaAbility, 'mainwp');
+    // Non-string `type` degrades to 'unknown' rather than '[object Object]'.
+    expect(help.parameters).toContainEqual(
+      expect.objectContaining({ name: 'weird', type: 'unknown', required: false })
+    );
+    // Well-formed sibling property is unaffected.
+    expect(help.parameters).toContainEqual(
+      expect.objectContaining({ name: 'ok', type: 'string', required: false })
+    );
+  });
+
+  it('generateHelpDocument still documents well-formed abilities alongside a hostile one', () => {
+    const abilities = [sampleAbilities[0], hostileSchemaAbility, sampleAbilities[1]];
+
+    let helpDoc: ReturnType<typeof generateHelpDocument> | undefined;
+    expect(() => {
+      helpDoc = generateHelpDocument(abilities, 'mainwp');
+    }).not.toThrow();
+
+    const documented = Object.values(helpDoc!.toolsByCategory)
+      .flat()
+      .map(h => h.toolName);
+    expect(documented).toContain('list_sites_v1');
+    expect(documented).toContain('delete_site_v1');
+  });
+
+  it('generateHelpDocument isolates an ability that throws for any other reason', () => {
+    // Defense-in-depth: even a failure the field-level guards do not cover
+    // (here, accessing input_schema throws) must degrade to skipping that one
+    // ability, not aborting the whole document.
+    const throwingAbility = {
+      name: 'mainwp/throwing-v1',
+      label: 'Throwing',
+      description: 'Reading its schema throws',
+      category: 'mainwp-sites',
+      get input_schema(): Record<string, unknown> {
+        throw new Error('boom');
+      },
+      meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+    } as unknown as Ability;
+
+    const abilities = [sampleAbilities[0], throwingAbility];
+
+    let helpDoc: ReturnType<typeof generateHelpDocument> | undefined;
+    expect(() => {
+      helpDoc = generateHelpDocument(abilities, 'mainwp');
+    }).not.toThrow();
+
+    const documented = Object.values(helpDoc!.toolsByCategory)
+      .flat()
+      .map(h => h.toolName);
+    expect(documented).toContain('list_sites_v1');
+    expect(documented).not.toContain('throwing_v1');
+    // totalTools counts only what was actually documented.
+    expect(helpDoc!.overview.totalTools).toBe(1);
+  });
+});
+
 describe('normalizeRemoteText', () => {
   it('never exceeds maxLength, including limits at or below the ellipsis length', () => {
     for (const maxLength of [0, 1, 2, 3, 4, 10]) {

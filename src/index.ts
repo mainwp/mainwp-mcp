@@ -44,7 +44,7 @@ import { validateCredentials } from './credential-check.js';
 import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { sanitizeError, isValidId } from './security.js';
+import { sanitizeError, registerKnownSecrets, isValidId } from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
 
@@ -114,6 +114,16 @@ Run "npx -y @mainwp/mcp --help" for more options.`;
  * Create and configure the MCP server
  */
 export async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
+  // Every sanitizeError call site benefits, whatever path an error takes to a
+  // client-visible string: the server's own credentials are scrubbed by value,
+  // in the encodings a serialized error body preserves.
+  registerKnownSecrets([
+    config.appPassword,
+    config.apiToken,
+    config.username && config.appPassword
+      ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
+      : undefined,
+  ]);
   const server = new Server(
     {
       name: SERVER_NAME,
@@ -381,6 +391,16 @@ async function main(): Promise<void> {
   try {
     // Load configuration from environment
     const config = loadConfig();
+
+    // Register before any remote call: the startup credential check runs ahead
+    // of createServer(), and its error path must already redact by value.
+    registerKnownSecrets([
+      config.appPassword,
+      config.apiToken,
+      config.username && config.appPassword
+        ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
+        : undefined,
+    ]);
 
     // Initialize rate limiter
     initRateLimiter(config.rateLimit);

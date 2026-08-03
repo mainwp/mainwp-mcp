@@ -580,6 +580,123 @@ describe('loadConfig', () => {
       expect(() => loadConfig()).toThrow(/MAINWP_ABILITY_NAMESPACES/);
     });
   });
+
+  describe('untrusted CWD settings.json cannot weaken security flags', () => {
+    function withAuth(extra: Record<string, unknown>) {
+      return {
+        dashboardUrl: 'https://test.com',
+        username: 'admin',
+        appPassword: 'xxxx',
+        ...extra,
+      };
+    }
+
+    // The CWD file is searchPaths[0]; existsSync returns true only for it.
+    function mockCwdSettings(settings: Record<string, unknown>) {
+      vi.mocked(fs.existsSync).mockImplementation(p => String(p).includes(process.cwd()));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+    }
+
+    // The trusted per-user config is searchPaths[1] (~/.config/mainwp-mcp),
+    // which never contains the CWD path.
+    function mockHomeSettings(settings: Record<string, unknown>) {
+      vi.mocked(fs.existsSync).mockImplementation(p => !String(p).includes(process.cwd()));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+    }
+
+    it('ignores requireUserConfirmation:false from a CWD file (confirmation stays on)', () => {
+      mockCwdSettings(withAuth({ requireUserConfirmation: false }));
+
+      expect(loadConfig().requireUserConfirmation).toBe(true);
+    });
+
+    it('ignores skipSslVerify:true from a CWD file', () => {
+      mockCwdSettings(withAuth({ skipSslVerify: true }));
+
+      expect(loadConfig().skipSslVerify).toBe(false);
+    });
+
+    it('ignores allowHttp:true from a CWD file', () => {
+      mockCwdSettings(withAuth({ allowHttp: true }));
+
+      expect(loadConfig().allowHttp).toBe(false);
+    });
+
+    it('still lets an env var override a CWD file for a security flag', () => {
+      mockCwdSettings(withAuth({}));
+      process.env.MAINWP_URL = 'https://test.com';
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+      process.env.MAINWP_REQUIRE_USER_CONFIRMATION = 'false';
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('refuses a CWD dashboardUrl when credentials come from the environment', () => {
+      // A planted CWD file naming the Dashboard would route the operator's
+      // real (env-sourced) credentials to an attacker-chosen host.
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
+    it('refuses a CWD dashboardUrl when only the username comes from the environment', () => {
+      // Identity counts too: env username + planted url/password would still
+      // send the real username to an attacker-chosen host.
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example', appPassword: 'xxxx' });
+      process.env.MAINWP_USER = 'admin';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
+    it('accepts a complete same-file Basic config despite a stale env MAINWP_TOKEN', () => {
+      // The gate keys on the credentials the selected auth actually uses:
+      // a complete file Basic pair wins over apiToken, so an unused env token
+      // routes nothing and must not reject the documented per-folder pattern.
+      mockCwdSettings(withAuth({}));
+      process.env.MAINWP_TOKEN = 'stale-token';
+
+      expect(loadConfig().dashboardUrl).toBe('https://test.com');
+    });
+
+    it('still refuses a CWD dashboardUrl in token mode when the token comes from env', () => {
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_TOKEN = 'real-token';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
+    it('still accepts a CWD file that carries both dashboardUrl and credentials', () => {
+      // The documented multi-dashboard pattern: one folder per Dashboard, url
+      // and credentials in the same file. No cross-source routing occurs.
+      mockCwdSettings(withAuth({}));
+
+      expect(loadConfig().dashboardUrl).toBe('https://test.com');
+    });
+
+    it('still lets MAINWP_URL pair with env credentials when a CWD file exists', () => {
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_URL = 'https://real.example';
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+
+      expect(loadConfig().dashboardUrl).toBe('https://real.example');
+    });
+
+    it('honors requireUserConfirmation:false from the trusted per-user config', () => {
+      mockHomeSettings(withAuth({ requireUserConfirmation: false }));
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('honors skipSslVerify:true from the trusted per-user config', () => {
+      mockHomeSettings(withAuth({ skipSslVerify: true }));
+
+      expect(loadConfig().skipSslVerify).toBe(true);
+    });
+  });
 });
 
 describe('getAbilitiesApiUrl', () => {

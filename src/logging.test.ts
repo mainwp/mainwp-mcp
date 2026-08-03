@@ -174,6 +174,90 @@ describe('createStderrLogger', () => {
   });
 });
 
+describe('logToStderr control-character neutralization', () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  it('strips ANSI/CSI escape sequences so a remote message cannot recolor the terminal', () => {
+    const logger = createStderrLogger();
+
+    logger.error('remote said \x1b[31mHACKED\x1b[0m');
+
+    const line = consoleError.mock.calls[0][0] as string;
+    expect(line).not.toContain('\x1b');
+    // ESC removed; the now-inert "[31m" survives only as harmless literal text.
+    expect(line).toContain('remote said [31mHACKED[0m');
+  });
+
+  it('strips newlines and carriage returns so a message cannot forge a second log line', () => {
+    const logger = createStderrLogger();
+
+    logger.error('line one\n[2026-01-01T00:00:00.000Z] [ERROR] [mainwp-mcp] FORGED\r');
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const line = consoleError.mock.calls[0][0] as string;
+    expect(line).not.toContain('\n');
+    expect(line).not.toContain('\r');
+    expect(line).toContain('FORGED');
+  });
+
+  it('strips DEL and C1 control characters from the message', () => {
+    const logger = createStderrLogger();
+
+    logger.error('a\x7fb\x9bc');
+
+    const line = consoleError.mock.calls[0][0] as string;
+    expect(line).not.toMatch(/[\x7f-\x9f]/);
+    expect(line).toContain('abc');
+  });
+
+  it('strips control bytes from JSON-encoded data that survive JSON.stringify (DEL/C1)', () => {
+    const logger = createStderrLogger();
+
+    logger.info('msg', { field: 'x\x7f\x9by' });
+
+    const line = consoleError.mock.calls[0][0] as string;
+    expect(line).not.toMatch(/[\x7f-\x9f]/);
+  });
+
+  it('neutralizes a parse-error message that retained raw ESC bytes (exploit path)', () => {
+    // Reproduce the objection's exploit: a 200-OK invalid-JSON response body
+    // that embeds an ANSI sequence. A JSON parse failure quotes the offending
+    // body back in its message, raw ESC byte included; that error propagates
+    // paginateApi -> validateCredentials (credential-check.ts:92 re-wrap) ->
+    // index.ts fatal handler -> startupLogger.error -> this stderr sink. The
+    // message text is spelled out here rather than taken from JSON.parse,
+    // whose wording is engine-dependent.
+    const parseMessage = `Unexpected token '\x1b[31mHACKED\x1b[0m', is not valid JSON`;
+
+    const logger = createStderrLogger();
+    logger.error(`Fatal error: Credential validation failed: ${parseMessage}`);
+
+    const line = consoleError.mock.calls[0][0] as string;
+    expect(line).not.toContain('\x1b');
+    expect(line).not.toContain('\n');
+  });
+
+  it('leaves a control-char-free message unchanged', () => {
+    const logger = createStderrLogger('mainwp-mcp');
+    const msg = 'Connected! Found 42 abilities';
+
+    logger.info(msg);
+
+    const line = consoleError.mock.calls[0][0] as string;
+    // Timestamp is dynamic; the stable tail must be byte-identical (no stripping
+    // applied to control-char-free text).
+    expect(line.endsWith(`[INFO] [mainwp-mcp] ${msg}`)).toBe(true);
+  });
+});
+
 describe('withRequestId', () => {
   it('should add requestId to all log calls', () => {
     const inner = {

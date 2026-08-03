@@ -22,6 +22,29 @@ export interface Logger {
 
 type LogFn = (level: LogLevel, message: string, data?: Record<string, unknown>) => void;
 
+/**
+ * C0 control characters (U+0000–U+001F: includes ESC, newline, CR, tab), DEL
+ * (U+007F), and C1 control characters (U+0080–U+009F).
+ *
+ * Remote-derived text can reach the operator's stderr terminal at startup — a
+ * hostile Dashboard error body, or a JSON.parse SyntaxError whose message
+ * retained raw response bytes — carrying ANSI/CSI/OSC escape sequences and
+ * newlines that recolor/reposition the terminal or spoof additional log lines.
+ * The class is a single bounded character range (linear scan, no backtracking),
+ * so it stays ReDoS-safe even on the largest size-capped bodies.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
+
+/**
+ * Strip control/escape bytes so a formatted log line cannot manipulate the
+ * terminal or forge a second log entry. Ordinary text (including multibyte
+ * Unicode above U+009F) is left byte-for-byte unchanged.
+ */
+function stripControlChars(text: string): string {
+  return text.replace(CONTROL_CHARS, '');
+}
+
 /** Build the 6-method Logger dispatch from a single log function. */
 function buildLoggerMethods(log: LogFn): Logger {
   return {
@@ -43,7 +66,17 @@ function logToStderr(
 ): void {
   const timestamp = new Date().toISOString();
   const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-  console.error(`[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`);
+  // Strip control/escape bytes at the single stderr sink: this line is the only
+  // console write in this module, and both createStderrLogger and the
+  // createLogger fallback route through it, so remote-derived text reaching the
+  // operator's terminal is neutralized here regardless of which caller produced
+  // it. JSON.stringify escapes C0 bytes in `data` but not DEL/C1, so the whole
+  // formatted line is stripped rather than only `message`.
+  console.error(
+    stripControlChars(
+      `[${timestamp}] [${level.toUpperCase()}] [${loggerName}] ${message}${dataStr}`
+    )
+  );
 }
 
 /**

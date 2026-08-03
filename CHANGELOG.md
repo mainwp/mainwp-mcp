@@ -32,6 +32,32 @@ sent after the user sees the preview or operation description, unless the user
 explicitly authorized proceeding through confirmation up front. The compact
 strings carry the same gate so compact mode cannot reopen the loophole.
 
+### Security
+
+A `settings.json` planted in the server's working directory can no longer turn
+off the destructive-operation confirmation gate or TLS verification. The
+working-directory file is untrusted for security-loosening values:
+`requireUserConfirmation: false`, `skipSslVerify: true`, and `allowHttp: true`
+are dropped there with a stderr warning. Environment variables and
+`~/.config/mainwp-mcp/settings.json` keep working as before.
+
+Stderr log lines now strip terminal control characters, so remote error text
+can no longer inject escape sequences into the operator's terminal. Multi-line
+startup error messages render on a single line as a side effect.
+
+Error sanitization now also redacts HTTP Basic credentials, `Authorization`
+headers, and spaced WordPress application passwords, and caps the error text it
+processes, so oversized or credential-bearing remote errors cannot leak
+secrets or stall the server. Redaction covers serialized forms (JSON at any
+nesting depth, PHP dumps, URL-encoded bodies), and the server's own
+credentials are additionally scrubbed by value wherever they appear in an
+error, in any encoding that preserves them.
+
+HTTP redirects from the Dashboard are no longer followed. A 3xx response now
+fails the request instead of silently re-sending it (with credentials) to
+whatever host the redirect names. Point `MAINWP_URL` at the final URL if your
+Dashboard sits behind a redirect.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
