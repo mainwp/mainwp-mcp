@@ -31,6 +31,22 @@ interface FixturePlugin {
   update_version: string | null;
 }
 
+type FixtureTheme = FixturePlugin;
+
+interface FixtureIgnoredUpdate {
+  type: 'core' | 'plugin' | 'theme';
+  slug: string;
+  name: string;
+  ignored_version: string;
+}
+
+interface FixtureChange {
+  type: string;
+  item: string;
+  detected_at: string;
+  detail: string;
+}
+
 interface FixtureSite {
   id: number;
   url: string;
@@ -43,8 +59,29 @@ interface FixtureSite {
   admin_username: string;
   child_version: string;
   notes: string;
+  core_update: string | null;
   plugins: FixturePlugin[];
+  themes: FixtureTheme[];
+  ignored_updates: FixtureIgnoredUpdate[];
+  security_issues: Record<string, number>;
+  changes: FixtureChange[];
 }
+
+interface FixtureUpdate {
+  type: 'core' | 'plugin' | 'theme' | 'translation';
+  slug: string;
+  name: string;
+  current_version: string;
+  new_version: string;
+}
+
+/** Ability input names for update types, and the type each row carries. */
+const UPDATE_TYPE_BY_FILTER: Record<string, FixtureUpdate['type']> = {
+  core: 'core',
+  plugins: 'plugin',
+  themes: 'theme',
+  translations: 'translation',
+};
 
 export interface FixtureDashboard {
   url: string;
@@ -121,9 +158,95 @@ async function parseInput(request: IncomingMessage, url: URL): Promise<Record<st
     : {};
 }
 
-function publicSite(site: FixtureSite): Omit<FixtureSite, 'plugins'> {
-  const { plugins: _plugins, ...siteData } = site;
+type PublicSite = Omit<
+  FixtureSite,
+  'core_update' | 'plugins' | 'themes' | 'ignored_updates' | 'security_issues' | 'changes'
+>;
+
+/**
+ * The site record `mainwp/get-site-v1` returns. The inventories behind the
+ * per-site abilities stay out of it: a Dashboard does not inline them into the
+ * site record, and the read-only command scenarios snapshot this shape.
+ */
+function publicSite(site: FixtureSite): PublicSite {
+  const {
+    core_update: _coreUpdate,
+    plugins: _plugins,
+    themes: _themes,
+    ignored_updates: _ignoredUpdates,
+    security_issues: _securityIssues,
+    changes: _changes,
+    ...siteData
+  } = site;
   return siteData;
+}
+
+/** Update types the request asked for; an empty or absent list means all. */
+function requestedUpdateTypes(input: Record<string, unknown>): Set<FixtureUpdate['type']> {
+  const requested = Array.isArray(input.types)
+    ? input.types.filter((value): value is string => typeof value === 'string')
+    : [];
+  if (requested.length === 0) return new Set(Object.values(UPDATE_TYPE_BY_FILTER));
+  return new Set(
+    requested
+      .map(filter => UPDATE_TYPE_BY_FILTER[filter])
+      .filter((type): type is FixtureUpdate['type'] => type !== undefined)
+  );
+}
+
+function siteUpdates(site: FixtureSite, types: Set<FixtureUpdate['type']>): FixtureUpdate[] {
+  const updates: FixtureUpdate[] = [];
+  if (site.core_update && types.has('core')) {
+    updates.push({
+      type: 'core',
+      slug: 'wordpress',
+      name: 'WordPress',
+      current_version: site.wp_version,
+      new_version: site.core_update,
+    });
+  }
+  const inventories: Array<[FixtureUpdate['type'], FixturePlugin[]]> = [
+    ['plugin', site.plugins],
+    ['theme', site.themes],
+  ];
+  for (const [type, items] of inventories) {
+    if (!types.has(type)) continue;
+    for (const item of items) {
+      if (!item.update_version) continue;
+      updates.push({
+        type,
+        slug: item.slug,
+        name: item.name,
+        current_version: item.version,
+        new_version: item.update_version,
+      });
+    }
+  }
+  return updates;
+}
+
+function updateSummary(updates: FixtureUpdate[]): Record<string, number> {
+  const count = (type: FixtureUpdate['type']): number =>
+    updates.filter(update => update.type === type).length;
+  return {
+    core: count('core'),
+    plugins: count('plugin'),
+    themes: count('theme'),
+    translations: count('translation'),
+    total: updates.length,
+  };
+}
+
+/** Sites named by a network-wide filter; an empty or absent list means all. */
+function filterSites(sites: FixtureSite[], identifiers: unknown): FixtureSite[] | null {
+  if (!Array.isArray(identifiers) || identifiers.length === 0) return sites;
+  const selected: FixtureSite[] = [];
+  for (const identifier of identifiers) {
+    const site = findSite(sites, identifier);
+    if (!site) return null;
+    if (!selected.includes(site)) selected.push(site);
+  }
+  return selected;
 }
 
 function findSite(sites: FixtureSite[], identifier: unknown): FixtureSite | undefined {
@@ -222,6 +345,116 @@ async function runAbility(
       site_url: site.url,
       plugins,
       total: plugins.length,
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-site-themes-v1') {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const status = typeof input.status === 'string' ? input.status : 'all';
+    const hasUpdate = input.has_update === true;
+    const themes = site.themes.filter(theme => {
+      const statusMatches =
+        status === 'all' ||
+        (status === 'active' ? theme.active : status === 'inactive' && !theme.active);
+      return statusMatches && (!hasUpdate || theme.update_version !== null);
+    });
+    json(response, 200, {
+      site_id: site.id,
+      site_url: site.url,
+      active_theme: site.themes.find(theme => theme.active)?.slug ?? '',
+      themes,
+      total: themes.length,
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-site-updates-v1') {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const updates = siteUpdates(site, requestedUpdateTypes(input));
+    json(response, 200, {
+      site_id: site.id,
+      site_url: site.url,
+      site_name: site.name,
+      updates,
+      rollback_items: { plugins: [], themes: [] },
+      summary: updateSummary(updates),
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/list-updates-v1') {
+    const selected = filterSites(sites, input.site_ids_or_domains);
+    if (!selected) return notFound(response, 'A requested MainWP site was not found.');
+    const types = requestedUpdateTypes(input);
+    const updates = selected.flatMap(site =>
+      siteUpdates(site, types).map(update => ({
+        site_id: site.id,
+        site_url: site.url,
+        site_name: site.name,
+        ...update,
+      }))
+    );
+    const page = typeof input.page === 'number' ? input.page : 1;
+    const perPage = typeof input.per_page === 'number' ? input.per_page : 50;
+    const start = (page - 1) * perPage;
+    json(response, 200, {
+      updates: updates.slice(start, start + perPage),
+      // The ability documents the summary as counts across the whole filter,
+      // not the returned page.
+      summary: updateSummary(updates),
+      page,
+      per_page: perPage,
+      total: updates.length,
+      errors: [],
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/list-ignored-updates-v1') {
+    const selected = filterSites(sites, input.site_ids_or_domains);
+    if (!selected) return notFound(response, 'A requested MainWP site was not found.');
+    const types = requestedUpdateTypes(input);
+    const ignored = selected.flatMap(site =>
+      site.ignored_updates
+        .filter(entry => types.has(entry.type))
+        .map(entry => ({
+          site_id: site.id,
+          site_url: site.url,
+          site_name: site.name,
+          ...entry,
+        }))
+    );
+    json(response, 200, { ignored, total: ignored.length, errors: [] });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-site-security-v1') {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    json(response, 200, {
+      site_id: site.id,
+      security_issues: site.security_issues,
+      total_issues: Object.values(site.security_issues).reduce((sum, count) => sum + count, 0),
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-site-changes-v1') {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const type = typeof input.type === 'string' ? input.type : '';
+    const items = site.changes.filter(change => !type || change.type === type);
+    const page = typeof input.page === 'number' ? input.page : 1;
+    const perPage = typeof input.per_page === 'number' ? input.per_page : 20;
+    const start = (page - 1) * perPage;
+    json(response, 200, {
+      items: items.slice(start, start + perPage),
+      page,
+      per_page: perPage,
+      total: items.length,
     });
     return;
   }

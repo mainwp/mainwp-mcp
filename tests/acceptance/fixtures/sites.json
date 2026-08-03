@@ -11,6 +11,7 @@
     "admin_username": "alpine-admin",
     "child_version": "5.4.0",
     "notes": "Fixture site with active Hello Dolly",
+    "core_update": null,
     "plugins": [
       {
         "slug": "hello.php",
@@ -26,6 +27,48 @@
         "active": true,
         "update_version": "5.3.7"
       }
+    ],
+    "themes": [
+      {
+        "slug": "bakehouse",
+        "name": "Bakehouse",
+        "version": "2.4.0",
+        "active": true,
+        "update_version": "2.5.0"
+      },
+      {
+        "slug": "twentytwentyfour",
+        "name": "Twenty Twenty-Four",
+        "version": "1.7",
+        "active": false,
+        "update_version": null
+      }
+    ],
+    "ignored_updates": [
+      {
+        "type": "plugin",
+        "slug": "hello.php",
+        "name": "Hello Dolly",
+        "ignored_version": "1.7.3"
+      }
+    ],
+    "security_issues": {
+      "file_editor_enabled": 1,
+      "wp_version_exposed": 1
+    },
+    "changes": [
+      {
+        "type": "plugin_activated",
+        "item": "Hello Dolly",
+        "detected_at": "2026-07-15T09:12:00Z",
+        "detail": "Activated outside MainWP."
+      },
+      {
+        "type": "user_created",
+        "item": "editor-jane",
+        "detected_at": "2026-07-14T18:40:00Z",
+        "detail": "Administrator created outside MainWP."
+      }
     ]
   },
   {
@@ -40,6 +83,7 @@
     "admin_username": "beacon-admin",
     "child_version": "5.4.0",
     "notes": "Fixture site with inactive Hello Dolly",
+    "core_update": null,
     "plugins": [
       {
         "slug": "hello-dolly/hello.php",
@@ -55,7 +99,19 @@
         "active": true,
         "update_version": null
       }
-    ]
+    ],
+    "themes": [
+      {
+        "slug": "twentytwentyfive",
+        "name": "Twenty Twenty-Five",
+        "version": "1.2",
+        "active": true,
+        "update_version": null
+      }
+    ],
+    "ignored_updates": [],
+    "security_issues": {},
+    "changes": []
   },
   {
     "id": 3,
@@ -69,6 +125,7 @@
     "admin_username": "cedar-admin",
     "child_version": "5.3.1",
     "notes": "Disconnected fixture site",
+    "core_update": "6.8.1",
     "plugins": [
       {
         "slug": "forms/forms.php",
@@ -77,6 +134,27 @@
         "active": true,
         "update_version": "3.2.0"
       }
-    ]
+    ],
+    "themes": [
+      {
+        "slug": "cedar-classic",
+        "name": "Cedar Classic",
+        "version": "1.0.4",
+        "active": true,
+        "update_version": null
+      }
+    ],
+    "ignored_updates": [
+      {
+        "type": "theme",
+        "slug": "cedar-classic",
+        "name": "Cedar Classic",
+        "ignored_version": "1.1.0"
+      }
+    ],
+    "security_issues": {
+      "stale_sync": 1
+    },
+    "changes": []
   }
 ]

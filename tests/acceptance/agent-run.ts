@@ -25,6 +25,7 @@ import {
   matchesSessionCapAnswer,
   matchesSiteSelectionRequestAnswer,
   matchesStaleTokenAnswer,
+  namesPendingUpdates,
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
   scopedSearchProvesSiteAbsent,
@@ -165,6 +166,8 @@ interface AgentGroundTruth {
   disconnectedSiteUrls?: string[];
   updateTotal?: number;
   otherSiteNames?: string[];
+  pendingUpdateNames?: string[];
+  pendingUpdateTotal?: number;
 }
 
 type AgentResultStatus = 'passed' | 'failed' | 'unverified' | 'skill-not-loaded';
@@ -341,6 +344,11 @@ interface AgentTag {
 interface AgentThemeResponse {
   active_theme: string;
   themes: Array<{ slug: string; name: string; active: boolean }>;
+}
+
+interface AgentSiteUpdatesResponse {
+  updates: Array<{ name: string }>;
+  summary: { total: number };
 }
 
 interface AgentCheckSiteResponse {
@@ -1503,6 +1511,17 @@ export const agentScenarios: AgentScenario[] = [
       const sites = await verifier.listSites();
       const target = sites.find(site => site.id === 1) ?? sites[0];
       if (!target) throw new Error('No fixture site was available for the site-report command');
+      // The pending inventory is read from the fixture rather than restated
+      // here, so the grading follows the fixture's data instead of drifting
+      // from it.
+      const pending = (await verifier.execute('mainwp/get-site-updates-v1', {
+        site_id_or_domain: target.id,
+      })) as AgentSiteUpdatesResponse;
+      if (pending.updates.length === 0) {
+        throw new Error(
+          `The site-report command scenario needs pending updates on ${target.url}, found none`
+        );
+      }
       return {
         targetSiteId: target.id,
         targetSiteUrl: target.url,
@@ -1511,6 +1530,8 @@ export const agentScenarios: AgentScenario[] = [
           .filter(site => site.id !== target.id)
           .flatMap(site => [site.name, hostnameOf(site.url)])
           .sort(),
+        pendingUpdateNames: pending.updates.map(update => update.name).sort(),
+        pendingUpdateTotal: pending.summary.total,
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
@@ -1520,10 +1541,12 @@ export const agentScenarios: AgentScenario[] = [
         truth.targetSiteId === undefined ||
         !truth.targetSiteUrl ||
         !truth.targetSiteName ||
-        !truth.otherSiteNames
+        !truth.otherSiteNames ||
+        !truth.pendingUpdateNames
       ) {
         throw new Error('Site-report ground truth was incomplete');
       }
+      const pendingUpdateNames = truth.pendingUpdateNames;
       const targetSiteId = truth.targetSiteId;
       const targetSiteUrl = truth.targetSiteUrl;
       const targetedUses = collected.toolUses.filter(tool =>
@@ -1532,17 +1555,26 @@ export const agentScenarios: AgentScenario[] = [
       const misdirectedUses = collected.toolUses.filter(tool =>
         toolInputTargetsOtherSite(tool.input, targetSiteId, targetSiteUrl)
       );
+      // A network-wide update read carries no site_id_or_domain, so it is
+      // neither targeted nor misdirected, and it still answers this site.
+      const updateUses = collected.toolUses.filter(
+        tool =>
+          toolFamilyMatches(tool.name, COMMAND_UPDATE_READ_TOOLS) &&
+          !toolInputTargetsOtherSite(tool.input, targetSiteId, targetSiteUrl)
+      );
       const outsideTools = toolsOutsideFamilies(collected.toolUses, COMMAND_READ_TOOLS);
-      // The fixture serves no update-inventory execution route, so those calls
-      // come back as errors by design. The graded evidence is the successful
-      // site read, not a clean transcript.
-      const targetedResults = toolResultsForUses(targetedUses, collected.toolResults).filter(
-        result => !result.isError
-      );
-      const targetedResultText = flattenStrings(targetedResults).join('\n').toLowerCase();
+      // The fixture catalog still advertises abilities it does not execute, so
+      // a failed call to one of those is by design and only the successful
+      // reads are graded.
+      const gradedResults = toolResultsForUses(
+        [...targetedUses, ...updateUses],
+        collected.toolResults
+      ).filter(result => !result.isError);
+      const gradedResultText = flattenStrings(gradedResults).join('\n').toLowerCase();
       const resultNamesSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
-        targetedResultText.includes(value.toLowerCase())
+        gradedResultText.includes(value.toLowerCase())
       );
+      const resultsNameUpdates = namesPendingUpdates(gradedResultText, pendingUpdateNames);
       const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const namesTargetSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
@@ -1551,6 +1583,7 @@ export const agentScenarios: AgentScenario[] = [
       const namesOtherSites = truth.otherSiteNames.filter(name =>
         finalText.includes(name.toLowerCase())
       );
+      const answerNamesUpdates = namesPendingUpdates(collected.finalText, pendingUpdateNames);
       const evaluation: AgentEvaluation = {
         understoodRequest: {
           pass: collected.finalText.trim().length > 0,
@@ -1572,11 +1605,14 @@ export const agentScenarios: AgentScenario[] = [
           },
         },
         correctMcpResult: {
-          pass: targetedResults.length > 0 && resultNamesSite,
+          pass: gradedResults.length > 0 && resultNamesSite && resultsNameUpdates,
           evidence: {
-            successfulTargetedResults: targetedResults.length,
+            successfulGradedResults: gradedResults.length,
             resultNamesSite,
+            resultsNameUpdates,
             targetSiteName: truth.targetSiteName,
+            pendingUpdateNames,
+            pendingUpdateTotal: truth.pendingUpdateTotal,
           },
         },
         stateChange: {
@@ -1584,11 +1620,17 @@ export const agentScenarios: AgentScenario[] = [
           evidence: { fixture: stateGuard.evidence, outsideTools },
         },
         faithfulFinalAnswer: {
-          pass: namesTargetSite && namesOtherSites.length === 0,
+          // The command asks for the actual plugin and theme names rather than
+          // counts alone, so a report that omits one is not the report the
+          // command specified.
+          pass: namesTargetSite && namesOtherSites.length === 0 && answerNamesUpdates,
           evidence: {
             finalText: collected.finalText,
             namesTargetSite,
             namesOtherSites,
+            answerNamesUpdates,
+            pendingUpdateNames,
+            pendingUpdateTotal: truth.pendingUpdateTotal,
           },
         },
       };

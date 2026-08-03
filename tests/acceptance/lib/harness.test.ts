@@ -22,6 +22,7 @@ import {
   matchesSessionCapAnswer,
   matchesSiteSelectionRequestAnswer,
   matchesStaleTokenAnswer,
+  namesPendingUpdates,
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
   scopedSearchProvesSiteAbsent,
@@ -2422,6 +2423,22 @@ describe('plugin command scenarios', () => {
         { siteTotals: [4], updateTotals: [7] }
       )
     ).toBe(true);
+    // Headline style puts a dash between the label and the number; a live run
+    // failed on exactly "Pending updates — 7 across the network".
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Connection state — 4 sites, all connected. Pending updates — 7 across the network.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
+    // Parenthesized headline counts; a live run failed on exactly
+    // "Pending updates (7 total):".
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Network summary — 4 managed sites. Pending updates (7 total): plugins 1, themes 6.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
     // Either side of a moved live oracle is faithful; a wrong number is not.
     expect(
       matchesNetworkSummaryAnswer('All 4 sites are connected and fully up to date.', {
@@ -2440,6 +2457,28 @@ describe('plugin command scenarios', () => {
         siteTotals: [4],
         updateTotals: [2],
       })
+    ).toBe(false);
+  });
+
+  it('grades a site report on naming every pending update', () => {
+    expect(
+      namesPendingUpdates(
+        'Pending updates (2):\n- Akismet Anti-spam 5.3.6 to 5.3.7\n- Bakehouse 2.4.0 to 2.5.0',
+        ['Akismet Anti-spam', 'Bakehouse']
+      )
+    ).toBe(true);
+    // A shortened product name still names it; a missing one does not.
+    expect(
+      namesPendingUpdates('Akismet and the Bakehouse theme both have updates waiting.', [
+        'Akismet Anti-spam',
+        'Bakehouse',
+      ])
+    ).toBe(true);
+    expect(
+      namesPendingUpdates('2 updates are pending: one plugin and one theme.', [
+        'Akismet Anti-spam',
+        'Bakehouse',
+      ])
     ).toBe(false);
   });
 
@@ -2543,6 +2582,86 @@ describe('acceptance fixture catalog', () => {
       expect(((await restored.json()) as { notes?: string }).notes).not.toBe(
         FIXTURE_CACHE_PURGED_NOTE
       );
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('executes the read abilities the reporting commands call', async () => {
+    const catalog = JSON.parse(
+      fs.readFileSync(
+        fileURLToPath(new URL('../../evals/fixtures/abilities-full.json', import.meta.url)),
+        'utf8'
+      )
+    ) as Array<{ name: string; output_schema?: { required?: string[] } }>;
+    const fixture = await startFixtureDashboard();
+    const authorization = `Basic ${Buffer.from(`${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`).toString('base64')}`;
+    const run = async (ability: string, query = ''): Promise<Record<string, unknown>> => {
+      const response = await fetch(
+        `${fixture.url}/wp-json/wp-abilities/v1/abilities/${encodeURIComponent(ability)}/run${query}`,
+        { headers: { authorization } }
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      const required = catalog.find(entry => entry.name === ability)?.output_schema?.required ?? [];
+      // Fixture data that misses a required key is data the server's callers
+      // cannot use, and a live run is an expensive place to find that out.
+      for (const key of required) expect(Object.keys(body)).toContain(key);
+      return body;
+    };
+
+    try {
+      const siteUpdates = await run('mainwp/get-site-updates-v1', '?input[site_id_or_domain]=1');
+      expect(siteUpdates.summary).toEqual({
+        core: 0,
+        plugins: 1,
+        themes: 1,
+        translations: 0,
+        total: 2,
+      });
+      expect(
+        (siteUpdates.updates as Array<{ name: string }>).map(update => update.name).sort()
+      ).toEqual(['Akismet Anti-spam', 'Bakehouse']);
+      expect(
+        (await run('mainwp/get-site-updates-v1', '?input[site_id_or_domain]=2')).updates
+      ).toEqual([]);
+
+      const network = await run('mainwp/list-updates-v1');
+      expect(network.summary).toEqual({
+        core: 1,
+        plugins: 2,
+        themes: 1,
+        translations: 0,
+        total: 4,
+      });
+      expect(network.total).toBe(4);
+      expect((await run('mainwp/list-ignored-updates-v1')).total).toBe(2);
+
+      const themes = await run('mainwp/get-site-themes-v1', '?input[site_id_or_domain]=1');
+      expect(themes.active_theme).toBe('bakehouse');
+      expect(themes.total).toBe(2);
+      expect(
+        (await run('mainwp/get-site-security-v1', '?input[site_id_or_domain]=1')).total_issues
+      ).toBe(2);
+      expect((await run('mainwp/get-site-changes-v1', '?input[site_id_or_domain]=1')).total).toBe(
+        2
+      );
+
+      const deleted = await fetch(
+        `${fixture.url}/wp-json/wp-abilities/v1/abilities/${encodeURIComponent(
+          'mainwp/delete-site-v1'
+        )}/run`,
+        {
+          method: 'POST',
+          headers: { authorization, 'content-type': 'application/json' },
+          body: JSON.stringify({ input: { site_id_or_domain: 1, confirm: true } }),
+        }
+      );
+      expect(deleted.status).toBe(200);
+      expect((await run('mainwp/list-updates-v1')).total).toBe(2);
+      // The inventory travels with the site record, so reset() restores it.
+      fixture.reset();
+      expect((await run('mainwp/list-updates-v1')).total).toBe(4);
     } finally {
       await fixture.close();
     }

@@ -510,9 +510,12 @@ export function matchesSessionCapAnswer(text: string, expectedTotal?: number): b
 
 /** The number is being offered as an update count, not as a version or a site. */
 const UPDATE_COUNT_AFTER =
-  /^[\s,.:;)-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
+  /^[\s,.:;)—–-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
+// The label-to-number bridge admits em and en dashes and an opening paren:
+// live answers headline counts as "Pending updates — 7" and
+// "Pending updates (7 total)".
 const UPDATE_COUNT_BEFORE =
-  /\b(?:updates?|total|totals|count|number|there (?:are|is)|pending|available|outstanding)\b[a-z\s:,'-]{0,20}$/;
+  /\b(?:updates?|total|totals|count|number|there (?:are|is)|pending|available|outstanding)\b[a-z\s:,'(—–-]{0,20}$/;
 
 /**
  * True when the answer states `total` as the pending-update count.
@@ -549,7 +552,7 @@ function statesUpdateTotal(answer: string, total: number): boolean {
  * the session-cap answer and wrong here.
  */
 const NETWORK_SITE_COUNT_BEFORE =
-  /\b(?:sites?:|manages?|managing|connected to)\b[a-z\s:,'-]{0,20}$/;
+  /\b(?:sites?:|manages?|managing|connected to)\b[a-z\s:,'(—–-]{0,20}$/;
 
 /**
  * True when the answer states `total` as the managed-site count. A summary
@@ -588,6 +591,25 @@ export function matchesNetworkSummaryAnswer(
     expected.siteTotals.some(total => statesNetworkSiteTotal(answer, total)) &&
     expected.updateTotals.some(total => statesUpdateTotal(answer, total))
   );
+}
+
+/**
+ * True when the text names every pending update in the oracle.
+ *
+ * Reports routinely shorten a multi-word product name to its first word
+ * ("Akismet" for "Akismet Anti-spam"), so a distinctive first word counts as
+ * naming it. Short first words are not distinctive enough to credit, and a
+ * one-word product name has to appear in full.
+ */
+export function namesPendingUpdates(text: string, updateNames: string[]): boolean {
+  const answer = normalizeAnswer(text);
+  return updateNames.every(updateName => {
+    const name = updateName.trim().toLowerCase();
+    if (!name) return false;
+    if (answer.includes(name)) return true;
+    const firstWord = name.split(' ')[0];
+    return firstWord.length >= 5 && answer.includes(firstWord);
+  });
 }
 
 /**
