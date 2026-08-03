@@ -117,63 +117,85 @@ export function sanitizeError(message: string): string {
   // remote error body; without this cap the stack-trace pattern below (and the
   // other backtracking-capable patterns) could be driven into pathological,
   // event-loop-blocking backtracking by a hostile body.
-  const bounded =
-    message.length > MAX_SANITIZE_INPUT_LENGTH
-      ? message.slice(0, MAX_SANITIZE_INPUT_LENGTH)
-      : message;
+  const truncated = message.length > MAX_SANITIZE_INPUT_LENGTH;
+  const bounded = truncated ? message.slice(0, MAX_SANITIZE_INPUT_LENGTH) : message;
+  let out = bounded
+    // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
+    .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
+    // Remove Windows paths
+    .replace(/[A-Z]:\\[\w\-\\./]+/gi, '[path]')
+    // Remove credentials in URLs (user:pass@host)
+    .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
+    // Remove Bearer tokens (Authorization: Bearer xxx)
+    .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
+    // Remove HTTP Basic credentials (Authorization: Basic base64(user:appPassword)).
+    // This is the scheme the server itself sends by default (see getAuthHeaders in
+    // config.ts). The base64 blob never contains spaces, so a bounded base64 class
+    // covers the whole credential; the {16,} floor keeps ordinary "Basic <word>"
+    // prose (e.g. "Basic authentication") out of the match while every real
+    // credential (base64 of user:app-password) is far longer.
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{16,}/gi, 'Basic [redacted]')
+    // Redact any Authorization header value to end-of-line. Covers dumped headers
+    // where the scheme token varies or the raw value carries internal spaces, e.g.
+    // "Authorization: Basic xxx", "Proxy-Authorization: ...", and PHP $_SERVER dumps
+    // like "HTTP_AUTHORIZATION => Basic xxx". Redacting to EOL (not to the first
+    // space) prevents leaking a spaced WordPress application password.
+    // The optional quote after the name (and before the value) keeps JSON bodies
+    // like {"Authorization":"Digest ..."} inside the match; remote errors are
+    // commonly JSON and the closing quote would otherwise split name from ':'.
+    .replace(
+      /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b["']?\s*(?::|=>|=)\s*["']?\S[^\r\n]*/gi,
+      '$1: [redacted]'
+    )
+    // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
+    // Matches: TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", PHP dumps with '=>',
+    // JSON forms like "appPassword":"xxx", and nested-JSON forms like
+    // \"appPassword\":\"xxx\" - the optional (possibly backslash-escaped) quote
+    // between key and separator is what keeps serialized keys from dodging every
+    // rule in this group. '=>' must precede '=' in the alternation or '=' wins
+    // and leaves '>' to break the value match.
+    .replace(
+      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*"[^"]*"/gi,
+      '$1=[redacted]'
+    )
+    .replace(
+      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*'[^']*'/gi,
+      '$1=[redacted]'
+    )
+    // Known secret key followed by an unquoted (or escape-quoted) WordPress
+    // application-password value: exactly six space-separated groups of 4.
+    // Partial forms are handled only by the truncation-seam rule below, so
+    // ordinary short-word diagnostics ("api_key: must be non empty") are not
+    // swallowed. Must run before the generic unquoted rule, which stops at the
+    // first space.
+    .replace(
+      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{4}){5}/gi,
+      '$1=[redacted]'
+    )
+    // URL-encoded serialization (%22key%22%3A%22a%20b...%22): the key is still
+    // readable but separators and spaces are percent-escaped, so none of the
+    // rules above can see it. Matched directly rather than decoding the whole
+    // diagnostic and rewriting it.
+    .replace(
+      /\b(\w*(?:token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D)(?:%22)?(?:[A-Za-z0-9]|%20)+/gi,
+      '$1=[redacted]'
+    );
+  // The input cap can cut a spaced password mid-group, and the cut can only land
+  // at the end of the bounded string - so a partial-group form is accepted there
+  // and nowhere else. An unanchored tolerant rule was tried first and it erased
+  // ordinary short-word diagnostics ("API key: must be set").
+  if (truncated) {
+    // The trailing class absorbs whatever residue the cut leaves after the last
+    // group: a space, or the quote/backslash of a severed JSON value.
+    out = out.replace(
+      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{1,4}){0,5}(?:\s[A-Za-z0-9]{1,3})?[\s\\"']*$/i,
+      '$1=[redacted]'
+    );
+  }
   return (
-    bounded
-      // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
-      .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
-      // Remove Windows paths
-      .replace(/[A-Z]:\\[\w\-\\./]+/gi, '[path]')
-      // Remove credentials in URLs (user:pass@host)
-      .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
-      // Remove Bearer tokens (Authorization: Bearer xxx)
-      .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
-      // Remove HTTP Basic credentials (Authorization: Basic base64(user:appPassword)).
-      // This is the scheme the server itself sends by default (see getAuthHeaders in
-      // config.ts). The base64 blob never contains spaces, so a bounded base64 class
-      // covers the whole credential; the {16,} floor keeps ordinary "Basic <word>"
-      // prose (e.g. "Basic authentication") out of the match while every real
-      // credential (base64 of user:app-password) is far longer.
-      .replace(/\bBasic\s+[A-Za-z0-9+/=]{16,}/gi, 'Basic [redacted]')
-      // Redact any Authorization header value to end-of-line. Covers dumped headers
-      // where the scheme token varies or the raw value carries internal spaces, e.g.
-      // "Authorization: Basic xxx", "Proxy-Authorization: ...", and PHP $_SERVER dumps
-      // like "HTTP_AUTHORIZATION => Basic xxx". Redacting to EOL (not to the first
-      // space) prevents leaking a spaced WordPress application password.
-      // The optional quote after the name (and before the value) keeps JSON bodies
-      // like {"Authorization":"Digest ..."} inside the match; remote errors are
-      // commonly JSON and the closing quote would otherwise split name from ':'.
+    out
       .replace(
-        /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b["']?\s*(?::|=>|=)\s*["']?\S[^\r\n]*/gi,
-        '$1: [redacted]'
-      )
-      // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
-      // Matches: TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", and JSON forms like
-      // "appPassword":"xxx" - the optional quote between key and separator is what
-      // keeps quoted JSON keys from dodging every rule in this group.
-      .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*"[^"]*"/gi,
-        '$1=[redacted]'
-      )
-      .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*'[^']*'/gi,
-        '$1=[redacted]'
-      )
-      // Known secret key followed by an unquoted WordPress application-password value
-      // (displayed as six space-separated groups of 4). The repetition is 1-5 groups
-      // and the last group tolerates 1-3 chars because the input cap above can cut
-      // the value mid-group; an exact six-group form would leak the surviving tail.
-      // Over-redacting a following short word is accepted. Must run before the
-      // generic unquoted rule below, which stops at the first space.
-      .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{1,4}){1,5}/gi,
-        '$1=[redacted]'
-      )
-      .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*[\w\-._~+/]+=*/gi,
+        /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[\w\-._~+/]+=*/gi,
         '$1=[redacted]'
       )
       // Remove stack traces (at Function.name (file:line:col)).

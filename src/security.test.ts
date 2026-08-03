@@ -220,6 +220,41 @@ describe('sanitizeError', () => {
     expect(sanitized).not.toContain('uvwx');
   });
 
+  it('should redact a PHP-style arrow dump of a spaced app password', () => {
+    const message = "appPassword => 'abcd efgh ijkl mnop qrst uvwx'";
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact a spaced app password inside an escaped (nested) JSON body', () => {
+    const message = JSON.stringify({
+      detail: JSON.stringify({ appPassword: 'abcd efgh ijkl mnop qrst uvwx' }),
+    });
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact a URL-encoded app password value', () => {
+    const message = encodeURIComponent(
+      JSON.stringify({ appPassword: 'abcd efgh ijkl mnop qrst uvwx' })
+    );
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should preserve short-word diagnostics after a secret-ish key', () => {
+    // Partial password groups are only a truncation artifact; on untruncated
+    // input only the first value token is redacted, never a run of short words.
+    expect(sanitizeError('API key: must be set')).toBe('API key=[redacted] be set');
+    expect(sanitizeError('api_key: must be non empty')).toBe('api_key=[redacted] be non empty');
+  });
+
   it('should not leak trailing password groups when the input cap splits the value', () => {
     // Padding pushes the spaced password across the MAX_SANITIZE_INPUT_LENGTH cut,
     // so the exact six-group form never survives truncation intact; the keyed rule
