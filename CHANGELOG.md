@@ -48,7 +48,10 @@ startup error messages render on a single line as a side effect.
 Error sanitization now also redacts HTTP Basic credentials, `Authorization`
 headers, and spaced WordPress application passwords, and caps the error text it
 processes, so oversized or credential-bearing remote errors cannot leak
-secrets or stall the server.
+secrets or stall the server. Redaction covers serialized forms (JSON at any
+nesting depth, PHP dumps, URL-encoded bodies), and the server's own
+credentials are additionally scrubbed by value wherever they appear in an
+error, in any encoding that preserves them.
 
 HTTP redirects from the Dashboard are no longer followed. A 3xx response now
 fails the request instead of silently re-sending it (with credentials) to

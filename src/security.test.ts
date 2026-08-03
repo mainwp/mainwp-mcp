@@ -329,6 +329,29 @@ describe('sanitizeError', () => {
     expect(sanitized).not.toContain('SUPERSECRET');
   });
 
+  it('should leave bracketed Authorization prose alone', () => {
+    // Brackets are dump syntax only when paired with '=>'; bracketed prose with
+    // ':' or '=' is documentation, not a header dump.
+    expect(sanitizeError('See [Authorization]: required header syntax')).toBe(
+      'See [Authorization]: required header syntax'
+    );
+    expect(sanitizeError('The [Authorization] = permission model is described here')).toBe(
+      'The [Authorization] = permission model is described here'
+    );
+  });
+
+  it('should preserve raw diagnostic text after the first value token', () => {
+    // The widened encoded-value class applies only where serializer evidence
+    // exists (%-escaped separator or key quote); plain key=value diagnostics
+    // keep everything past the first token.
+    expect(sanitizeError('api_token=placeholder(must_be_64_chars); retry later')).toContain(
+      'must_be_64_chars'
+    );
+    expect(sanitizeError('api_token=missing!must_be_64_chars; retry later')).toContain(
+      'must_be_64_chars'
+    );
+  });
+
   it('should redact URL-encoded values past raw token punctuation (JWT shapes)', () => {
     // encodeURIComponent and URLSearchParams leave . - _ ~ raw, so a JWT-style
     // value must not leak everything after its first dot.
@@ -387,6 +410,17 @@ describe('registered known secrets', () => {
 
   afterEach(() => {
     clearKnownSecrets();
+  });
+
+  it('should fully redact a secret that another registered secret prefixes', () => {
+    // Sequential replacement must run longest-first, or replacing the shorter
+    // prefix first breaks the longer match and leaks its suffix.
+    const prefix = 'SharedPrefix-1234567890';
+    const longer = prefix + '-RemainingCredentialMaterial';
+    registerKnownSecrets([prefix]);
+    registerKnownSecrets([longer]);
+    const sanitized = sanitizeError('echo ' + longer);
+    expect(sanitized).not.toContain('RemainingCredentialMaterial');
   });
 
   it('should keep earlier registrations when registering again', () => {

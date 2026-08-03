@@ -140,7 +140,9 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
     variants.add(encodeURIComponent(secret));
     variants.add(encodeURI(secret));
   }
-  knownSecretVariants = [...variants];
+  // Longest-first, so a secret that another secret prefixes is replaced
+  // before the prefix can break its match.
+  knownSecretVariants = [...variants].sort((a, b) => b.length - a.length);
 }
 
 /**
@@ -188,8 +190,8 @@ export function sanitizeError(message: string): string {
     // like {"Authorization":"Digest ..."} inside the match; remote errors are
     // commonly JSON and the closing quote would otherwise split name from ':'.
     .replace(
-      /\[?\b((?:HTTP_)?(?:Proxy-)?Authorization)\b\]?(?:\\*["'])?\s*(?::|=>|=)\s*(?:\\*["'])?\S[^\r\n]*/gi,
-      '$1: [redacted]'
+      /(?:\[((?:HTTP_)?(?:Proxy-)?Authorization)\]\s*=>|\b((?:HTTP_)?(?:Proxy-)?Authorization)\b(?:\\*["'])?\s*(?::|=>|=))\s*(?:\\*["'])?\S[^\r\n]*/gi,
+      '$1$2: [redacted]'
     )
     // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
     // Matches: TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", PHP dumps with '=>',
@@ -221,7 +223,7 @@ export function sanitizeError(message: string): string {
     // rules above can see it. Matched directly rather than decoding the whole
     // diagnostic and rewriting it.
     .replace(
-      /\b(\w*(?:authorization|token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D|:|=)(?:%22)?(?:[A-Za-z0-9._~!*'()-]|%[0-9A-Fa-f]{2}|\+)+/gi,
+      /\b(\w*(?:authorization|token|password|secret|key|auth|credential))(?:(?:%22)?(?:%3A|%3D)|%22[:=])(?:%22)?(?:[A-Za-z0-9._~!*'()-]|%[0-9A-Fa-f]{2}|\+)+/gi,
       '$1=[redacted]'
     );
   // The input cap can cut a spaced password mid-group, and the cut can only land
