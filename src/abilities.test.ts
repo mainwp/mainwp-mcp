@@ -1650,6 +1650,25 @@ describe('help generation with hostile remote schema field types', () => {
     expect(help.parameters.find(p => p.name === 'nul')?.type).toBe('unknown');
   });
 
+  it('generateToolHelp does not advertise dry_run/confirm for false or malformed schemas', () => {
+    // declaresUsableBooleanParam must see the RAW properties: normalizing
+    // false/malformed entries to {} would turn "accepts nothing" into
+    // "accepts anything" and falsely advertise safety capabilities that
+    // execution (which reads raw properties) will refuse.
+    const ability = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-safety-v1',
+      input_schema: {
+        type: 'object',
+        properties: { dry_run: false, confirm: [1, 2] },
+      },
+    } as unknown as Ability;
+
+    const help = generateToolHelp(ability, 'mainwp');
+    expect(help.safetyFeatures.supportsDryRun).toBe(false);
+    expect(help.safetyFeatures.requiresConfirm).toBe(false);
+  });
+
   it('generateToolHelp tolerates a non-record properties value and non-string descriptions', () => {
     const arrayProps = {
       ...hostileSchemaAbility,

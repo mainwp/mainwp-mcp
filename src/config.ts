@@ -538,13 +538,22 @@ export function loadConfig(): Config {
   // A CWD file carrying url and credentials together stays allowed - that is
   // the documented per-folder multi-dashboard pattern, and it routes nothing
   // that did not come from the same file.
+  const username = getString(process.env.MAINWP_USER, settings?.username, '');
+  const appPassword = getString(process.env.MAINWP_APP_PASSWORD, settings?.appPassword, '');
+  const apiToken = getString(process.env.MAINWP_TOKEN, settings?.apiToken, '');
   let fileDashboardUrl = settings?.dashboardUrl;
   const envHasUrl = !!process.env.MAINWP_URL && process.env.MAINWP_URL !== '';
-  const envHasCredential =
-    !!(process.env.MAINWP_USER && process.env.MAINWP_USER !== '') ||
-    !!(process.env.MAINWP_APP_PASSWORD && process.env.MAINWP_APP_PASSWORD !== '') ||
-    !!(process.env.MAINWP_TOKEN && process.env.MAINWP_TOKEN !== '');
-  if (!settingsTrusted && !envHasUrl && fileDashboardUrl && envHasCredential) {
+  const envHasUser = !!process.env.MAINWP_USER && process.env.MAINWP_USER !== '';
+  const envHasPassword =
+    !!process.env.MAINWP_APP_PASSWORD && process.env.MAINWP_APP_PASSWORD !== '';
+  const envHasToken = !!process.env.MAINWP_TOKEN && process.env.MAINWP_TOKEN !== '';
+  // Only credentials the SELECTED auth mode will send matter here: a complete
+  // Basic pair wins over apiToken (see getAuthHeaders), so a stale env token
+  // behind a complete same-file Basic config routes nothing and must not
+  // reject the documented per-folder pattern.
+  const usesBasicAuth = username !== '' && appPassword !== '';
+  const envCredentialUsed = usesBasicAuth ? envHasUser || envHasPassword : envHasToken;
+  if (!settingsTrusted && !envHasUrl && fileDashboardUrl && envCredentialUsed) {
     console.error(
       `[mainwp-mcp] WARNING: Ignoring "dashboardUrl" from the working-directory settings.json ` +
         `because credentials come from the environment; an untrusted file may not choose where ` +
@@ -554,9 +563,6 @@ export function loadConfig(): Config {
     fileDashboardUrl = undefined;
   }
   const dashboardUrl = getString(process.env.MAINWP_URL, fileDashboardUrl, '');
-  const username = getString(process.env.MAINWP_USER, settings?.username, '');
-  const appPassword = getString(process.env.MAINWP_APP_PASSWORD, settings?.appPassword, '');
-  const apiToken = getString(process.env.MAINWP_TOKEN, settings?.apiToken, '');
   const skipSslVerify = getBoolean(
     'MAINWP_SKIP_SSL_VERIFY',
     process.env.MAINWP_SKIP_SSL_VERIFY,

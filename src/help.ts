@@ -130,8 +130,11 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
       instructions: ability.meta?.annotations?.instructions,
     },
     safetyFeatures: {
-      supportsDryRun: declaresUsableBooleanParam(props, 'dry_run'),
-      requiresConfirm: declaresUsableBooleanParam(props, 'confirm'),
+      // RAW properties, not the normalized map: normalization turns a `false`
+      // or malformed entry into {}, and {} accepts anything — help would then
+      // advertise dry_run/confirm that execution (which reads raw) refuses.
+      supportsDryRun: declaresUsableBooleanParam(rawProps, 'dry_run'),
+      requiresConfirm: declaresUsableBooleanParam(rawProps, 'confirm'),
     },
     parameters,
   };

@@ -651,6 +651,23 @@ describe('loadConfig', () => {
       expect(() => loadConfig()).toThrow();
     });
 
+    it('accepts a complete same-file Basic config despite a stale env MAINWP_TOKEN', () => {
+      // The gate keys on the credentials the selected auth actually uses:
+      // a complete file Basic pair wins over apiToken, so an unused env token
+      // routes nothing and must not reject the documented per-folder pattern.
+      mockCwdSettings(withAuth({}));
+      process.env.MAINWP_TOKEN = 'stale-token';
+
+      expect(loadConfig().dashboardUrl).toBe('https://test.com');
+    });
+
+    it('still refuses a CWD dashboardUrl in token mode when the token comes from env', () => {
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_TOKEN = 'real-token';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
     it('still accepts a CWD file that carries both dashboardUrl and credentials', () => {
       // The documented multi-dashboard pattern: one folder per Dashboard, url
       // and credentials in the same file. No cross-source routing occurs.
