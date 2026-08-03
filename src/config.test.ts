@@ -642,6 +642,15 @@ describe('loadConfig', () => {
       expect(() => loadConfig()).toThrow();
     });
 
+    it('refuses a CWD dashboardUrl when only the username comes from the environment', () => {
+      // Identity counts too: env username + planted url/password would still
+      // send the real username to an attacker-chosen host.
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example', appPassword: 'xxxx' });
+      process.env.MAINWP_USER = 'admin';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
     it('still accepts a CWD file that carries both dashboardUrl and credentials', () => {
       // The documented multi-dashboard pattern: one folder per Dashboard, url
       // and credentials in the same file. No cross-source routing occurs.

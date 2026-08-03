@@ -541,6 +541,7 @@ export function loadConfig(): Config {
   let fileDashboardUrl = settings?.dashboardUrl;
   const envHasUrl = !!process.env.MAINWP_URL && process.env.MAINWP_URL !== '';
   const envHasCredential =
+    !!(process.env.MAINWP_USER && process.env.MAINWP_USER !== '') ||
     !!(process.env.MAINWP_APP_PASSWORD && process.env.MAINWP_APP_PASSWORD !== '') ||
     !!(process.env.MAINWP_TOKEN && process.env.MAINWP_TOKEN !== '');
   if (!settingsTrusted && !envHasUrl && fileDashboardUrl && envHasCredential) {

@@ -55,8 +55,8 @@ error, in any encoding that preserves them.
 
 HTTP redirects from the Dashboard are no longer followed. A 3xx response now
 fails the request instead of silently re-sending it (with credentials) to
-whatever host the redirect names. Point `MAINWP_DASHBOARD_URL` at the final
-URL if your Dashboard sits behind a redirect.
+whatever host the redirect names. Point `MAINWP_URL` at the final URL if your
+Dashboard sits behind a redirect.
 
 ## [1.1.0] - 2026-07-21
 
