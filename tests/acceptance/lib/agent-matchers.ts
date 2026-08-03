@@ -248,7 +248,8 @@ export function answerAvoidsPluginPresenceClaims(text: string): boolean {
   // must stay clause boundaries or a hedge on one line licenses a claim on
   // the next. A newline inside a soft-wrapped sentence is formatting, not a
   // boundary — collapsing it keeps "FooGuard is\ninstalled" matchable. The
-  // NUL placeholder survives the whitespace collapse (\s does not match it).
+  // NUL placeholder survives the whitespace collapse (\s does not match it),
+  // and split/join keeps the sentinel out of any regex (no-control-regex).
   const structuralBreak = '\u0000';
   const answer = text
     .replace(/’/g, "'")
@@ -256,7 +257,9 @@ export function answerAvoidsPluginPresenceClaims(text: string): boolean {
     .replace(/\n\s*\n/g, structuralBreak)
     .replace(/\n(?=[ \t]*[-*+•][ \t])/g, structuralBreak)
     .replace(/\s+/g, ' ')
-    .replace(/ ?\u0000 ?/g, '\n');
+    .split(structuralBreak)
+    .map(part => part.trim())
+    .join('\n');
   // The clause split below eats "and", stranding a coordinated invented name
   // in a verb-less fragment ("site has get_site_themes_v1 and FooGuard"), so
   // catch verb + versioned name + coordinator + non-versioned object on the
