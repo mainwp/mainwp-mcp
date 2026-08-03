@@ -92,8 +92,9 @@ Two separate caps, with different failure codes:
 Neither is a Dashboard outage. Recovery is narrowing, never an identical retry:
 one site instead of the network, filters or date ranges, the ability's own
 paging parameters, fewer fields. A rejected over-cap response is not counted
-against the session budget, so narrowed calls still fit; finish the request
-with them rather than stopping at whatever was already collected. The session
+against the session budget, so the remaining budget is unchanged; finish the
+request with narrower calls that fit rather than stopping at whatever was
+already collected. The session
 counter only resets when a new server session starts, so check `sessionData` in
 `mainwp://status` before a long sweep and prefer summaries over full payloads.
 
