@@ -189,6 +189,19 @@ describe('abilityToTool confirmation parameter injection', () => {
     }
   );
 
+  it.each([true, false])(
+    'gates the compact flow on explicit approval like the standard one (dry_run: %s)',
+    withDryRun => {
+      // The same-turn self-approval loophole closed in the standard builder
+      // must not survive in compact mode's shorthand.
+      const compact =
+        abilityToTool(makeDestructiveAbility(withDryRun), 'mainwp', 'compact').description ?? '';
+
+      expect(compact).toContain('a bare request is not approval');
+      expect(compact).toContain('explicit approval');
+    }
+  );
+
   it('skips injection when the declared confirm channel cannot accept true', () => {
     // Detection runs on the raw schema: conversion coerces `confirm: false`
     // to {}, which would otherwise advertise a confirmation flow that the

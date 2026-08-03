@@ -27,19 +27,25 @@ Before multi-step or network-wide work, read the resources:
 `connected: false` means the catalog fetch failed. Stop and report it. Do not
 guess tool names or retry blind.
 
+Liveness questions need live evidence. Asked whether sites are up or down right
+now, run the catalog's live connectivity check against the sites instead of
+answering from uptime monitoring, incident history, or last-sync data — those
+report the past, not the present.
+
 ## Filtering is silent
 
 `MAINWP_ALLOWED_TOOLS` and `MAINWP_BLOCKED_TOOLS` remove tools from `tools/list`
 with no marker, and a blocked tool is deliberately indistinguishable from a
-nonexistent one at every surface.
+nonexistent one at every policy-filtered surface.
 
 - A missing tool is not evidence the Dashboard lacks the capability. Say the
   capability is not exposed in this session and name `MAINWP_ALLOWED_TOOLS`,
   `MAINWP_BLOCKED_TOOLS`, and `MAINWP_ABILITY_NAMESPACES` as the things to
   check.
-- Never route around a filter. No alternate tool, no resource path, no batch
-  tool that reaches the same capability. Filtering is enforced at resources and
-  tool-help too, and working around it defeats a deliberate policy.
+- Never route around a filter. No alternate tool, no resource path, no prompt
+  completion, no batch tool that reaches the same capability. Filtering is
+  enforced at resources, tool-help, and completions too, and working around it
+  defeats a deliberate policy.
 - Counts can disagree with the tool list. `mainwp://status` `abilitiesCount` and
   `mainwp://categories` are not policy-filtered, while `mainwp://abilities` and `mainwp://help` are. A category or count with no matching tool means
   filtered, not broken.
@@ -86,9 +92,12 @@ Two separate caps, with different failure codes:
 
 Neither is a Dashboard outage. Recovery is narrowing, never an identical retry:
 one site instead of the network, filters or date ranges, the ability's own
-paging parameters, fewer fields. The session counter only resets when a new
-server session starts, so check `sessionData` in `mainwp://status` before a long
-sweep and prefer summaries over full payloads.
+paging parameters, fewer fields. A rejected over-cap response is not counted
+against the session budget, so the remaining budget is unchanged; finish the
+request with narrower calls that fit rather than stopping at whatever was
+already collected. The session
+counter only resets when a new server session starts, so check `sessionData` in
+`mainwp://status` before a long sweep and prefer summaries over full payloads.
 
 ## Partial data stays partial
 

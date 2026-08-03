@@ -105,9 +105,12 @@ export function buildNoPreviewAvailableResponse(ctx: ConfirmationContext, token:
     preview: null,
     confirmation_token: token,
     instructions:
-      'Describe to the user exactly what this operation will do. If they explicitly approve, ' +
-      'call this tool again with user_confirmed: true and confirmation_token: "<token above>". ' +
-      'Do NOT set user_confirmed: true without explicit user consent.',
+      'Describe to the user exactly what this operation will do. A message that merely requests ' +
+      'the operation is not approval: unless the user explicitly authorized proceeding through ' +
+      'confirmation (for example "this is authorized, proceed without asking"), stop and wait ' +
+      'for an approving reply sent after they see that description. Only with that ' +
+      'authorization or reply, call this tool again with user_confirmed: true and ' +
+      'confirmation_token: "<token above>".',
     metadata: {
       tool: ctx.tool,
       ability: ctx.ability,
@@ -131,8 +134,11 @@ export function buildConfirmationRequiredResponse(
     preview,
     confirmation_token: token,
     instructions:
-      'Show the preview to the user. If they approve, call this tool again with ' +
-      'user_confirmed: true and confirmation_token: "<token above>".',
+      'Show the preview to the user. A message that merely requests the operation is not ' +
+      'approval: unless the user explicitly authorized proceeding through confirmation, stop ' +
+      'and wait for an approving reply sent after they see the preview. Only with that ' +
+      'authorization or reply, call this tool again with user_confirmed: true and ' +
+      'confirmation_token: "<token above>".',
     metadata: {
       tool: ctx.tool,
       ability: ctx.ability,

@@ -7,7 +7,7 @@ Turn the pending updates into an ordered plan the user can approve before anythi
 
 Steps:
 
-1. Read `$ARGUMENTS` for an update type and a site scope. Missing values mean all update types and all managed sites; do not guess narrower.
+1. Read `$ARGUMENTS` for an update type and a site scope. A missing update type means all update types; a missing site scope or the exact value `"all"` means every site the Dashboard returns. Any other site value must resolve through the Dashboard — stop and say so if an ID is unknown; never guess or synthesize one.
 2. Check the tool catalog for update-inventory and update-execution capabilities, then list the pending updates in scope.
 3. Group them by risk: security fixes, then bug fixes, then feature releases, and note anything that usually needs a manual step.
 4. Propose an order that puts core before plugins and themes, and puts lower-stakes sites ahead of production ones.
@@ -16,7 +16,7 @@ Steps:
 
 Rules:
 
-- Use only the update type and sites in `$ARGUMENTS`. Never synthesize site IDs and never expand the scope to make the run look complete.
+- Use only the resolved scope: an empty site scope or `"all"` means the Dashboard's full site list, anything else means exactly the sites given. Never synthesize site IDs and never widen a non-empty scope to make the run look complete.
 - Applying updates is destructive. Run an update tool only when the user explicitly asks for that step, and follow the server's preview and confirmation flow as it is returned. Never claim a preview happened when the ability did not provide one.
 - Safe mode or a policy filter can block update execution outright. If that happens, say so and leave the plan as the deliverable.
 - If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.

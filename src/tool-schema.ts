@@ -344,7 +344,8 @@ function buildStandardDescription(
           '2) Ask the user for confirmation. ') +
       '3) If confirmed, call again with user_confirmed:true and the confirmation_token ' +
       'from the first response to execute. ' +
-      'Do NOT set user_confirmed:true without explicit user consent.';
+      'A bare request for the operation is not approval: require explicit prior ' +
+      'authorization to proceed through confirmation, or an approving reply after step 2.';
   }
 
   return description;
@@ -366,13 +367,17 @@ function buildCompactDescription(
   if (tags) {
     description += ` ${tags}`;
   }
-  // Same accuracy rule as the standard builder: an ability without dry_run
+  // Same accuracy rules as the standard builder: an ability without dry_run
   // gets a token and no upstream preview, so compact mode must not shorten
-  // that into a promised preview step.
+  // that into a promised preview step — and the explicit-approval gate must
+  // not be compacted away either, or compact mode reopens the same-turn
+  // self-approval loophole the standard wording closes.
   if (isDestructive && hasConfirm) {
     description += hasDryRun
-      ? ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token'
-      : ' FLOW: confirm:true -> token, no preview available -> ' +
+      ? ' FLOW: confirm:true -> preview -> show user; a bare request is not approval; ' +
+        'on explicit approval -> user_confirmed:true + confirmation_token'
+      : ' FLOW: confirm:true -> token, no preview available -> describe operation; ' +
+        'a bare request is not approval; on explicit approval -> ' +
         'user_confirmed:true + confirmation_token';
   }
   return description;
