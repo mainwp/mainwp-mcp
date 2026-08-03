@@ -261,16 +261,30 @@ function validateSettingsFile(settings: unknown, filePath: string): void {
 }
 
 /**
- * Load settings from settings.json file
- * Searches: CWD first, then ~/.config/mainwp-mcp/
- * Returns null if no file found (silent fallback)
- * Throws on validation errors
+ * A loaded settings file plus whether its source is trusted. The per-user
+ * config under ~/.config/mainwp-mcp is trusted; a settings.json discovered in
+ * the current working directory is NOT — anyone who can write to (or lure the
+ * operator into launching from) that directory can plant one. loadConfig uses
+ * `trusted` to refuse security-flag values that would weaken the secure
+ * posture (see fileSecurityFlag).
  */
-export function loadSettingsFile(): SettingsFile | null {
+interface LoadedSettings {
+  settings: SettingsFile;
+  trusted: boolean;
+}
+
+/**
+ * Load settings from settings.json, reporting whether the source is trusted.
+ * Searches: CWD first, then ~/.config/mainwp-mcp/. Returns null if no file
+ * found (silent fallback). Throws on validation errors.
+ */
+function loadSettingsFileWithSource(): LoadedSettings | null {
   const searchPaths = [
     path.join(process.cwd(), SETTINGS_FILENAME),
     path.join(os.homedir(), '.config', 'mainwp-mcp', SETTINGS_FILENAME),
   ];
+  const cwdPath = searchPaths[0];
+  const homePath = searchPaths[1];
 
   for (const filePath of searchPaths) {
     if (fs.existsSync(filePath)) {
@@ -295,11 +309,12 @@ export function loadSettingsFile(): SettingsFile | null {
 
       validateSettingsFile(parsed, filePath);
 
-      // Warn when settings are loaded from CWD — a malicious settings.json in a shared
-      // or attacker-writable directory could redirect API calls to capture credentials.
-      const cwdPath = searchPaths[0];
-      const homePath = searchPaths[1];
-      if (filePath === cwdPath && cwdPath !== homePath) {
+      // A settings.json in the current working directory is untrusted: a
+      // malicious file in a shared or attacker-writable directory could
+      // redirect API calls to capture credentials, or weaken a default-secure
+      // flag. loadConfig refuses security-flag values from an untrusted source.
+      const fromUntrustedCwd = filePath === cwdPath && cwdPath !== homePath;
+      if (fromUntrustedCwd) {
         console.error(
           `[mainwp-mcp] WARNING: Loading settings from working directory (${filePath}). ` +
             `Ensure this file is trusted. Prefer ~/.config/mainwp-mcp/settings.json for production.`
@@ -308,11 +323,21 @@ export function loadSettingsFile(): SettingsFile | null {
         console.error('[mainwp-mcp] Loaded settings from file');
       }
 
-      return parsed as SettingsFile;
+      return { settings: parsed as SettingsFile, trusted: !fromUntrustedCwd };
     }
   }
 
   return null;
+}
+
+/**
+ * Load settings from settings.json file
+ * Searches: CWD first, then ~/.config/mainwp-mcp/
+ * Returns null if no file found (silent fallback)
+ * Throws on validation errors
+ */
+export function loadSettingsFile(): SettingsFile | null {
+  return loadSettingsFileWithSource()?.settings ?? null;
 }
 
 /**
@@ -361,6 +386,35 @@ function getBoolean(
     return fileValue;
   }
   return defaultValue;
+}
+
+/**
+ * Gate a security-relevant boolean coming from a settings file so an untrusted
+ * current-working-directory file cannot weaken a default-secure posture. Each
+ * gated flag has one `insecureValue` — the boolean that loosens security
+ * (requireUserConfirmation=false, skipSslVerify=true, allowHttp=true). From an
+ * untrusted source that exact value is dropped (returns undefined) so
+ * getBoolean falls through to the env var — still authoritative, checked
+ * first — or the secure default. Env vars and the trusted per-user config are
+ * never affected; a file value that does not loosen posture passes through
+ * unchanged. safeMode is not gated: its default (false) is already the
+ * least-restrictive value, so a CWD file cannot make it less secure.
+ */
+function fileSecurityFlag(
+  name: string,
+  fileValue: boolean | undefined,
+  insecureValue: boolean,
+  trusted: boolean
+): boolean | undefined {
+  if (!trusted && fileValue === insecureValue) {
+    console.error(
+      `[mainwp-mcp] WARNING: Ignoring "${name}" from the working-directory settings.json ` +
+        `because an untrusted file may not weaken this security setting. ` +
+        `Set it via an environment variable or ~/.config/mainwp-mcp/settings.json.`
+    );
+    return undefined;
+  }
+  return fileValue;
 }
 
 /**
@@ -463,7 +517,12 @@ export class MissingConfigError extends Error {
  */
 export function loadConfig(): Config {
   // Load settings file (returns null if not found)
-  const settings = loadSettingsFile();
+  const loaded = loadSettingsFileWithSource();
+  const settings = loaded?.settings ?? null;
+  // A settings.json discovered in the current working directory is an
+  // untrusted source and may not loosen security flags (see fileSecurityFlag).
+  // No file, or the trusted per-user config, counts as trusted.
+  const settingsTrusted = loaded === null || loaded.trusted;
 
   // Determine config source based on what's available
   const hasEnvVars = MAINWP_ENV_VARS.some(name => !!process.env[name]);
@@ -479,15 +538,17 @@ export function loadConfig(): Config {
   const skipSslVerify = getBoolean(
     'MAINWP_SKIP_SSL_VERIFY',
     process.env.MAINWP_SKIP_SSL_VERIFY,
-    settings?.skipSslVerify,
+    fileSecurityFlag('skipSslVerify', settings?.skipSslVerify, true, settingsTrusted),
     false
   );
   const allowHttp = getBoolean(
     'MAINWP_ALLOW_HTTP',
     process.env.MAINWP_ALLOW_HTTP,
-    settings?.allowHttp,
+    fileSecurityFlag('allowHttp', settings?.allowHttp, true, settingsTrusted),
     false
   );
+  // safeMode is not gated by fileSecurityFlag: its default (false) is already
+  // the least-restrictive value, so a CWD file cannot make it less secure.
   const safeMode = getBoolean(
     'MAINWP_SAFE_MODE',
     process.env.MAINWP_SAFE_MODE,
@@ -497,7 +558,12 @@ export function loadConfig(): Config {
   const requireUserConfirmation = getBoolean(
     'MAINWP_REQUIRE_USER_CONFIRMATION',
     process.env.MAINWP_REQUIRE_USER_CONFIRMATION,
-    settings?.requireUserConfirmation,
+    fileSecurityFlag(
+      'requireUserConfirmation',
+      settings?.requireUserConfirmation,
+      false,
+      settingsTrusted
+    ),
     true
   );
 

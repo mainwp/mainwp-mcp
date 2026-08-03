@@ -149,7 +149,7 @@ npm run build
 >
 > Setting `MAINWP_SKIP_SSL_VERIFY=true` disables SSL certificate verification, making your connection vulnerable to man-in-the-middle (MITM) attacks. Only use for local development with self-signed certificates or isolated test environments. Never use in production or on untrusted networks.
 
-Instead of environment variables, you can use a `settings.json` file in the working directory or `~/.config/mainwp-mcp/settings.json`; environment variables override file settings. Field names, the settings-to-variable mapping, and per-setting detail are in the [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration).
+Instead of environment variables, you can use a `settings.json` file in the working directory or `~/.config/mainwp-mcp/settings.json`; environment variables override file settings. A working-directory `settings.json` cannot loosen security settings: `requireUserConfirmation: false`, `skipSslVerify: true`, and `allowHttp: true` are ignored there with a warning on stderr. Set those through environment variables or the per-user file. Field names, the settings-to-variable mapping, and per-setting detail are in the [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration).
 
 ## Tools
 

@@ -580,6 +580,70 @@ describe('loadConfig', () => {
       expect(() => loadConfig()).toThrow(/MAINWP_ABILITY_NAMESPACES/);
     });
   });
+
+  describe('untrusted CWD settings.json cannot weaken security flags', () => {
+    function withAuth(extra: Record<string, unknown>) {
+      return {
+        dashboardUrl: 'https://test.com',
+        username: 'admin',
+        appPassword: 'xxxx',
+        ...extra,
+      };
+    }
+
+    // The CWD file is searchPaths[0]; existsSync returns true only for it.
+    function mockCwdSettings(settings: Record<string, unknown>) {
+      vi.mocked(fs.existsSync).mockImplementation(p => String(p).includes(process.cwd()));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+    }
+
+    // The trusted per-user config is searchPaths[1] (~/.config/mainwp-mcp),
+    // which never contains the CWD path.
+    function mockHomeSettings(settings: Record<string, unknown>) {
+      vi.mocked(fs.existsSync).mockImplementation(p => !String(p).includes(process.cwd()));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+    }
+
+    it('ignores requireUserConfirmation:false from a CWD file (confirmation stays on)', () => {
+      mockCwdSettings(withAuth({ requireUserConfirmation: false }));
+
+      expect(loadConfig().requireUserConfirmation).toBe(true);
+    });
+
+    it('ignores skipSslVerify:true from a CWD file', () => {
+      mockCwdSettings(withAuth({ skipSslVerify: true }));
+
+      expect(loadConfig().skipSslVerify).toBe(false);
+    });
+
+    it('ignores allowHttp:true from a CWD file', () => {
+      mockCwdSettings(withAuth({ allowHttp: true }));
+
+      expect(loadConfig().allowHttp).toBe(false);
+    });
+
+    it('still lets an env var override a CWD file for a security flag', () => {
+      mockCwdSettings(withAuth({}));
+      process.env.MAINWP_URL = 'https://test.com';
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+      process.env.MAINWP_REQUIRE_USER_CONFIRMATION = 'false';
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('honors requireUserConfirmation:false from the trusted per-user config', () => {
+      mockHomeSettings(withAuth({ requireUserConfirmation: false }));
+
+      expect(loadConfig().requireUserConfirmation).toBe(false);
+    });
+
+    it('honors skipSslVerify:true from the trusted per-user config', () => {
+      mockHomeSettings(withAuth({ skipSslVerify: true }));
+
+      expect(loadConfig().skipSslVerify).toBe(true);
+    });
+  });
 });
 
 describe('getAbilitiesApiUrl', () => {

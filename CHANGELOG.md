@@ -32,6 +32,15 @@ sent after the user sees the preview or operation description, unless the user
 explicitly authorized proceeding through confirmation up front. The compact
 strings carry the same gate so compact mode cannot reopen the loophole.
 
+### Security
+
+A `settings.json` planted in the server's working directory can no longer turn
+off the destructive-operation confirmation gate or TLS verification. The
+working-directory file is untrusted for security-loosening values:
+`requireUserConfirmation: false`, `skipSslVerify: true`, and `allowHttp: true`
+are dropped there with a stderr warning. Environment variables and
+`~/.config/mainwp-mcp/settings.json` keep working as before.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
