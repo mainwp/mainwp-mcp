@@ -108,17 +108,55 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
   }
 }
 
+// Value-based redaction of the server's own credentials. The pattern rules in
+// sanitizeError are enumerative - each covers one serialization shape, and
+// encodings compose (JSON-in-JSON, URLSearchParams, encodeURI, print_r, ...),
+// so a shape will always exist that no rule anticipates. The secrets that
+// realistically appear in a remote error body are the ones this server sent,
+// and those it knows by value, so literal-occurrence redaction is closed under
+// any encoding that preserves the byte sequence. Registered once at server
+// startup; registering replaces the previous set (tests reset with []).
+const MIN_KNOWN_SECRET_LENGTH = 8;
+let knownSecretVariants: string[] = [];
+
+export function registerKnownSecrets(secrets: (string | undefined)[]): void {
+  const variants = new Set<string>();
+  for (const secret of secrets) {
+    // A short value would redact ordinary prose; real app passwords, tokens,
+    // and base64 Basic blobs are all far longer.
+    if (!secret || secret.length < MIN_KNOWN_SECRET_LENGTH) continue;
+    variants.add(secret);
+    // Encodings that keep the value recognizable as one literal string:
+    // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
+    // percent-escape them. JSON.stringify at any nesting depth leaves
+    // alphanumeric-plus-space values untouched, so `secret` itself covers it.
+    variants.add(secret.split(' ').join('+'));
+    variants.add(encodeURIComponent(secret));
+    variants.add(encodeURI(secret));
+  }
+  knownSecretVariants = [...variants];
+}
+
 /**
  * Sanitize error messages before returning to clients.
  * Removes potentially sensitive information like file paths, credentials, and stack traces.
  */
 export function sanitizeError(message: string): string {
+  // Known-secret pass runs on the FULL message, before the regex cap: literal
+  // split/join is linear on a 64KB body, and a secret straddling the cap must
+  // be removed whole, not truncated into an unrecognizable fragment.
+  let working = message;
+  for (const variant of knownSecretVariants) {
+    if (working.includes(variant)) {
+      working = working.split(variant).join('[redacted]');
+    }
+  }
   // Bound the working string before any regex runs. The input can be a 64KB
   // remote error body; without this cap the stack-trace pattern below (and the
   // other backtracking-capable patterns) could be driven into pathological,
   // event-loop-blocking backtracking by a hostile body.
-  const truncated = message.length > MAX_SANITIZE_INPUT_LENGTH;
-  const bounded = truncated ? message.slice(0, MAX_SANITIZE_INPUT_LENGTH) : message;
+  const truncated = working.length > MAX_SANITIZE_INPUT_LENGTH;
+  const bounded = truncated ? working.slice(0, MAX_SANITIZE_INPUT_LENGTH) : working;
   let out = bounded
     // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
     .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
@@ -144,7 +182,7 @@ export function sanitizeError(message: string): string {
     // like {"Authorization":"Digest ..."} inside the match; remote errors are
     // commonly JSON and the closing quote would otherwise split name from ':'.
     .replace(
-      /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b["']?\s*(?::|=>|=)\s*["']?\S[^\r\n]*/gi,
+      /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b(?:\\*["'])?\s*(?::|=>|=)\s*(?:\\*["'])?\S[^\r\n]*/gi,
       '$1: [redacted]'
     )
     // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
@@ -155,11 +193,11 @@ export function sanitizeError(message: string): string {
     // rule in this group. '=>' must precede '=' in the alternation or '=' wins
     // and leaves '>' to break the value match.
     .replace(
-      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*"[^"]*"/gi,
+      /\[?\b(\w*(?:token|password|secret|key|auth|credential))\]?(?:\\*["'])?\s*(?:=>|=|:)\s*"[^"]*"/gi,
       '$1=[redacted]'
     )
     .replace(
-      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*'[^']*'/gi,
+      /\[?\b(\w*(?:token|password|secret|key|auth|credential))\]?(?:\\*["'])?\s*(?:=>|=|:)\s*'[^']*'/gi,
       '$1=[redacted]'
     )
     // Known secret key followed by an unquoted (or escape-quoted) WordPress
@@ -169,7 +207,7 @@ export function sanitizeError(message: string): string {
     // swallowed. Must run before the generic unquoted rule, which stops at the
     // first space.
     .replace(
-      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{4}){5}/gi,
+      /\[?\b(\w*(?:token|password|secret|key|auth|credential))\]?(?:\\*["'])?\s*(?:=>|=|:)\s*(?:\\*["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{4}){5}/gi,
       '$1=[redacted]'
     )
     // URL-encoded serialization (%22key%22%3A%22a%20b...%22): the key is still
@@ -177,7 +215,7 @@ export function sanitizeError(message: string): string {
     // rules above can see it. Matched directly rather than decoding the whole
     // diagnostic and rewriting it.
     .replace(
-      /\b(\w*(?:token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D)(?:%22)?(?:[A-Za-z0-9]|%20)+/gi,
+      /\b(\w*(?:authorization|token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D|:|=)(?:%22)?(?:[A-Za-z0-9]|%[0-9A-Fa-f]{2}|\+)+/gi,
       '$1=[redacted]'
     );
   // The input cap can cut a spaced password mid-group, and the cut can only land
@@ -188,14 +226,14 @@ export function sanitizeError(message: string): string {
     // The trailing class absorbs whatever residue the cut leaves after the last
     // group: a space, or the quote/backslash of a severed JSON value.
     out = out.replace(
-      /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{1,4}){0,5}(?:\s[A-Za-z0-9]{1,3})?[\s\\"']*$/i,
+      /\[?\b(\w*(?:token|password|secret|key|auth|credential))\]?(?:\\*["'])?\s*(?:=>|=|:)\s*(?:\\*["'])?[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{1,4}){0,5}(?:\s[A-Za-z0-9]{1,3})?[\s\\"']*$/i,
       '$1=[redacted]'
     );
   }
   return (
     out
       .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))(?:\\?["'])?\s*(?:=>|=|:)\s*(?:\\?["'])?[\w\-._~+/]+=*/gi,
+        /\[?\b(\w*(?:token|password|secret|key|auth|credential))\]?(?:\\*["'])?\s*(?:=>|=|:)\s*(?:\\*["'])?[\w\-._~+/]+=*/gi,
         '$1=[redacted]'
       )
       // Remove stack traces (at Function.name (file:line:col)).

@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateInput, sanitizeError, RateLimiter, isValidId } from './security.js';
+import {
+  validateInput,
+  sanitizeError,
+  registerKnownSecrets,
+  RateLimiter,
+  isValidId,
+} from './security.js';
 
 describe('validateInput', () => {
   it('should accept valid input', () => {
@@ -267,6 +273,54 @@ describe('sanitizeError', () => {
     expect(sanitized).not.toContain('mnop');
   });
 
+  it('should redact a twice-nested JSON app password', () => {
+    const p = 'abcd efgh ijkl mnop qrst uvwx';
+    const message = JSON.stringify({
+      detail: JSON.stringify({ detail: JSON.stringify({ appPassword: p }) }),
+    });
+    const sanitized = sanitizeError(message);
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact a URLSearchParams-serialized app password (spaces become +)', () => {
+    const p = 'abcd efgh ijkl mnop qrst uvwx';
+    const message = new URLSearchParams({ detail: JSON.stringify({ appPassword: p }) }).toString();
+    const sanitized = sanitizeError(message);
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact an encodeURI-serialized app password (colon stays raw)', () => {
+    const p = 'abcd efgh ijkl mnop qrst uvwx';
+    const message = encodeURI(JSON.stringify({ appPassword: p }));
+    const sanitized = sanitizeError(message);
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact a print_r-style bracketed-key dump', () => {
+    const message = 'Array\n(\n    [app_password] => abcd efgh ijkl mnop qrst uvwx\n)';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should redact an escaped (nested-JSON) Authorization value', () => {
+    const message = JSON.stringify({
+      detail: JSON.stringify({ Authorization: 'Digest response=SUPERSECRET' }),
+    });
+    expect(sanitizeError(message)).not.toContain('SUPERSECRET');
+  });
+
+  it('should redact a URL-encoded Authorization value', () => {
+    const message = encodeURIComponent(
+      JSON.stringify({ Authorization: 'Digest response=SUPERSECRET' })
+    );
+    expect(sanitizeError(message)).not.toContain('SUPERSECRET');
+  });
+
   it('should remove stack traces', () => {
     const message = 'Error occurred at Function.name (/path/to/file.js:10:5)';
     expect(sanitizeError(message)).not.toContain('at Function.name');
@@ -304,6 +358,42 @@ describe('sanitizeError', () => {
 
   it('should trim whitespace', () => {
     expect(sanitizeError('  message  ')).toBe('message');
+  });
+});
+
+describe('registered known secrets', () => {
+  const p = 'abcd efgh ijkl mnop qrst uvwx';
+
+  afterEach(() => {
+    registerKnownSecrets([]);
+  });
+
+  it('should redact a registered secret with no key context at all', () => {
+    // No secret-ish key anywhere, so every pattern rule skips this; only the
+    // value registry can catch it.
+    registerKnownSecrets([p]);
+    const sanitized = sanitizeError(`The dashboard echoed ${p} back`);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+  });
+
+  it('should redact registered-secret encodings that survive serialization', () => {
+    registerKnownSecrets([p]);
+    expect(sanitizeError('x=' + encodeURIComponent(p))).not.toContain('efgh');
+    expect(sanitizeError(new URLSearchParams({ x: p }).toString())).not.toContain('efgh');
+  });
+
+  it('should redact a registered secret that straddles the input cap', () => {
+    // Value redaction runs on the full message before the cap, so the secret
+    // never reaches the truncation seam in the first place.
+    registerKnownSecrets([p]);
+    const sanitized = sanitizeError('x'.repeat(1990) + ' echoed ' + p);
+    expect(sanitized).not.toContain('efgh');
+  });
+
+  it('should ignore registered values too short to redact safely', () => {
+    registerKnownSecrets(['abc']);
+    expect(sanitizeError('abc def')).toBe('abc def');
   });
 });
 
