@@ -19,6 +19,19 @@ clients read directly; `npm run sync-skill` mirrors it into the plugin and CI
 byte-compares the two. Conventions are in `docs/plugin.md`. This adds no server
 behavior and does not change the published package.
 
+### Changed
+
+Confirmation instructions now state that approval must come from the user. The
+destructive-operation flow told the agent to proceed "if they approve" without
+ruling out the agent counting the original request as that approval, so an
+agent could preview and confirm in one turn with the user never seeing the
+preview. Tool descriptions, both confirmation responses (preview and
+no-preview), and the compact FLOW strings now all say a bare request for the
+operation is not approval: the agent stops and waits for an approving reply
+sent after the user sees the preview or operation description, unless the user
+explicitly authorized proceeding through confirmation up front. The compact
+strings carry the same gate so compact mode cannot reopen the loophole.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
