@@ -79,9 +79,27 @@ function coerceParamType(type: unknown): string {
 /**
  * Generate help documentation for a single ability
  */
+function isSchemaRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function generateToolHelp(ability: Ability, primaryNamespace: string): ToolHelp {
   const toolName = abilityNameToToolName(ability.name, primaryNamespace);
-  const props = (ability.input_schema?.properties || {}) as Record<string, Record<string, unknown>>;
+  // Remote properties can be any JSON shape: the container may be an array or
+  // primitive, and each entry may be null/primitive/array — bare-casting made
+  // prop.type below throw on the first malformed entry. Normalize to safe
+  // records. Null prototype so a remote "__proto__" key cannot hit the
+  // prototype setter and vanish (or pollute).
+  const rawProps: unknown = ability.input_schema?.properties;
+  const props: Record<string, Record<string, unknown>> = Object.create(null) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  if (isSchemaRecord(rawProps)) {
+    for (const [name, value] of Object.entries(rawProps)) {
+      props[name] = isSchemaRecord(value) ? value : {};
+    }
+  }
   // Remote schema fields are hostile: `required` can arrive as any JSON type.
   // Bare-casting to string[] and calling .includes() throws TypeError on a
   // truthy non-array (42, {}, true), which would abort the whole help document.
@@ -96,7 +114,7 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
     name,
     type: coerceParamType(prop.type),
     required: required.includes(name),
-    description: prop.description as string | undefined,
+    description: typeof prop.description === 'string' ? prop.description : undefined,
   }));
 
   return {

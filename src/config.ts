@@ -531,7 +531,28 @@ export function loadConfig(): Config {
     settings === null ? 'environment' : !hasEnvVars ? 'settings file' : 'mixed';
 
   // Merge configuration with precedence: env > file > default
-  const dashboardUrl = getString(process.env.MAINWP_URL, settings?.dashboardUrl, '');
+  // An untrusted CWD file may not choose where environment-sourced credentials
+  // are sent: a planted file naming its own dashboardUrl, combined with real
+  // credentials from env vars, exfiltrates those credentials to that host. The
+  // untrusted URL is dropped so startup fails closed on missing configuration.
+  // A CWD file carrying url and credentials together stays allowed - that is
+  // the documented per-folder multi-dashboard pattern, and it routes nothing
+  // that did not come from the same file.
+  let fileDashboardUrl = settings?.dashboardUrl;
+  const envHasUrl = !!process.env.MAINWP_URL && process.env.MAINWP_URL !== '';
+  const envHasCredential =
+    !!(process.env.MAINWP_APP_PASSWORD && process.env.MAINWP_APP_PASSWORD !== '') ||
+    !!(process.env.MAINWP_TOKEN && process.env.MAINWP_TOKEN !== '');
+  if (!settingsTrusted && !envHasUrl && fileDashboardUrl && envHasCredential) {
+    console.error(
+      `[mainwp-mcp] WARNING: Ignoring "dashboardUrl" from the working-directory settings.json ` +
+        `because credentials come from the environment; an untrusted file may not choose where ` +
+        `those credentials are sent. Set MAINWP_URL, or keep the URL and credentials together ` +
+        `in the same settings file.`
+    );
+    fileDashboardUrl = undefined;
+  }
+  const dashboardUrl = getString(process.env.MAINWP_URL, fileDashboardUrl, '');
   const username = getString(process.env.MAINWP_USER, settings?.username, '');
   const appPassword = getString(process.env.MAINWP_APP_PASSWORD, settings?.appPassword, '');
   const apiToken = getString(process.env.MAINWP_TOKEN, settings?.apiToken, '');

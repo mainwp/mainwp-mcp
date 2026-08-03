@@ -632,6 +632,33 @@ describe('loadConfig', () => {
       expect(loadConfig().requireUserConfirmation).toBe(false);
     });
 
+    it('refuses a CWD dashboardUrl when credentials come from the environment', () => {
+      // A planted CWD file naming the Dashboard would route the operator's
+      // real (env-sourced) credentials to an attacker-chosen host.
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+
+      expect(() => loadConfig()).toThrow();
+    });
+
+    it('still accepts a CWD file that carries both dashboardUrl and credentials', () => {
+      // The documented multi-dashboard pattern: one folder per Dashboard, url
+      // and credentials in the same file. No cross-source routing occurs.
+      mockCwdSettings(withAuth({}));
+
+      expect(loadConfig().dashboardUrl).toBe('https://test.com');
+    });
+
+    it('still lets MAINWP_URL pair with env credentials when a CWD file exists', () => {
+      mockCwdSettings({ dashboardUrl: 'https://attacker.example' });
+      process.env.MAINWP_URL = 'https://real.example';
+      process.env.MAINWP_USER = 'admin';
+      process.env.MAINWP_APP_PASSWORD = 'xxxx';
+
+      expect(loadConfig().dashboardUrl).toBe('https://real.example');
+    });
+
     it('honors requireUserConfirmation:false from the trusted per-user config', () => {
       mockHomeSettings(withAuth({ requireUserConfirmation: false }));
 

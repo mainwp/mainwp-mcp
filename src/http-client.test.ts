@@ -111,6 +111,27 @@ describe('createFetch redirect handling', () => {
     expect(cancelled).toBe(true);
   });
 
+  it('cancels an oversize body so undici can release the connection', async () => {
+    // Same connection-leak concern as the redirect path, reached through the
+    // content-length check: the body is never read, so it must be canceled.
+    let cancelled = false;
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 200, headers: { 'content-length': '10485760' } }
+      )
+    );
+
+    const customFetch = createFetch(makeBaseConfig({ maxResponseSize: 1024 }));
+
+    await expect(customFetch(DASHBOARD_URL)).rejects.toThrow(/exceeds maximum allowed/);
+    expect(cancelled).toBe(true);
+  });
+
   it('passes a normal 2xx response through unchanged', async () => {
     const okResponse = {
       ok: true,

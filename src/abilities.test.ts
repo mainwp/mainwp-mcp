@@ -1626,6 +1626,50 @@ describe('help generation with hostile remote schema field types', () => {
     meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
   };
 
+  it('generateToolHelp tolerates null, primitive, and array property entries', () => {
+    const ability = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-props-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          nul: null,
+          num: 7,
+          arr: [1, 2],
+          ok: { type: 'string', description: 'fine' },
+        },
+        required: ['ok'],
+      },
+    } as unknown as Ability;
+
+    expect(() => generateToolHelp(ability, 'mainwp')).not.toThrow();
+    const help = generateToolHelp(ability, 'mainwp');
+    expect(help.parameters).toContainEqual(
+      expect.objectContaining({ name: 'ok', type: 'string', required: true })
+    );
+    expect(help.parameters.find(p => p.name === 'nul')?.type).toBe('unknown');
+  });
+
+  it('generateToolHelp tolerates a non-record properties value and non-string descriptions', () => {
+    const arrayProps = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-array-props-v1',
+      input_schema: { type: 'object', properties: [1, 2, 3] },
+    } as unknown as Ability;
+    expect(() => generateToolHelp(arrayProps, 'mainwp')).not.toThrow();
+    expect(generateToolHelp(arrayProps, 'mainwp').parameters).toEqual([]);
+
+    const badDesc = {
+      ...hostileSchemaAbility,
+      name: 'mainwp/hostile-desc-v1',
+      input_schema: {
+        type: 'object',
+        properties: { p: { type: 'string', description: { evil: true } } },
+      },
+    } as unknown as Ability;
+    expect(generateToolHelp(badDesc, 'mainwp').parameters[0]?.description).toBeUndefined();
+  });
+
   it('generateToolHelp does not throw when required is a non-array and a type is an object', () => {
     expect(() => generateToolHelp(hostileSchemaAbility, 'mainwp')).not.toThrow();
 

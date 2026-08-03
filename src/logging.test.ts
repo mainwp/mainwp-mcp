@@ -227,23 +227,18 @@ describe('logToStderr control-character neutralization', () => {
     expect(line).not.toMatch(/[\x7f-\x9f]/);
   });
 
-  it('neutralizes a JSON.parse SyntaxError body that retained raw ESC bytes (exploit path)', () => {
+  it('neutralizes a parse-error message that retained raw ESC bytes (exploit path)', () => {
     // Reproduce the objection's exploit: a 200-OK invalid-JSON response body
-    // that embeds an ANSI sequence. Node's SyntaxError message retains the raw
-    // ESC byte; that error propagates paginateApi -> validateCredentials
-    // (credential-check.ts:92 re-wrap) -> index.ts fatal handler ->
-    // startupLogger.error -> this stderr sink.
-    let syntaxMessage = '';
-    try {
-      JSON.parse('\x1b[31mHACKED\x1b[0m');
-    } catch (err) {
-      syntaxMessage = (err as Error).message;
-    }
-    // Precondition: the raw ESC byte is present in the unsanitized message.
-    expect(syntaxMessage).toContain('\x1b');
+    // that embeds an ANSI sequence. A JSON parse failure quotes the offending
+    // body back in its message, raw ESC byte included; that error propagates
+    // paginateApi -> validateCredentials (credential-check.ts:92 re-wrap) ->
+    // index.ts fatal handler -> startupLogger.error -> this stderr sink. The
+    // message text is spelled out here rather than taken from JSON.parse,
+    // whose wording is engine-dependent.
+    const parseMessage = `Unexpected token '\x1b[31mHACKED\x1b[0m', is not valid JSON`;
 
     const logger = createStderrLogger();
-    logger.error(`Fatal error: Credential validation failed: ${syntaxMessage}`);
+    logger.error(`Fatal error: Credential validation failed: ${parseMessage}`);
 
     const line = consoleError.mock.calls[0][0] as string;
     expect(line).not.toContain('\x1b');

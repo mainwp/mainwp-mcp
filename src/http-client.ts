@@ -136,7 +136,9 @@ export function createFetch(config: Config, perCallTimeout?: number) {
         throw createHttpError(
           redirectStatus,
           'redirect_not_allowed',
-          `Refusing to follow HTTP redirect (status ${redirectStatus}) from the MainWP Dashboard: ${url}`
+          // No URL in the message: it can carry remote-influenced path/query
+          // data, and this string propagates to clients and logs.
+          `Refusing to follow HTTP redirect (status ${redirectStatus}) from the MainWP Dashboard`
         );
       }
 
