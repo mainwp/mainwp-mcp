@@ -45,6 +45,11 @@ Stderr log lines now strip terminal control characters, so remote error text
 can no longer inject escape sequences into the operator's terminal. Multi-line
 startup error messages render on a single line as a side effect.
 
+Error sanitization now also redacts HTTP Basic credentials, `Authorization`
+headers, and spaced WordPress application passwords, and caps the error text it
+processes, so oversized or credential-bearing remote errors cannot leak
+secrets or stall the server.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added

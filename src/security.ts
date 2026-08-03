@@ -131,6 +131,22 @@ export function sanitizeError(message: string): string {
       .replace(/(https?:\/\/)[^:]+:[^@]+@/g, '$1[redacted]@')
       // Remove Bearer tokens (Authorization: Bearer xxx)
       .replace(/Bearer\s+[\w\-._~+/]+=*/gi, 'Bearer [redacted]')
+      // Remove HTTP Basic credentials (Authorization: Basic base64(user:appPassword)).
+      // This is the scheme the server itself sends by default (see getAuthHeaders in
+      // config.ts). The base64 blob never contains spaces, so a bounded base64 class
+      // covers the whole credential; the {16,} floor keeps ordinary "Basic <word>"
+      // prose (e.g. "Basic authentication") out of the match while every real
+      // credential (base64 of user:app-password) is far longer.
+      .replace(/\bBasic\s+[A-Za-z0-9+/=]{16,}/gi, 'Basic [redacted]')
+      // Redact any Authorization header value to end-of-line. Covers dumped headers
+      // where the scheme token varies or the raw value carries internal spaces, e.g.
+      // "Authorization: Basic xxx", "Proxy-Authorization: ...", and PHP $_SERVER dumps
+      // like "HTTP_AUTHORIZATION => Basic xxx". Redacting to EOL (not to the first
+      // space) prevents leaking a spaced WordPress application password.
+      .replace(
+        /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b\s*(?::|=>|=)\s*\S[^\r\n]*/gi,
+        '$1: [redacted]'
+      )
       // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
       // Matches: TOKEN=xxx, _TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", etc.
       .replace(
@@ -139,6 +155,14 @@ export function sanitizeError(message: string): string {
       )
       .replace(
         /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*'[^']*'/gi,
+        '$1=[redacted]'
+      )
+      // Known secret key followed by an unquoted WordPress application-password value
+      // (24 chars shown as six space-separated groups of 4). Redact every group so a
+      // value with internal spaces does not leak past the first space. Must run before
+      // the generic unquoted rule below, which would otherwise stop at the first space.
+      .replace(
+        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{4}){5}/gi,
         '$1=[redacted]'
       )
       .replace(

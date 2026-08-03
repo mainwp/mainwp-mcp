@@ -154,6 +154,42 @@ describe('sanitizeError', () => {
     expect(sanitized).not.toContain('abc123xyz456');
   });
 
+  it('should redact HTTP Basic credentials in an Authorization header', () => {
+    const message = 'Request failed: Authorization: Basic dXNlcjphcHAtcGFzc3dvcmQ=';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('dXNlcjphcHAtcGFzc3dvcmQ=');
+  });
+
+  it('should redact a standalone HTTP Basic credential blob', () => {
+    const message = 'Upstream echoed header Basic YWRtaW46c2VjcmV0cGFzc3dvcmQxMjM0';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('Basic [redacted]');
+    expect(sanitized).not.toContain('YWRtaW46c2VjcmV0cGFzc3dvcmQxMjM0');
+  });
+
+  it('should redact a PHP $_SERVER HTTP_AUTHORIZATION dump', () => {
+    const message = 'HTTP_AUTHORIZATION => Basic dXNlcjphcHAtcGFzc3dvcmQ=';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('dXNlcjphcHAtcGFzc3dvcmQ=');
+  });
+
+  it('should redact a spaced WordPress app password without leaking past the first space', () => {
+    // WordPress application passwords display as six space-separated groups of 4.
+    const message = 'app_password: abcd efgh ijkl mnop qrst uvwx';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should not over-redact ordinary "Basic <word>" prose', () => {
+    const message = 'Basic authentication failed for the request';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toBe('Basic authentication failed for the request');
+  });
+
   it('should redact sensitive key-value patterns', () => {
     const message = 'MAINWP_TOKEN=secret123';
     const sanitized = sanitizeError(message);
