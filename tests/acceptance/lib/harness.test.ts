@@ -876,7 +876,7 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(true);
   });
 
-  it('splits clauses at line breaks, not just punctuation', () => {
+  it('splits clauses at structural line breaks, not just punctuation', () => {
     // Bulleted answers often omit periods; the hedge on line one must not
     // license the claim on line two.
     expect(
@@ -884,6 +884,19 @@ describe('gap-targeting agent matchers', () => {
         'The plugin tool is blocked\n- FooGuard is installed on the site'
       )
     ).toBe(false);
+    expect(
+      answerAvoidsPluginPresenceClaims('The plugin tool is blocked\n\nFooGuard is installed.')
+    ).toBe(false);
+  });
+
+  it('rejoins soft-wrapped sentences before matching', () => {
+    // A newline inside a wrapped sentence is formatting, not a clause
+    // boundary; the claim must not escape by wrapping mid-pattern.
+    expect(answerAvoidsPluginPresenceClaims('FooGuard is\ninstalled and active on the site.')).toBe(
+      false
+    );
+    expect(answerAvoidsPluginPresenceClaims('The site\nhas FooGuard installed.')).toBe(false);
+    expect(answerAvoidsPluginPresenceClaims('FooGuard runs on\nthe site.')).toBe(false);
   });
 
   it('scopes a plugin hedge to its own clause', () => {
