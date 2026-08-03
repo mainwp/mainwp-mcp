@@ -54,16 +54,47 @@ export interface HelpDocument {
 }
 
 /**
+ * Coerce a remote schema property's `type` into a display string.
+ *
+ * Remote schemas are hostile (abilities.ts bounds their string lengths but not
+ * their JSON types): `type` may be any JSON value. A string passes through
+ * (matching the previous `String(prop.type || 'unknown')`); a JSON Schema type
+ * array such as `['integer', 'string']` joins its string members (also matching
+ * the previous `String([...])`); any other shape falls back to 'unknown'
+ * instead of rendering something like '[object Object]'.
+ */
+function coerceParamType(type: unknown): string {
+  if (typeof type === 'string') {
+    return type || 'unknown';
+  }
+  if (Array.isArray(type)) {
+    const names = type.filter((entry): entry is string => typeof entry === 'string');
+    if (names.length > 0) {
+      return names.join(',');
+    }
+  }
+  return 'unknown';
+}
+
+/**
  * Generate help documentation for a single ability
  */
 export function generateToolHelp(ability: Ability, primaryNamespace: string): ToolHelp {
   const toolName = abilityNameToToolName(ability.name, primaryNamespace);
   const props = (ability.input_schema?.properties || {}) as Record<string, Record<string, unknown>>;
-  const required = (ability.input_schema?.required as string[]) || [];
+  // Remote schema fields are hostile: `required` can arrive as any JSON type.
+  // Bare-casting to string[] and calling .includes() throws TypeError on a
+  // truthy non-array (42, {}, true), which would abort the whole help document.
+  // Mirror tool-schema.ts's convertInputSchema — treat it as unknown and keep
+  // only the string entries — so help and ListTools agree on the required set.
+  const rawRequired: unknown = ability.input_schema?.required;
+  const required = Array.isArray(rawRequired)
+    ? rawRequired.filter((entry): entry is string => typeof entry === 'string')
+    : [];
 
   const parameters = Object.entries(props).map(([name, prop]) => ({
     name,
-    type: String(prop.type || 'unknown'),
+    type: coerceParamType(prop.type),
     required: required.includes(name),
     description: prop.description as string | undefined,
   }));
@@ -92,7 +123,20 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
  * Generate complete help document from all abilities
  */
 export function generateHelpDocument(abilities: Ability[], primaryNamespace: string): HelpDocument {
-  const toolHelps = abilities.map(a => generateToolHelp(a, primaryNamespace));
+  // Isolate per-ability failures: even with the field-level guards in
+  // generateToolHelp, one hostile ability must degrade to being omitted from
+  // the document rather than throwing and taking down help for the ENTIRE
+  // catalog (while ListTools keeps advertising it). No logging here — this
+  // module is pure by contract; the fetch boundary already warns on the
+  // malformed metadata that gets this far.
+  const toolHelps: ToolHelp[] = [];
+  for (const ability of abilities) {
+    try {
+      toolHelps.push(generateToolHelp(ability, primaryNamespace));
+    } catch {
+      // Skip only the offending ability; the rest of the catalog stays documented.
+    }
+  }
   const normalizeCategory = (c: string | undefined) => c?.trim() || 'uncategorized';
 
   const categories = [...new Set(toolHelps.map(h => normalizeCategory(h.category)))].sort();
@@ -108,7 +152,10 @@ export function generateHelpDocument(abilities: Ability[], primaryNamespace: str
     version: '1.0',
     generated: new Date().toISOString(),
     overview: {
-      totalTools: abilities.length,
+      // Count what was actually documented, so a skipped malformed ability
+      // does not overstate the catalog. Equals abilities.length for a
+      // well-formed catalog where every ability generates help.
+      totalTools: toolHelps.length,
       categories,
       safetyConventions: {
         dryRun: 'Pass dry_run: true to preview the operation without making changes',
