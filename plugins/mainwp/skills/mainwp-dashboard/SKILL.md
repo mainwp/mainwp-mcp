@@ -27,6 +27,11 @@ Before multi-step or network-wide work, read the resources:
 `connected: false` means the catalog fetch failed. Stop and report it. Do not
 guess tool names or retry blind.
 
+Liveness questions need live evidence. Asked whether sites are up or down right
+now, run the catalog's live connectivity check against the sites instead of
+answering from uptime monitoring, incident history, or last-sync data — those
+report the past, not the present.
+
 ## Filtering is silent
 
 `MAINWP_ALLOWED_TOOLS` and `MAINWP_BLOCKED_TOOLS` remove tools from `tools/list`
@@ -86,9 +91,11 @@ Two separate caps, with different failure codes:
 
 Neither is a Dashboard outage. Recovery is narrowing, never an identical retry:
 one site instead of the network, filters or date ranges, the ability's own
-paging parameters, fewer fields. The session counter only resets when a new
-server session starts, so check `sessionData` in `mainwp://status` before a long
-sweep and prefer summaries over full payloads.
+paging parameters, fewer fields. A rejected over-cap response is not counted
+against the session budget, so narrowed calls still fit; finish the request
+with them rather than stopping at whatever was already collected. The session
+counter only resets when a new server session starts, so check `sessionData` in
+`mainwp://status` before a long sweep and prefer summaries over full payloads.
 
 ## Partial data stays partial
 

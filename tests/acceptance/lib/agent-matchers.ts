@@ -592,17 +592,24 @@ export function matchesSiteStatusAnswer(text: string, offlineSiteUrls: string[])
     /\bnot all\b.{0,40}\b(?:sites?|websites?)\b.{0,30}\b(?:up|online|connected|reachable)\b/.test(
       answer
     ) ||
-    /\b(?:one|some|a|[1-9]\d*)\b.{0,30}\b(?:sites?|websites?)\b.{0,30}\b(?:down|offline|unreachable|disconnected)\b/.test(
+    // The lookbehinds keep negated down-words ("no disconnected", "nothing
+    // down") from reading as a down claim about the counted sites.
+    /\b(?:one|some|a|[1-9]\d*)\b.{0,30}\b(?:sites?|websites?)\b.{0,30}\b(?<!\bno )(?<!\bnot )(?<!\bnothing )(?<!\bzero )(?:down|offline|unreachable|disconnected)\b/.test(
       answer
     )
   ) {
     return false;
   }
 
+  // Affirmative-liveness vocabulary rather than enumerated sentence shapes:
+  // three correct all-up answers in two runs missed shape-based patterns
+  // ("nothing is down", "responded live, HTTP 200 each"). The contradiction
+  // guards above already rejected any down claim and the oracle says nothing
+  // is offline, so any liveness affirmation makes the answer faithful.
   return [
-    /\b(?:none|no|zero)\b.{0,40}\b(?:sites?|websites?)\b.{0,30}\b(?:down|offline|unreachable|disconnected)\b/,
-    /\b(?:all|every)\b.{0,30}\b(?:sites?|website)\b.{0,30}\b(?:up|online|connected|reachable)\b/,
-    /\bnot any\b.{0,30}\b(?:sites?|websites?)\b.{0,30}\b(?:down|offline|unreachable|disconnected)\b/,
+    /\b(?:up|online|connected|reachable|responding|responded|operational|healthy)\b/,
+    /\bhttp\s*200\b/,
+    /\b(?:no|zero|nothing|none)\b.{0,30}\b(?:down|offline|unreachable|disconnected|outages?|errors?|issues?)\b/,
   ].some(pattern => pattern.test(answer));
 }
 

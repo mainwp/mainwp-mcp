@@ -124,8 +124,11 @@ In rough order of preference:
 5. Only then tell the user a new session is needed, and say what was already
    collected so the work is not repeated.
 
-An identical retry after a cap never helps: it produces the same bytes, and on
-the session cap it burns more budget.
+The session cap is checked before bytes are added to the counter, so a rejected
+response costs nothing: the remaining budget is intact and a narrower call that
+fits will succeed. A cap mid-task means switch to narrowed calls and finish the
+request, not abandon the remainder. An identical retry after a cap never helps:
+it fetches the same bytes upstream only to be rejected the same way.
 
 ## Pagination and partial reads
 

@@ -729,12 +729,18 @@ describe('agent acceptance matchers', () => {
     }
   );
 
-  it.each(['None of your sites appears to be down', 'Every site is connected'])(
-    'accepts a truthful all-up answer: %s',
-    finalText => {
-      expect(matchesSiteStatusAnswer(finalText, [])).toBe(true);
-    }
-  );
+  it.each([
+    'None of your sites appears to be down',
+    'Every site is connected',
+    // Observed verbatim in the 2026-08-03 skill-arm reruns: correct all-up
+    // answers with no "sites" noun next to the up/down word.
+    'No, Dennis — nothing is down. Live connectivity check just now against all 4 sites, every one HTTP 200.',
+    'No. All 4 sites responded live just now, HTTP 200 each. No errors, nothing disconnected or suspended.',
+    // Negated down-words after the site count must not read as a down claim.
+    'No, nothing is down right now. 4 sites, all 4 connected — no disconnected, no suspended.',
+  ])('accepts a truthful all-up answer: %s', finalText => {
+    expect(matchesSiteStatusAnswer(finalText, [])).toBe(true);
+  });
 
   it('requires every offline hostname when sites are down', () => {
     const offline = ['https://one.example.test/path', 'https://two.example.test'];
