@@ -173,6 +173,27 @@ describe('sanitizeError', () => {
     expect(sanitizeError(message)).not.toContain('at Function.name');
   });
 
+  it('should strip a real V8 stack frame line', () => {
+    const message = 'Boom\n    at Object.foo (/path/to/file.js:10:5)';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).not.toContain('Object.foo');
+    expect(sanitized).not.toContain(':10:5');
+    expect(sanitized).toContain('Boom');
+  });
+
+  it('should not catastrophically backtrack on a pathological error body', () => {
+    // Pre-fix, the stack-trace regex had two adjacent greedy `.+` groups and
+    // ran on the uncapped (up to 64KB) remote error body: this input drove it
+    // into quadratic backtracking that stalled the event loop for seconds. The
+    // fix caps the input and makes the pattern linear, so this returns in ~ms.
+    const evil = ' at ' + '('.repeat(60000);
+    const start = performance.now();
+    const sanitized = sanitizeError(evil);
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+    expect(sanitized.length).toBeLessThanOrEqual(500);
+  });
+
   it('should truncate to 500 characters', () => {
     const longMessage = 'a'.repeat(600);
     expect(sanitizeError(longMessage).length).toBeLessThanOrEqual(500);

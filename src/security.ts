@@ -12,6 +12,15 @@ const MAX_STRING_LENGTH = 10000;
 const MAX_ARRAY_ELEMENTS = 1000;
 const MAX_OBJECT_DEPTH = 5;
 
+// Upper bound on the string sanitizeError runs its regexes over. Error bodies
+// forwarded here are untrusted and can be up to MAX_ERROR_BODY_BYTES (64KB);
+// capping the working string first keeps every replace() linear-bounded and
+// prevents a hostile body from stalling the event loop. It is a generous
+// multiple of the final 500-char output cap, so redaction of any realistic
+// message is byte-identical — only pathological, far-oversized bodies are
+// clipped, and clipping can only remove content, never expose a secret.
+const MAX_SANITIZE_INPUT_LENGTH = 2000;
+
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
@@ -104,8 +113,16 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
  * Removes potentially sensitive information like file paths, credentials, and stack traces.
  */
 export function sanitizeError(message: string): string {
+  // Bound the working string before any regex runs. The input can be a 64KB
+  // remote error body; without this cap the stack-trace pattern below (and the
+  // other backtracking-capable patterns) could be driven into pathological,
+  // event-loop-blocking backtracking by a hostile body.
+  const bounded =
+    message.length > MAX_SANITIZE_INPUT_LENGTH
+      ? message.slice(0, MAX_SANITIZE_INPUT_LENGTH)
+      : message;
   return (
-    message
+    bounded
       // Remove absolute file paths (Unix: /home/..., /var/..., macOS: /Users/...)
       .replace(/\/(Users|home|var|tmp|etc|usr|opt)\/[\w\-./]+/gi, '[path]')
       // Remove Windows paths
@@ -128,8 +145,12 @@ export function sanitizeError(message: string): string {
         /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[\w\-._~+/]+=*/gi,
         '$1=[redacted]'
       )
-      // Remove stack traces (at Function.name (file:line:col))
-      .replace(/\s+at\s+.+\(.+:\d+:\d+\)/g, '')
+      // Remove stack traces (at Function.name (file:line:col)).
+      // Character classes that exclude '(' , ')' and newline replace the two
+      // adjacent greedy `.+` groups, so the '(' delimiter splits the match
+      // deterministically and the pattern runs in linear time (no quadratic
+      // backtracking on inputs full of '(').
+      .replace(/\s+at\s+[^()\n]+\([^()\n]*:\d+:\d+\)/g, '')
       // Remove Node.js internal paths
       .replace(/\(node:[\w]+:\d+:\d+\)/g, '')
       // Truncate to reasonable length
