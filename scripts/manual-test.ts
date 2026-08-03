@@ -21,6 +21,7 @@
 import fs from 'fs';
 import { performance } from 'perf_hooks';
 import { loadConfig, getAbilitiesApiUrl, getAuthHeaders, type Config } from '../src/config.js';
+import { sanitizeForTerminal } from './sanitize-terminal.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -499,7 +500,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
         const data = result.body as { items?: Array<{ id: number }> };
         if (data.items && data.items.length > 0) {
           ctx.siteId = data.items[0].id;
-          console.log(`  Found site ID: ${ctx.siteId}`);
+          console.log(`  Found site ID: ${sanitizeForTerminal(ctx.siteId)}`);
         }
       }
     } catch (err) {
@@ -539,7 +540,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
           if (candidate) {
             ctx.pluginSlug = candidate.slug;
             console.log(
-              `  Found plugin: ${ctx.pluginSlug} (${candidate.active ? 'active' : 'inactive'})`
+              `  Found plugin: ${sanitizeForTerminal(ctx.pluginSlug)} (${candidate.active ? 'active' : 'inactive'})`
             );
           } else {
             console.log(
@@ -571,7 +572,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
         const candidate = data.themes.find(t => !t.active);
         if (candidate) {
           ctx.themeSlug = candidate.slug;
-          console.log(`  Found theme: ${ctx.themeSlug}`);
+          console.log(`  Found theme: ${sanitizeForTerminal(ctx.themeSlug)}`);
         } else {
           console.log('  No inactive theme found.');
         }
