@@ -34,7 +34,11 @@ duplicate of a manual entry, matching on the server name or on an identical
 command and args (debug log: `Suppressing plugin MCP server
 "plugin:mainwp:mainwp": duplicates manually-configured "mainwp"`). The manual
 entry silently wins and the plugin contributes only its commands and skill. The
-fix is removing the manual entry and keeping the plugin's.
+fix is removing the manual entry and keeping the plugin's. If the manual entry
+carried an `env` block, move everything in it (credentials and any `MAINWP_*`
+settings such as safe mode or tool filters) into the environment that launches
+Claude Code before removing it; the plugin ships no env map, so its server
+reads `MAINWP_*` only from that environment.
 
 ## Canonical copy rule
 

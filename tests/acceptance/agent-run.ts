@@ -1408,9 +1408,11 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
   }
 }
 
-function toolFamilyMatches(toolName: string, expected: string[]): boolean {
+export function toolFamilyMatches(toolName: string, expected: string[]): boolean {
+  // Separator boundary, same rule as agent-confirmation's matchesToolFamily:
+  // undelete_site_v1 is not in the delete_site_v1 family.
   return expected.some(
-    family => toolName === `mcp__mainwp__${family}` || toolName.endsWith(family)
+    family => toolName === `mcp__mainwp__${family}` || toolName.endsWith(`__${family}`)
   );
 }
 
