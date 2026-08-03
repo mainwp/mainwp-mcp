@@ -103,6 +103,14 @@ export function createFetch(config: Config, perCallTimeout?: number) {
           ...getAuthHeaders(config),
           ...options.headers,
         },
+        // Do not auto-follow redirects. The remote Dashboard response is hostile
+        // per the threat model, and a 3xx Location chosen by a compromised/MITM'd
+        // Dashboard would make this host issue authenticated requests to
+        // attacker-picked URLs (internal services, cloud metadata) and stream
+        // their bodies back. The MainWP Abilities REST endpoints always return a
+        // direct 2xx/4xx/5xx response, so a redirect is anomalous and fails closed
+        // below. Placed after `...options` so no caller can opt back into following.
+        redirect: 'manual',
       };
 
       // Per-request TLS bypass via undici dispatcher — avoids process-global
@@ -112,6 +120,21 @@ export function createFetch(config: Config, perCallTimeout?: number) {
       }
 
       const response = await fetch(url, fetchOptions as RequestInit);
+
+      // Fail closed on redirects instead of following the Location header.
+      // With `redirect: 'manual'`, fetch surfaces the 3xx response instead of
+      // following it. Depending on the undici version this is either the real
+      // 3xx status (type 'basic') or an opaque-redirect placeholder (status 0,
+      // type 'opaqueredirect'); reject both. We never read the Location value —
+      // it is attacker-controlled — so the target host is never contacted.
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        const redirectStatus = response.status || 302;
+        throw createHttpError(
+          redirectStatus,
+          'redirect_not_allowed',
+          `Refusing to follow HTTP redirect (status ${redirectStatus}) from the MainWP Dashboard: ${url}`
+        );
+      }
 
       // Check response size before parsing (if content-length is provided)
       const contentLength = response.headers.get('content-length');

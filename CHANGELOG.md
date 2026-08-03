@@ -50,6 +50,11 @@ headers, and spaced WordPress application passwords, and caps the error text it
 processes, so oversized or credential-bearing remote errors cannot leak
 secrets or stall the server.
 
+HTTP redirects from the Dashboard are no longer followed. A 3xx response now
+fails the request instead of silently re-sending it (with credentials) to
+whatever host the redirect names. Point `MAINWP_DASHBOARD_URL` at the final
+URL if your Dashboard sits behind a redirect.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
