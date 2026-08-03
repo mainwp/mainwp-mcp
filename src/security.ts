@@ -139,6 +139,9 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
     variants.add(secret.split(' ').join('+'));
     variants.add(encodeURIComponent(secret));
     variants.add(encodeURI(secret));
+    // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
+    // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
+    variants.add(new URLSearchParams([['x', secret]]).toString().slice(2));
   }
   // Longest-first, so a secret that another secret prefixes is replaced
   // before the prefix can break its match.

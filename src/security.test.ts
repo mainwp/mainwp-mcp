@@ -412,6 +412,17 @@ describe('registered known secrets', () => {
     clearKnownSecrets();
   });
 
+  it('should redact a form-encoded registered secret containing punctuation', () => {
+    // URLSearchParams keeps '=' raw but percent-escapes '!', '(', ')', '~' -
+    // characters encodeURIComponent leaves alone - so the registry needs the
+    // exact application/x-www-form-urlencoded variant.
+    const token = 'missing!must_be_64_chars';
+    registerKnownSecrets([token]);
+    const body = new URLSearchParams({ api_token: token }).toString();
+    const sanitized = sanitizeError(body);
+    expect(sanitized).not.toContain('must_be_64_chars');
+  });
+
   it('should fully redact a secret that another registered secret prefixes', () => {
     // Sequential replacement must run longest-first, or replacing the shorter
     // prefix first breaks the longer match and leaks its suffix.
