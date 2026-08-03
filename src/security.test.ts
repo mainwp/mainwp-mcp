@@ -204,6 +204,34 @@ describe('sanitizeError', () => {
     expect(sanitized).not.toContain('mysecret');
   });
 
+  it('should redact an Authorization value inside a JSON error body', () => {
+    // Remote error bodies are commonly JSON; the quoted key must not dodge the rule.
+    const message = '{"Authorization":"Digest response=SUPERSECRET"}';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('SUPERSECRET');
+  });
+
+  it('should redact a spaced app password inside a JSON error body', () => {
+    const message = '{"appPassword":"abcd efgh ijkl mnop qrst uvwx"}';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('uvwx');
+  });
+
+  it('should not leak trailing password groups when the input cap splits the value', () => {
+    // Padding pushes the spaced password across the MAX_SANITIZE_INPUT_LENGTH cut,
+    // so the exact six-group form never survives truncation intact; the keyed rule
+    // must swallow however many groups remain.
+    const message = '/tmp/' + 'a'.repeat(1960) + ' app_password: abcd efgh ijkl mnop qrst uvwx';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('efgh');
+    expect(sanitized).not.toContain('ijkl');
+    expect(sanitized).not.toContain('mnop');
+  });
+
   it('should remove stack traces', () => {
     const message = 'Error occurred at Function.name (/path/to/file.js:10:5)';
     expect(sanitizeError(message)).not.toContain('at Function.name');

@@ -504,11 +504,14 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
         }
       }
     } catch (err) {
-      console.error(`  Discovery failed (list-sites): ${(err as Error).message}`);
-      throw new Error(
-        `Cannot reach Dashboard. Check credentials and URL.\n  ${(err as Error).message}`,
-        { cause: err }
-      );
+      // fetch error text is remote-influenced (undici embeds a hostile
+      // redirect Location in some parse failures) and reaches the terminal
+      // here and via the top-level "Fatal error" print.
+      const detail = sanitizeForTerminal((err as Error).message);
+      console.error(`  Discovery failed (list-sites): ${detail}`);
+      throw new Error(`Cannot reach Dashboard. Check credentials and URL.\n  ${detail}`, {
+        cause: err,
+      });
     }
   }
 
@@ -553,7 +556,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
         }
       }
     } catch (err) {
-      console.log(`  Plugin discovery failed: ${(err as Error).message}`);
+      console.log(`  Plugin discovery failed: ${sanitizeForTerminal((err as Error).message)}`);
     }
   }
 
@@ -579,7 +582,7 @@ async function discover(config: Config, opts: CliOptions): Promise<DiscoveryCont
       }
     }
   } catch (err) {
-    console.log(`  Theme discovery failed: ${(err as Error).message}`);
+    console.log(`  Theme discovery failed: ${sanitizeForTerminal((err as Error).message)}`);
   }
 
   return ctx;
@@ -642,7 +645,16 @@ async function runTest(
 
     if (verbose && result.body) {
       console.log(`\n  Response body (${scenario.name}):`);
-      console.log(`  ${JSON.stringify(result.body, null, 2).split('\n').join('\n  ')}`);
+      // JSON.stringify escapes C0 controls but leaves DEL and the C1 block
+      // (U+009B CSI is a single-byte ESC[) intact, so the raw serialization
+      // still lets a hostile Dashboard drive the operator's terminal.
+      // Sanitize per line: the only raw newlines are the pretty-printer's own,
+      // and sanitizing the whole blob would escape those and lose the layout.
+      const pretty = JSON.stringify(result.body, null, 2)
+        .split('\n')
+        .map(sanitizeForTerminal)
+        .join('\n  ');
+      console.log(`  ${pretty}`);
     }
 
     return {
@@ -856,9 +868,11 @@ async function main(): Promise<void> {
       const time = result.responseTimeMs ? ` (${Math.round(result.responseTimeMs)}ms)` : '';
       console.log(` PASS${time}`);
     } else if (result.status === 'skipped') {
-      console.log(` SKIP — ${result.error}`);
+      console.log(` SKIP — ${sanitizeForTerminal(result.error)}`);
     } else {
-      console.log(` FAIL — ${result.error}`);
+      // Sanitized at the print, not on TestResult.error, so the saved JSON
+      // report keeps the message the harness actually got.
+      console.log(` FAIL — ${sanitizeForTerminal(result.error)}`);
     }
   }
 

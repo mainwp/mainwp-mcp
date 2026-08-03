@@ -87,6 +87,30 @@ describe('createFetch redirect handling', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('cancels the rejected redirect body so undici can release the connection', async () => {
+    // Real Response with a real stream, not the plain-object mocks above: the
+    // point of this test is the body stream, and undici stalls connections
+    // whose bodies are neither read nor canceled.
+    let cancelled = false;
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } }
+      )
+    );
+
+    const customFetch = createFetch(makeBaseConfig());
+
+    await expect(customFetch(DASHBOARD_URL)).rejects.toMatchObject({
+      code: 'redirect_not_allowed',
+    });
+    expect(cancelled).toBe(true);
+  });
+
   it('passes a normal 2xx response through unchanged', async () => {
     const okResponse = {
       ok: true,

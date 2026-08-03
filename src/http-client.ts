@@ -129,6 +129,10 @@ export function createFetch(config: Config, perCallTimeout?: number) {
       // it is attacker-controlled — so the target host is never contacted.
       if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
         const redirectStatus = response.status || 302;
+        // undici keeps the connection checked out until the body is consumed or
+        // canceled, so a discarded response leaks it until GC. Fire-and-forget:
+        // a rejected cancel() must not race the throw below.
+        void response.body?.cancel().catch(() => {});
         throw createHttpError(
           redirectStatus,
           'redirect_not_allowed',
@@ -141,6 +145,9 @@ export function createFetch(config: Config, perCallTimeout?: number) {
       if (contentLength) {
         const size = parseInt(contentLength, 10);
         if (size > config.maxResponseSize) {
+          // Same connection-leak reason as the redirect path above: nobody ever
+          // reads this body, so cancel it before discarding the response.
+          void response.body?.cancel().catch(() => {});
           throw new Error(
             `Response size ${size} bytes exceeds maximum allowed ${config.maxResponseSize} bytes`
           );

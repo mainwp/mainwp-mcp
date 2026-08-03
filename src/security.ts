@@ -143,30 +143,37 @@ export function sanitizeError(message: string): string {
       // "Authorization: Basic xxx", "Proxy-Authorization: ...", and PHP $_SERVER dumps
       // like "HTTP_AUTHORIZATION => Basic xxx". Redacting to EOL (not to the first
       // space) prevents leaking a spaced WordPress application password.
+      // The optional quote after the name (and before the value) keeps JSON bodies
+      // like {"Authorization":"Digest ..."} inside the match; remote errors are
+      // commonly JSON and the closing quote would otherwise split name from ':'.
       .replace(
-        /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b\s*(?::|=>|=)\s*\S[^\r\n]*/gi,
+        /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b["']?\s*(?::|=>|=)\s*["']?\S[^\r\n]*/gi,
         '$1: [redacted]'
       )
       // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
-      // Matches: TOKEN=xxx, _TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", etc.
+      // Matches: TOKEN=xxx, MAINWP_TOKEN=xxx, password: "xxx", and JSON forms like
+      // "appPassword":"xxx" - the optional quote between key and separator is what
+      // keeps quoted JSON keys from dodging every rule in this group.
       .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*"[^"]*"/gi,
+        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*"[^"]*"/gi,
         '$1=[redacted]'
       )
       .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*'[^']*'/gi,
+        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*'[^']*'/gi,
         '$1=[redacted]'
       )
       // Known secret key followed by an unquoted WordPress application-password value
-      // (24 chars shown as six space-separated groups of 4). Redact every group so a
-      // value with internal spaces does not leak past the first space. Must run before
-      // the generic unquoted rule below, which would otherwise stop at the first space.
+      // (displayed as six space-separated groups of 4). The repetition is 1-5 groups
+      // and the last group tolerates 1-3 chars because the input cap above can cut
+      // the value mid-group; an exact six-group form would leak the surviving tail.
+      // Over-redacting a following short word is accepted. Must run before the
+      // generic unquoted rule below, which stops at the first space.
       .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{4}){5}/gi,
+        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*[A-Za-z0-9]{4}(?:\s[A-Za-z0-9]{1,4}){1,5}/gi,
         '$1=[redacted]'
       )
       .replace(
-        /\b(\w*(?:token|password|secret|key|auth|credential))[=:]\s*[\w\-._~+/]+=*/gi,
+        /\b(\w*(?:token|password|secret|key|auth|credential))["']?\s*[=:]\s*[\w\-._~+/]+=*/gi,
         '$1=[redacted]'
       )
       // Remove stack traces (at Function.name (file:line:col)).
