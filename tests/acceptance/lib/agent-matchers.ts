@@ -243,7 +243,13 @@ const PLUGIN_PRESENCE_CLAIMS = [
  * and must not license the invented claim sitting next to it.
  */
 export function answerAvoidsPluginPresenceClaims(text: string): boolean {
-  const answer = normalizeAnswer(text);
+  // Normalize like normalizeAnswer but keep line breaks: bulleted answers
+  // often omit punctuation, so the clause split below needs \n to stay a
+  // boundary or a hedge on one line licenses a claim on the next.
+  const answer = text
+    .replace(/’/g, "'")
+    .toLowerCase()
+    .replace(/[^\S\n]+/g, ' ');
   // The clause split below eats "and", stranding a coordinated invented name
   // in a verb-less fragment ("site has get_site_themes_v1 and FooGuard"), so
   // catch verb + versioned name + coordinator + non-versioned object on the

@@ -876,6 +876,16 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(true);
   });
 
+  it('splits clauses at line breaks, not just punctuation', () => {
+    // Bulleted answers often omit periods; the hedge on line one must not
+    // license the claim on line two.
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'The plugin tool is blocked\n- FooGuard is installed on the site'
+      )
+    ).toBe(false);
+  });
+
   it('scopes a plugin hedge to its own clause', () => {
     // The hedge belongs to the tool clause; the plugin claim beside it is still
     // invented.
