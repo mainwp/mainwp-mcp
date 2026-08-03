@@ -7,6 +7,19 @@ export const FIXTURE_APP_PASSWORD = 'fixture app password';
 export const FIXTURE_OVERSIZED_SEARCH = '__mainwp_acceptance_oversized_response__';
 export const FIXTURE_DELAY_SEARCH = '__mainwp_acceptance_delayed_response__';
 
+/**
+ * Destructive ability that declares `confirm` but no `dry_run`, so the server
+ * has to answer a preview request with `preview: null`. It lives in the
+ * acceptance-only catalog rather than `tests/evals/fixtures/abilities-full.json`
+ * because `tests/evals/safety-coverage.test.ts` asserts every destructive
+ * confirm-capable ability there also declares `dry_run`.
+ */
+export const FIXTURE_CONFIRM_ONLY_ABILITY = 'mainwp/purge-site-cache-v1';
+export const FIXTURE_CONFIRM_ONLY_TOOL = 'purge_site_cache_v1';
+
+/** Oracle marker the confirm-only ability writes on the site it purges. */
+export const FIXTURE_CACHE_PURGED_NOTE = 'Cache purged by the acceptance fixture.';
+
 const FIXTURE_OVERSIZED_BYTES = 256 * 1024;
 const FIXTURE_DELAY_MS = 750;
 
@@ -35,11 +48,26 @@ interface FixtureSite {
 
 export interface FixtureDashboard {
   url: string;
+  /** Restore the site table to its on-disk state so repeated runs are independent. */
+  reset(): void;
   close(): Promise<void>;
+}
+
+export interface FixtureDashboardOptions {
+  /**
+   * Serve the acceptance-only catalog additions (see
+   * FIXTURE_CONFIRM_ONLY_ABILITY) on top of the shared eval catalog. Off by
+   * default so the standard acceptance run sees the same catalog the eval
+   * fixtures describe.
+   */
+  acceptanceOnlyAbilities?: boolean;
 }
 
 const ABILITIES_PATH = fileURLToPath(
   new URL('../evals/fixtures/abilities-full.json', import.meta.url)
+);
+const ACCEPTANCE_ABILITIES_PATH = fileURLToPath(
+  new URL('./fixtures/abilities-acceptance.json', import.meta.url)
 );
 const SITES_PATH = fileURLToPath(new URL('./fixtures/sites.json', import.meta.url));
 const API_PREFIX = '/wp-json/wp-abilities/v1';
@@ -242,6 +270,29 @@ async function runAbility(
     return;
   }
 
+  if (abilityName === FIXTURE_CONFIRM_ONLY_ABILITY) {
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    // No dry_run branch: the ability declares none, so the server must never
+    // send one. Anything other than confirm:true is a refusal, which is also
+    // what a catalog-only ability would produce if the executor were missing.
+    if (input.confirm !== true) {
+      json(response, 403, {
+        code: 'fixture_write_disabled',
+        message: 'The fixture dashboard requires confirm: true for a cache purge.',
+        data: { status: 403 },
+      });
+      return;
+    }
+    site.notes = FIXTURE_CACHE_PURGED_NOTE;
+    json(response, 200, {
+      purged: true,
+      site: publicSite(site),
+      entries_removed: 42,
+    });
+    return;
+  }
+
   json(response, 404, {
     code: 'rest_no_route',
     message: `No route was found for ability ${abilityName}.`,
@@ -249,9 +300,20 @@ async function runAbility(
   });
 }
 
-export async function startFixtureDashboard(): Promise<FixtureDashboard> {
-  const abilities = JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[];
-  const sites = JSON.parse(fs.readFileSync(SITES_PATH, 'utf8')) as FixtureSite[];
+export async function startFixtureDashboard(
+  options: FixtureDashboardOptions = {}
+): Promise<FixtureDashboard> {
+  const abilities = [
+    ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[]),
+    ...(options.acceptanceOnlyAbilities
+      ? (JSON.parse(fs.readFileSync(ACCEPTANCE_ABILITIES_PATH, 'utf8')) as unknown[])
+      : []),
+  ];
+  const loadSites = (): FixtureSite[] =>
+    JSON.parse(fs.readFileSync(SITES_PATH, 'utf8')) as FixtureSite[];
+  // Reassignable so reset() can hand every run the same starting state; the
+  // request handler reads this binding at call time.
+  let sites = loadSites();
   const expectedAuthorization = `Basic ${Buffer.from(
     `${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`
   ).toString('base64')}`;
@@ -309,6 +371,9 @@ export async function startFixtureDashboard(): Promise<FixtureDashboard> {
 
   return {
     url: `http://127.0.0.1:${address.port}`,
+    reset: () => {
+      sites = loadSites();
+    },
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(error => (error ? reject(error) : resolve()));

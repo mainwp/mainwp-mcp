@@ -72,7 +72,10 @@ describe('buildConfirmationUnsupportedResponse', () => {
     };
 
     expect(response.details.reason).toContain('confirm');
-    expect(response.details.resolution).toContain('allowedTools');
+    // The resolution must not read as a filtering unblock: allow/block policy
+    // only removes tools from the catalog, it never creates a confirm channel.
+    expect(response.details.resolution).toContain('declare confirm support');
+    expect(response.details.resolution).toContain('cannot make it executable');
   });
 
   it('should not include next_action (terminal error)', () => {

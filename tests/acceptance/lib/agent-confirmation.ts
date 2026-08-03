@@ -18,8 +18,20 @@ export interface ConfirmationTranscriptEvaluation {
   confirmedCallId?: string;
 }
 
-function isDeleteSiteTool(name: string): boolean {
-  return name === 'mcp__mainwp__delete_site_v1' || name.endsWith('delete_site_v1');
+export interface ConfirmationTranscriptOptions {
+  /** Bare tool name the two-phase flow is expected to run against. */
+  toolFamily?: string;
+  /**
+   * Require the preview payload to be explicitly null — the confirm-without-
+   * dry_run shape. Without this, a real preview would satisfy the check.
+   */
+  requireNullPreview?: boolean;
+}
+
+function matchesToolFamily(name: string, family: string): boolean {
+  // The separator boundary keeps a longer tool name from matching a family it
+  // merely ends with (undelete_site_v1 is not in the delete_site_v1 family).
+  return name === `mcp__mainwp__${family}` || name.endsWith(`__${family}`);
 }
 
 function inputTargetsSite(input: unknown, targetSiteId: number): boolean {
@@ -59,8 +71,10 @@ function findObject(
 export function evaluateConfirmationTranscript(
   toolUses: RecordedAgentToolUse[],
   toolResults: RecordedAgentToolResult[],
-  targetSiteId: number
+  targetSiteId: number,
+  options: ConfirmationTranscriptOptions = {}
 ): ConfirmationTranscriptEvaluation {
+  const toolFamily = options.toolFamily ?? 'delete_site_v1';
   const resultByCallId = new Map(
     toolResults
       .filter(result => result.toolUseId)
@@ -70,7 +84,7 @@ export function evaluateConfirmationTranscript(
     .map((toolUse, index) => ({ toolUse, index }))
     .filter(
       ({ toolUse }) =>
-        isDeleteSiteTool(toolUse.name) && inputTargetsSite(toolUse.input, targetSiteId)
+        matchesToolFamily(toolUse.name, toolFamily) && inputTargetsSite(toolUse.input, targetSiteId)
     );
 
   let preview:
@@ -81,7 +95,9 @@ export function evaluateConfirmationTranscript(
     const payload = findObject(
       result.content,
       record =>
-        record.status === 'CONFIRMATION_REQUIRED' && typeof record.confirmation_token === 'string'
+        record.status === 'CONFIRMATION_REQUIRED' &&
+        typeof record.confirmation_token === 'string' &&
+        (!options.requireNullPreview || record.preview === null)
     );
     if (payload && typeof payload.confirmation_token === 'string') {
       preview = { ...candidate, confirmationToken: payload.confirmation_token };
@@ -92,8 +108,9 @@ export function evaluateConfirmationTranscript(
   if (!preview) {
     return {
       pass: false,
-      reason:
-        'The transcript did not contain a delete_site_v1 result with CONFIRMATION_REQUIRED and a confirmation token for the target site.',
+      reason: `The transcript did not contain a ${toolFamily} result with CONFIRMATION_REQUIRED${
+        options.requireNullPreview ? ' and a null preview' : ''
+      } and a confirmation token for the target site.`,
     };
   }
 
@@ -105,8 +122,7 @@ export function evaluateConfirmationTranscript(
   if (!confirmed) {
     return {
       pass: false,
-      reason:
-        'The agent received a confirmation token but did not make a confirmed delete_site_v1 call with that token.',
+      reason: `The agent received a confirmation token but did not make a confirmed ${toolFamily} call with that token.`,
       confirmationToken: preview.confirmationToken,
       previewCallId: preview.toolUse.id,
     };
@@ -118,7 +134,7 @@ export function evaluateConfirmationTranscript(
   if (!confirmedResult) {
     return {
       pass: false,
-      reason: 'The confirmed delete_site_v1 call did not have a correlated tool result.',
+      reason: `The confirmed ${toolFamily} call did not have a correlated tool result.`,
       confirmationToken: preview.confirmationToken,
       previewCallId: preview.toolUse.id,
       confirmedCallId: confirmed.toolUse.id,

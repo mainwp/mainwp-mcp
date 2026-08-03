@@ -84,6 +84,17 @@ Config file locations and variants for each client are in the [client setup guid
 
 > **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set your workflow needs and widen from there. See [Restrict Available Tools](https://docs.mainwp.com/mcp-server/guides/restrict-tools).
 
+### Claude Code plugin
+
+Claude Code can install the server, an agent skill, and a set of `/mainwp:*` workflow commands in two steps:
+
+```text
+/plugin marketplace add mainwp/mainwp-mcp
+/plugin install mainwp@mainwp-mcp
+```
+
+Credentials still come from your environment. The plugin carries no credential values; the server inherits `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` from the environment Claude Code runs it in. If you already added a `mainwp` server by hand, remove that entry: Claude Code treats the plugin's server as a duplicate and never starts it, so the hand-added entry silently wins. Setup details are at [docs.mainwp.com/mcp-server](https://docs.mainwp.com/mcp-server/clients); the plugin's own conventions are in [docs/plugin.md](docs/plugin.md).
+
 For development, clone and build instead of npx:
 
 ```bash
@@ -157,6 +168,8 @@ npm run format     # fix formatting
 CI runs lint, format check, type check, tests, and build on every pull request.
 
 When changing configuration options, update both the environment-variable table above and the [docs-site configuration reference](https://docs.mainwp.com/mcp-server/reference/configuration); they are maintained in parallel.
+
+`.agents/skills/mainwp-dashboard` is the canonical copy of the cross-agent skill, read directly by Codex CLI and other agent-skills clients and mirrored into the Claude Code plugin by `npm run sync-skill`. Edit it there, never in `plugins/`. See [docs/plugin.md](docs/plugin.md).
 
 ## License
 

@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+A Claude Code plugin, installed with `/plugin marketplace add mainwp/mainwp-mcp`
+followed by `/plugin install mainwp@mainwp-mcp`. It registers the MCP server, a
+`mainwp-dashboard` skill that teaches an agent how to work against a MainWP
+Dashboard, and ten `/mainwp:*` workflow commands. The bundled server config
+carries no credentials; the server inherits them from the environment Claude
+Code runs it in, so an unconfigured setup still gets the server's setup
+guidance. The skill's canonical copy lives at
+`.agents/skills/mainwp-dashboard`, which Codex CLI and other agent-skills
+clients read directly; `npm run sync-skill` mirrors it into the plugin and CI
+byte-compares the two. Conventions are in `docs/plugin.md`. This adds no server
+behavior and does not change the published package.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added

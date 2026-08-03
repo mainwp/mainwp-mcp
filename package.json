@@ -36,6 +36,9 @@
     "format:check": "prettier --check .",
     "test:manual": "tsx scripts/manual-test.ts",
     "check-version": "node scripts/check-version.js",
+    "check-plugin": "tsx scripts/check-plugin.ts",
+    "check-skill-sync": "tsx scripts/check-skill-sync.ts",
+    "sync-skill": "tsx scripts/sync-skill.ts",
     "prepublishOnly": "npm run check-version && npm audit --omit=dev --audit-level=high && npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:acceptance:fixture"
   },
   "keywords": [

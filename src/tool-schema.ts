@@ -366,8 +366,14 @@ function buildCompactDescription(
   if (tags) {
     description += ` ${tags}`;
   }
+  // Same accuracy rule as the standard builder: an ability without dry_run
+  // gets a token and no upstream preview, so compact mode must not shorten
+  // that into a promised preview step.
   if (isDestructive && hasConfirm) {
-    description += ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token';
+    description += hasDryRun
+      ? ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token'
+      : ' FLOW: confirm:true -> token, no preview available -> ' +
+        'user_confirmed:true + confirmation_token';
   }
   return description;
 }

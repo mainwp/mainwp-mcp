@@ -1,0 +1,12 @@
+{
+  "name": "mainwp-mcp",
+  "description": "Official MainWP marketplace: tools for managing WordPress site networks from Claude",
+  "owner": { "name": "MainWP" },
+  "plugins": [
+    {
+      "name": "mainwp",
+      "source": "./plugins/mainwp",
+      "description": "Connect Claude to your MainWP Dashboard: the @mainwp/mcp server plus an agent guidance skill and workflow commands"
+    }
+  ]
+}

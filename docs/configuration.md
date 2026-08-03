@@ -14,4 +14,6 @@ Related guides that also lived on this page:
 - Safe mode and user confirmation: <https://docs.mainwp.com/mcp-server/safety>
 
 A summary table of all environment variables remains in the
-[README](../README.md#configuration).
+[README](../README.md#configuration). Changing an option also touches the
+bundled Claude Code plugin's skill when the skill teaches that option's
+semantics; the three-way update rule is in [plugin.md](plugin.md).

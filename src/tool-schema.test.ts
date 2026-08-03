@@ -166,6 +166,29 @@ describe('abilityToTool confirmation parameter injection', () => {
     expect(tool.description).toContain('confirmation_token');
   });
 
+  it('does not promise a preview in the compact description when the ability lacks dry_run', () => {
+    const tool = abilityToTool(makeDestructiveAbility(false), 'mainwp', 'compact');
+    const description = tool.description ?? '';
+
+    expect(description).toContain('FLOW:');
+    expect(description).not.toContain('-> preview ->');
+    expect(description).toContain('no preview available');
+  });
+
+  it.each([true, false])(
+    'agrees between standard and compact on whether a preview exists (dry_run: %s)',
+    withDryRun => {
+      const ability = makeDestructiveAbility(withDryRun);
+      const standard = abilityToTool(ability, 'mainwp', 'standard').description ?? '';
+      const compact = abilityToTool(ability, 'mainwp', 'compact').description ?? '';
+
+      expect(standard.includes('preview what will be affected')).toBe(withDryRun);
+      expect(compact.includes('-> preview ->')).toBe(withDryRun);
+      expect(standard.includes('no preview available')).toBe(!withDryRun);
+      expect(compact.includes('no preview available')).toBe(!withDryRun);
+    }
+  );
+
   it('skips injection when the declared confirm channel cannot accept true', () => {
     // Detection runs on the raw schema: conversion coerces `confirm: false`
     // to {}, which would otherwise advertise a confirmation flow that the

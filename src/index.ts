@@ -82,6 +82,10 @@ Add to Claude Code:
     --env MAINWP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx" \\
     -- npx -y @mainwp/mcp
 
+Claude Code plugin (this server plus a usage skill and workflow commands):
+  /plugin marketplace add mainwp/mainwp-mcp
+  /plugin install mainwp@mainwp-mcp
+
 Other MCP clients and optional settings (safe mode, tool filtering, timeouts):
   ${SETUP_GUIDE_URL}`;
 }

@@ -63,6 +63,8 @@ describe('CLI entry point', () => {
     expect(result.stdout).toContain('MAINWP_URL');
     expect(result.stdout).toContain('MAINWP_APP_PASSWORD');
     expect(result.stdout).toContain('https://github.com/mainwp/mainwp-mcp');
+    expect(result.stdout).toContain('/plugin marketplace add mainwp/mainwp-mcp');
+    expect(result.stdout).toContain('/plugin install mainwp@mainwp-mcp');
     expect(result.stdout).not.toContain('Fatal error');
   }, 30000);
 

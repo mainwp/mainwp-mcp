@@ -63,7 +63,14 @@ async function setupPackedPackage(
     'package/README.md',
     'package/LICENSE',
   ];
-  const forbiddenPrefixes = ['package/settings.json', 'package/src/', 'package/src'];
+  const forbiddenPrefixes = [
+    'package/settings.json',
+    'package/src/',
+    'package/src',
+    'package/.claude-plugin/',
+    'package/plugins/',
+    'package/.agents/',
+  ];
   const requiredFilesPresent = requiredFiles.every(filename => entries.has(filename));
   const forbiddenFilesAbsent = [...entries].every(
     filename =>

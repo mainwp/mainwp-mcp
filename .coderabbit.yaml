@@ -63,6 +63,42 @@ reviews:
         would zero the cap out from under a concurrently running instance
         sharing the module. Tests reset explicitly via resetSessionData().
 
+    - path: 'plugins/**'
+      instructions: >-
+        The skill under plugins/mainwp/skills/ is a generated mirror.
+        .agents/skills/mainwp-dashboard is canonical, npm run sync-skill
+        copies it, and CI byte-compares the two; do not suggest editing the
+        plugin copy or reconciling differences there. Do not suggest listing
+        or enumerating MCP tool names in the skill or in commands: the
+        catalog is fetched from the Dashboard at runtime and varies by
+        version, installed extensions, and allowed/blocked tool policy.
+        Do not suggest restating the server's confirmation, preview, or
+        dry-run wording in skill or command text; the server owns that
+        contract (src/confirmation.ts) and a second copy drifts into
+        claiming previews that never happened. plugins/mainwp/.mcp.json
+        deliberately has no env map: the server inherits the user's
+        environment so unset variables stay absent and the missing-config
+        guidance fires; an explicit "${VAR}" map is passed through
+        literally by Claude Code and "${VAR:-}" clobbers set values with
+        empty. Do not suggest adding one, or any credential placeholder.
+        Commands must never synthesize, guess, or default a site ID; they
+        resolve it from the Dashboard or stop. The setup command reports
+        presence only and must never echo a credential value, length, or
+        masked form, and must not dump the environment or read credential
+        files.
+
+    - path: '.agents/**'
+      instructions: >-
+        This is the canonical cross-agent skill, read by Codex CLI and other
+        agent-skills clients and mirrored into plugins/mainwp/skills by
+        npm run sync-skill. Fixes belong here, not in the mirror. Do not
+        suggest enumerating MCP tool names: the catalog is fetched from the
+        Dashboard at runtime and varies by version, installed extensions,
+        and allowed/blocked tool policy. Do not suggest restating the
+        server's confirmation, preview, or dry-run wording; the server owns
+        that contract and a second copy drifts. No credential values or
+        fillable credential placeholders.
+
     - path: 'src/http-client.ts'
       instructions: >-
         Do not suggest requiring error.name === 'AbortError' before
