@@ -41,6 +41,10 @@ working-directory file is untrusted for security-loosening values:
 are dropped there with a stderr warning. Environment variables and
 `~/.config/mainwp-mcp/settings.json` keep working as before.
 
+Stderr log lines now strip terminal control characters, so remote error text
+can no longer inject escape sequences into the operator's terminal. Multi-line
+startup error messages render on a single line as a side effect.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
