@@ -18,11 +18,15 @@ export const settingsFileConfig: ScenarioDefinition = {
   preconditions: ctx => ({
     launch: {
       omitCredentialEnv: true,
+      // allowHttp arrives via env: a working-directory settings.json is
+      // untrusted and the server drops security-loosening values from it, so
+      // the HTTP fixture URL would be fatally rejected if the flag lived in
+      // the file. The scenario's subject stays credentials-from-file.
+      env: { MAINWP_ALLOW_HTTP: 'true' },
       settings: {
         dashboardUrl: ctx.credentials.dashboardUrl,
         username: ctx.credentials.username,
         appPassword: ctx.credentials.appPassword,
-        allowHttp: true,
         rateLimit: 0,
       },
     },
