@@ -87,7 +87,18 @@ function swapIn(staging: string, mirrorRoot: string): void {
   try {
     fs.renameSync(staging, mirrorRoot);
   } catch (error) {
-    if (hadMirror) fs.renameSync(previous, mirrorRoot);
+    if (hadMirror) {
+      try {
+        fs.renameSync(previous, mirrorRoot);
+      } catch (restoreError) {
+        // Both renames failed: the mirror is gone. Say so and keep both
+        // errors, or the leftover .replaced-* dir is undiagnosable.
+        throw new Error(
+          `Skill sync failed and the previous mirror could not be restored (mirror is missing at ${mirrorRoot}; previous copy left at ${previous}): ${(restoreError as Error).message}`,
+          { cause: error }
+        );
+      }
+    }
     throw error;
   }
 }

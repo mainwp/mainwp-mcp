@@ -7,10 +7,10 @@ Report the performance signals the Dashboard can see and where they point.
 
 Steps:
 
-1. Read `$ARGUMENTS` for a single site scope. Empty means cover all managed sites.
+1. Read `$ARGUMENTS` for a site scope. Empty or the exact value `"all"` means every site the Dashboard returns; any other value must resolve to a managed site through the Dashboard — stop and say so if it is unknown.
 2. Check the tool catalog for site-listing and site-detail capabilities, then gather the sites in scope.
 3. Review connection health: sync reliability, timeouts, and any repeated failures.
-4. Review resource indicators the data supports, such as active plugin counts, theme load, and anything the Dashboard reports about storage or database size.
+4. Review resource indicators the data supports, such as active plugin counts, the active theme, and anything the Dashboard reports about storage or database size.
 5. Point out the sites most likely to gain from optimization, with the specific signal behind each call.
 6. Separate what the Dashboard data actually shows from what needs a real front-end measurement.
 

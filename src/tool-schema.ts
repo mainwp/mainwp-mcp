@@ -367,13 +367,17 @@ function buildCompactDescription(
   if (tags) {
     description += ` ${tags}`;
   }
-  // Same accuracy rule as the standard builder: an ability without dry_run
+  // Same accuracy rules as the standard builder: an ability without dry_run
   // gets a token and no upstream preview, so compact mode must not shorten
-  // that into a promised preview step.
+  // that into a promised preview step — and the explicit-approval gate must
+  // not be compacted away either, or compact mode reopens the same-turn
+  // self-approval loophole the standard wording closes.
   if (isDestructive && hasConfirm) {
     description += hasDryRun
-      ? ' FLOW: confirm:true -> preview -> user_confirmed:true + confirmation_token'
-      : ' FLOW: confirm:true -> token, no preview available -> ' +
+      ? ' FLOW: confirm:true -> preview -> show user; a bare request is not approval; ' +
+        'on explicit approval -> user_confirmed:true + confirmation_token'
+      : ' FLOW: confirm:true -> token, no preview available -> describe operation; ' +
+        'a bare request is not approval; on explicit approval -> ' +
         'user_confirmed:true + confirmation_token';
   }
   return description;

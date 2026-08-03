@@ -36,15 +36,16 @@ report the past, not the present.
 
 `MAINWP_ALLOWED_TOOLS` and `MAINWP_BLOCKED_TOOLS` remove tools from `tools/list`
 with no marker, and a blocked tool is deliberately indistinguishable from a
-nonexistent one at every surface.
+nonexistent one at every policy-filtered surface.
 
 - A missing tool is not evidence the Dashboard lacks the capability. Say the
   capability is not exposed in this session and name `MAINWP_ALLOWED_TOOLS`,
   `MAINWP_BLOCKED_TOOLS`, and `MAINWP_ABILITY_NAMESPACES` as the things to
   check.
-- Never route around a filter. No alternate tool, no resource path, no batch
-  tool that reaches the same capability. Filtering is enforced at resources and
-  tool-help too, and working around it defeats a deliberate policy.
+- Never route around a filter. No alternate tool, no resource path, no prompt
+  completion, no batch tool that reaches the same capability. Filtering is
+  enforced at resources, tool-help, and completions too, and working around it
+  defeats a deliberate policy.
 - Counts can disagree with the tool list. `mainwp://status` `abilitiesCount` and
   `mainwp://categories` are not policy-filtered, while `mainwp://abilities` and `mainwp://help` are. A category or count with no matching tool means
   filtered, not broken.

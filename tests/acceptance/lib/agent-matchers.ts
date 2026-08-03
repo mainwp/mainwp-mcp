@@ -495,8 +495,10 @@ export function matchesSessionCapAnswer(text: string, expectedTotal?: number): b
  */
 export function matchesNoPreviewAnswer(text: string): boolean {
   const answer = normalizeAnswer(text);
+  // The lookbehind tolerates one modifier so "no upstream preview was
+  // generated" reads as the negation it is, not as a preview claim.
   if (
-    /(?<!\b(?:no|not|never|without)\s)\b(?:a |the )?preview\s+(?:was|is)\s+(?:generated|available|shown|produced|provided|returned|displayed)\b/.test(
+    /(?<!\b(?:no|not|never|without)\s(?:[\w-]+\s)?)\b(?:a |the )?preview\s+(?:was|is)\s+(?:generated|available|shown|produced|provided|returned|displayed)\b/.test(
       answer
     )
   ) {
@@ -504,7 +506,7 @@ export function matchesNoPreviewAnswer(text: string): boolean {
   }
 
   return [
-    /\bno\s+(?:dry[- ]?run\s+)?preview\b/,
+    /\bno\s+(?:[\w-]+\s+)?preview\b/,
     /\bpreview\b.{0,60}\b(?:not available|unavailable|not supported|unsupported|not possible|null|none)\b/,
     /\bwithout\s+(?:a\s+)?preview\b/,
     /\bconfirm[_ -]without[_ -]preview\b/,

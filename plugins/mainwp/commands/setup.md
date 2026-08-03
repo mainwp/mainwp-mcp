@@ -27,7 +27,7 @@ Not allowed in this command, for any reason:
 - Interpolating a variable's value into output, a comparison, or a log line.
 - Reading credential files, including the server's `settings.json`.
 
-Step 2. Read the `mainwp://status` resource and report the connection state it returns: reachable or not, which Dashboard identity is in use, and any error the server surfaces.
+Step 2. Read the `mainwp://status` resource and report the connection state it returns: reachable or not, which Dashboard identity is in use, and the kind of error the server surfaces (unreachable, authentication rejected, TLS failure, and so on). Summarize errors in your own words rather than quoting raw error text — the hard rule above applies to error output too.
 
 Step 3. If the server is unconfigured or cannot connect, point the user at the configuration reference at https://docs.mainwp.com/mcp-server. Explain that credentials come from their own environment, that the supported path is a WordPress application password with `MAINWP_USER` and `MAINWP_APP_PASSWORD`, and that a manually configured `mainwp` MCP server alongside this plugin is a duplicate connection: remove the manual entry and keep the plugin's.
 

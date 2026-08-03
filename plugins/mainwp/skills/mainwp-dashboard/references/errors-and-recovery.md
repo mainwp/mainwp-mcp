@@ -26,7 +26,7 @@ results.
 `CONFIRMATION_UNSUPPORTED` is not a tool-filtering problem. `allowedTools` and
 `blockedTools` only decide which tools exist for you; allowing a tool does not
 create a confirm channel, and the call stays blocked either way. The one
-client-side setting that changes this is the operator turning the gate off for
+server setting that changes this is the operator turning the gate off for
 every destructive ability with `MAINWP_REQUIRE_USER_CONFIRMATION=false`. That is
 a global, high-risk decision for the user to make, not a per-tool unblock to
 propose.
