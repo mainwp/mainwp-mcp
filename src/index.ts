@@ -392,6 +392,16 @@ async function main(): Promise<void> {
     // Load configuration from environment
     const config = loadConfig();
 
+    // Register before any remote call: the startup credential check runs ahead
+    // of createServer(), and its error path must already redact by value.
+    registerKnownSecrets([
+      config.appPassword,
+      config.apiToken,
+      config.username && config.appPassword
+        ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
+        : undefined,
+    ]);
+
     // Initialize rate limiter
     initRateLimiter(config.rateLimit);
 

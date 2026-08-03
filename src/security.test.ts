@@ -7,6 +7,7 @@ import {
   validateInput,
   sanitizeError,
   registerKnownSecrets,
+  clearKnownSecrets,
   RateLimiter,
   isValidId,
 } from './security.js';
@@ -321,6 +322,26 @@ describe('sanitizeError', () => {
     expect(sanitizeError(message)).not.toContain('SUPERSECRET');
   });
 
+  it('should redact a print_r bracketed Authorization header', () => {
+    const message = 'Array\n(\n  [Authorization] => Digest response=SUPERSECRET\n)';
+    const sanitized = sanitizeError(message);
+    expect(sanitized).toContain('[redacted]');
+    expect(sanitized).not.toContain('SUPERSECRET');
+  });
+
+  it('should redact URL-encoded values past raw token punctuation (JWT shapes)', () => {
+    // encodeURIComponent and URLSearchParams leave . - _ ~ raw, so a JWT-style
+    // value must not leak everything after its first dot.
+    const jwt = 'aaa.BBB-ccc_ddd~EEE';
+    const viaAuth = encodeURIComponent(JSON.stringify({ Authorization: `Bearer ${jwt}` }));
+    const viaToken = new URLSearchParams({ detail: JSON.stringify({ api_token: jwt }) }).toString();
+    for (const message of [viaAuth, viaToken]) {
+      const sanitized = sanitizeError(message);
+      expect(sanitized).not.toContain('BBB');
+      expect(sanitized).not.toContain('EEE');
+    }
+  });
+
   it('should remove stack traces', () => {
     const message = 'Error occurred at Function.name (/path/to/file.js:10:5)';
     expect(sanitizeError(message)).not.toContain('at Function.name');
@@ -365,7 +386,19 @@ describe('registered known secrets', () => {
   const p = 'abcd efgh ijkl mnop qrst uvwx';
 
   afterEach(() => {
-    registerKnownSecrets([]);
+    clearKnownSecrets();
+  });
+
+  it('should keep earlier registrations when registering again', () => {
+    // A second server instance in the same process must not strip the first
+    // instance's credentials from the registry.
+    registerKnownSecrets(['SENTINEL-SERVER-A-SECRET-12345']);
+    registerKnownSecrets(['SENTINEL-SERVER-B-SECRET-67890']);
+    const sanitized = sanitizeError('echo SENTINEL-SERVER-A-SECRET-12345');
+    expect(sanitized).not.toContain('SENTINEL-SERVER-A-SECRET-12345');
+    expect(sanitizeError('echo SENTINEL-SERVER-B-SECRET-67890')).not.toContain(
+      'SENTINEL-SERVER-B-SECRET-67890'
+    );
   });
 
   it('should redact a registered secret with no key context at all', () => {

@@ -115,12 +115,18 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
 // realistically appear in a remote error body are the ones this server sent,
 // and those it knows by value, so literal-occurrence redaction is closed under
 // any encoding that preserves the byte sequence. Registered once at server
-// startup; registering replaces the previous set (tests reset with []).
+// startup; registration is additive so a second server instance in the same
+// process never strips the first one's protection (tests reset with
+// clearKnownSecrets).
 const MIN_KNOWN_SECRET_LENGTH = 8;
 let knownSecretVariants: string[] = [];
 
+export function clearKnownSecrets(): void {
+  knownSecretVariants = [];
+}
+
 export function registerKnownSecrets(secrets: (string | undefined)[]): void {
-  const variants = new Set<string>();
+  const variants = new Set<string>(knownSecretVariants);
   for (const secret of secrets) {
     // A short value would redact ordinary prose; real app passwords, tokens,
     // and base64 Basic blobs are all far longer.
@@ -182,7 +188,7 @@ export function sanitizeError(message: string): string {
     // like {"Authorization":"Digest ..."} inside the match; remote errors are
     // commonly JSON and the closing quote would otherwise split name from ':'.
     .replace(
-      /\b((?:HTTP_)?(?:Proxy-)?Authorization)\b(?:\\*["'])?\s*(?::|=>|=)\s*(?:\\*["'])?\S[^\r\n]*/gi,
+      /\[?\b((?:HTTP_)?(?:Proxy-)?Authorization)\b\]?(?:\\*["'])?\s*(?::|=>|=)\s*(?:\\*["'])?\S[^\r\n]*/gi,
       '$1: [redacted]'
     )
     // Remove potential tokens/keys in key=value patterns (handles quoted values with spaces)
@@ -215,7 +221,7 @@ export function sanitizeError(message: string): string {
     // rules above can see it. Matched directly rather than decoding the whole
     // diagnostic and rewriting it.
     .replace(
-      /\b(\w*(?:authorization|token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D|:|=)(?:%22)?(?:[A-Za-z0-9]|%[0-9A-Fa-f]{2}|\+)+/gi,
+      /\b(\w*(?:authorization|token|password|secret|key|auth|credential))(?:%22)?(?:%3A|%3D|:|=)(?:%22)?(?:[A-Za-z0-9._~!*'()-]|%[0-9A-Fa-f]{2}|\+)+/gi,
       '$1=[redacted]'
     );
   // The input cap can cut a spaced password mid-group, and the cut can only land
