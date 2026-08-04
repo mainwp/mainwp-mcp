@@ -62,6 +62,7 @@ import {
 } from '../agent-run.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
+import { startLocalDependencyRegistry } from './local-registry.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { BoundedPagination } from './pagination.js';
@@ -2338,6 +2339,62 @@ describe('acceptance fixture catalog', () => {
       );
     } finally {
       await fixture.close();
+    }
+  });
+});
+
+describe('local dependency registry', () => {
+  it('serves every packed version when a package appears at multiple tree depths', async () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-repo-'));
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-temp-'));
+    const writePackage = (relative: string, manifest: Record<string, unknown>) => {
+      const dir = path.join(repoRoot, relative);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(manifest));
+      fs.writeFileSync(path.join(dir, 'index.js'), 'module.exports = {};\n');
+    };
+    // Mirrors the real tree: express needs content-type@^1 hoisted while
+    // body-parser nests a ^2 copy. Both ranges must resolve or the packed
+    // install fails with ETARGET.
+    writePackage('node_modules/content-type', {
+      name: 'content-type',
+      version: '1.0.5',
+      main: 'index.js',
+    });
+    writePackage('node_modules/body-parser/node_modules/content-type', {
+      name: 'content-type',
+      version: '2.0.0',
+      main: 'index.js',
+    });
+    fs.writeFileSync(
+      path.join(repoRoot, 'package-lock.json'),
+      JSON.stringify({
+        packages: {
+          '': {},
+          'node_modules/content-type': {},
+          'node_modules/body-parser/node_modules/content-type': {},
+        },
+      })
+    );
+    const registry = await startLocalDependencyRegistry(repoRoot, tempRoot, new CommandRunner());
+    try {
+      const response = await fetch(`${registry.url}/content-type`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        versions: Record<string, { dist: { tarball: string } }>;
+        'dist-tags': { latest: string };
+      };
+      expect(Object.keys(body.versions).sort()).toEqual(['1.0.5', '2.0.0']);
+      expect(body['dist-tags'].latest).toBe('2.0.0');
+      for (const version of Object.values(body.versions)) {
+        const tarball = await fetch(version.dist.tarball);
+        expect(tarball.status).toBe(200);
+        await tarball.arrayBuffer();
+      }
+    } finally {
+      await registry.close();
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });

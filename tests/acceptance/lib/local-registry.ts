@@ -17,6 +17,24 @@ export interface LocalRegistry {
   close(): Promise<void>;
 }
 
+// Installs always carry explicit ranges from the packed manifests, so
+// dist-tags.latest is advisory; a prerelease-blind numeric compare is enough
+// and avoids pulling a semver dependency into the harness.
+function compareVersions(a: string, b: string): number {
+  const parse = (version: string) =>
+    version
+      .split('-')[0]
+      .split('.')
+      .map(part => Number(part) || 0);
+  const left = parse(a);
+  const right = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
 function json(response: http.ServerResponse, status: number, body: unknown): void {
   const encoded = JSON.stringify(body);
   response.writeHead(status, {
@@ -45,11 +63,17 @@ export async function startLocalDependencyRegistry(
   // dev tooling those scripts expect. Pack staged copies with the pack-time
   // scripts stripped so the behavior does not depend on the npm version.
   const stagingDir = path.join(tempRoot, 'dependency-staging');
+  const stagedManifests = new Map<string, Record<string, unknown>>();
   const stagedPaths = packagePaths.map((packagePath, index) => {
     const stagedPath = path.join(stagingDir, String(index));
     fs.cpSync(packagePath, stagedPath, { recursive: true });
     const manifestPath = path.join(stagedPath, 'package.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<
+      string,
+      unknown
+    > & {
+      name?: string;
+      version?: string;
       scripts?: Record<string, string>;
     };
     if (manifest.scripts) {
@@ -58,6 +82,7 @@ export async function startLocalDependencyRegistry(
       delete manifest.scripts.postpack;
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
     }
+    stagedManifests.set(`${manifest.name}@${manifest.version}`, manifest);
     return stagedPath;
   });
   const packedResult = await runner.run(
@@ -65,8 +90,15 @@ export async function startLocalDependencyRegistry(
     repoRoot
   );
   const packed = JSON.parse(packedResult.stdout) as PackedDependency[];
-  const byName = new Map<string, PackedDependency>();
-  for (const dependency of packed) byName.set(dependency.name, dependency);
+  // A name can appear at several versions at once (hoisted plus nested copies
+  // with disjoint semver ranges), so the metadata must carry every version or
+  // npm fails the unsatisfied range with ETARGET.
+  const byName = new Map<string, Map<string, PackedDependency>>();
+  for (const dependency of packed) {
+    let versions = byName.get(dependency.name);
+    if (!versions) byName.set(dependency.name, (versions = new Map()));
+    versions.set(dependency.version, dependency);
+  }
 
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -111,37 +143,40 @@ export async function startLocalDependencyRegistry(
       // Malformed percent-encoding must not take the registry down.
       return json(response, 400, { error: 'malformed package name encoding' });
     }
-    const dependency = byName.get(name);
-    if (!dependency) return json(response, 404, { error: `package ${name} not found` });
-    const packageJson = JSON.parse(
-      fs.readFileSync(path.join(repoRoot, 'node_modules', name, 'package.json'), 'utf8')
-    ) as Record<string, unknown>;
+    const dependencyVersions = byName.get(name);
+    if (!dependencyVersions) return json(response, 404, { error: `package ${name} not found` });
     const address = server.address();
     if (!address || typeof address === 'string') {
       return json(response, 500, { error: 'registry is not bound' });
     }
-    const tarballUrl = `http://127.0.0.1:${address.port}/tarballs/${encodeURIComponent(
-      dependency.filename
-    )}`;
+    const versions: Record<string, unknown> = {};
+    let latest = '';
+    for (const [version, dependency] of dependencyVersions) {
+      // The staged manifest is what actually got packed; node_modules/<name>
+      // only holds the hoisted copy, the wrong manifest for nested versions.
+      const manifest = stagedManifests.get(`${name}@${version}`) ?? {};
+      versions[version] = {
+        ...manifest,
+        dist: {
+          tarball: `http://127.0.0.1:${address.port}/tarballs/${encodeURIComponent(
+            dependency.filename
+          )}`,
+          shasum: dependency.shasum,
+          integrity:
+            dependency.integrity ||
+            `sha512-${crypto
+              .createHash('sha512')
+              .update(fs.readFileSync(path.join(tarballDir, dependency.filename)))
+              .digest('base64')}`,
+        },
+      };
+      if (!latest || compareVersions(version, latest) > 0) latest = version;
+    }
     json(response, 200, {
       _id: name,
       name,
-      'dist-tags': { latest: dependency.version },
-      versions: {
-        [dependency.version]: {
-          ...packageJson,
-          dist: {
-            tarball: tarballUrl,
-            shasum: dependency.shasum,
-            integrity:
-              dependency.integrity ||
-              `sha512-${crypto
-                .createHash('sha512')
-                .update(fs.readFileSync(path.join(tarballDir, dependency.filename)))
-                .digest('base64')}`,
-          },
-        },
-      },
+      'dist-tags': { latest },
+      versions,
     });
   });
   await new Promise<void>((resolve, reject) => {
