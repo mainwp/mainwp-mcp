@@ -572,6 +572,13 @@ const UPDATE_COUNT_BEFORE = /\b(?:updates?|pending|available|outstanding)\b[a-z\
 /** The number counts sites, whatever update label sits in front of it. */
 const UPDATE_COUNT_SITE_NOUN_AFTER =
   /^[\s,.:;)—–-]*(?:(?:connected|managed|child|active|total)\s+)*(?:sites?|websites?)\b/;
+/**
+ * The number counts sites by its own label ("managed sites: 4"), so an update
+ * label after the next comma may not claim it: the comma is inside the update
+ * bridge, which is what lets "pending updates: 7" headline across it.
+ */
+const UPDATE_COUNT_SITE_NOUN_BEFORE =
+  /\b(?:(?:connected|managed|child|active|total)\s+)*(?:sites?|websites?)\b[\s:=(*_—–-]{0,4}$/;
 
 /** Phrasings that report an empty update inventory. */
 const ZERO_UPDATE_CLAIM =
@@ -764,7 +771,9 @@ function updateCountMentions(answer: string): UpdateCountMention[] {
     }
     if (LINE_ORDINAL_AFTER.test(after) && LINE_ORDINAL_BEFORE.test(before)) continue;
     // "Pending updates: 3 sites affected" counts sites under an update label.
-    if (UPDATE_COUNT_SITE_NOUN_AFTER.test(after)) continue;
+    if (UPDATE_COUNT_SITE_NOUN_AFTER.test(after) || UPDATE_COUNT_SITE_NOUN_BEFORE.test(before)) {
+      continue;
+    }
     if (!UPDATE_COUNT_AFTER.test(after) && !UPDATE_COUNT_BEFORE.test(before)) continue;
     mentions.push({
       value,

@@ -2784,6 +2784,11 @@ describe('plugin command scenarios', () => {
     expect(
       statedUpdateTotalConflicts('Total plugins: 12. Pending updates: Akismet and Bakehouse.', 2)
     ).toBe(false);
+    // A comma-joined headline: the site count belongs to its own label and
+    // must not reach across the comma to claim the update label.
+    expect(
+      statedUpdateTotalConflicts('Managed sites: 4, pending updates: 7 — Akismet and others.', 7)
+    ).toBe(false);
     // Two whole-inventory counts that disagree cannot both be this site's, so
     // matching the oracle once is not enough.
     expect(
