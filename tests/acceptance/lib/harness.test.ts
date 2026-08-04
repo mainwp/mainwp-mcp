@@ -11,6 +11,9 @@ import {
 import {
   answerAvoidsKnownPluginNames,
   answerAvoidsPluginPresenceClaims,
+  answerLabelsDisconnectedSites,
+  answerListsAllSites,
+  claimsNoPendingUpdates,
   evaluateSafeModeRefusal,
   errorResultNamesSiteNotFound,
   findConfirmWithoutPreview,
@@ -2460,6 +2463,26 @@ describe('plugin command scenarios', () => {
     ).toBe(false);
   });
 
+  it('rejects a network summary that negates its own zero-update claim', () => {
+    // These say the opposite of the phrase they are built from, so none of
+    // them may satisfy an oracle of zero pending updates.
+    for (const answer of [
+      'You manage 3 sites. Not all sites are current.',
+      "You manage 3 sites and they aren't up to date.",
+      'You manage 3 sites and the fleet is far from up to date.',
+    ]) {
+      expect(matchesNetworkSummaryAnswer(answer, { siteTotals: [3], updateTotals: [0] })).toBe(
+        false
+      );
+    }
+    expect(
+      matchesNetworkSummaryAnswer('You manage 3 sites and every one is up to date.', {
+        siteTotals: [3],
+        updateTotals: [0],
+      })
+    ).toBe(true);
+  });
+
   it('grades a site report on naming every pending update', () => {
     expect(
       namesPendingUpdates(
@@ -2482,6 +2505,44 @@ describe('plugin command scenarios', () => {
     ).toBe(false);
   });
 
+  it('catches a site report that names the updates and then denies them', () => {
+    // The name check runs against JSON-ish tool output too, where the words
+    // around a name mean nothing, so the contradiction is graded separately.
+    const denial = 'Akismet and Bakehouse have no pending updates.';
+    expect(namesPendingUpdates(denial, ['Akismet Anti-spam', 'Bakehouse'])).toBe(true);
+    expect(claimsNoPendingUpdates(denial)).toBe(true);
+
+    expect(claimsNoPendingUpdates('All plugins are up to date.')).toBe(true);
+    expect(claimsNoPendingUpdates('No pending updates anywhere.')).toBe(true);
+    expect(claimsNoPendingUpdates('7 pending updates are waiting on this site.')).toBe(false);
+    expect(claimsNoPendingUpdates('This site is not up to date.')).toBe(false);
+  });
+
+  it('grades disconnected sites on being labeled, not merely named', () => {
+    expect(
+      answerLabelsDisconnectedSites('Disconnected: child6-beta.local. The rest are connected.', [
+        'child6-beta.local',
+      ])
+    ).toBe(true);
+    // Naming a site among the connected ones is not reporting it as down.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All 3 sites are connected: child6-alpha.local, child6-beta.local, child6-gamma.local.',
+        ['child6-beta.local']
+      )
+    ).toBe(false);
+    // Nothing is disconnected, so claiming otherwise is not faithful, and
+    // stating the empty count out loud is.
+    expect(answerLabelsDisconnectedSites('You manage 4 sites, 2 sites are down.', [])).toBe(false);
+    for (const answer of [
+      'All 4 sites are connected, no outages. 0 disconnected.',
+      'Sites: 4. Connected: 4. Disconnected: 0.',
+      'No sites are disconnected or down.',
+    ]) {
+      expect(answerLabelsDisconnectedSites(answer, [])).toBe(true);
+    }
+  });
+
   it('grades the missing-argument answer on asking which site', () => {
     expect(
       matchesSiteSelectionRequestAnswer(
@@ -2499,6 +2560,27 @@ describe('plugin command scenarios', () => {
           'Want me to look at another site?'
       )
     ).toBe(false);
+  });
+
+  it('requires the missing-argument answer to present the sites it asks about', () => {
+    const sites = [
+      { name: 'Alpine Bakery', hostname: 'alpine.example.test' },
+      { name: 'Beacon Studio', hostname: 'beacon.example.test' },
+    ];
+
+    expect(
+      answerListsAllSites('Your sites are Alpine Bakery and Beacon Studio. Which one?', sites)
+    ).toBe(true);
+    expect(
+      answerListsAllSites('I manage alpine.example.test and beacon.example.test.', sites)
+    ).toBe(true);
+    expect(answerListsAllSites('Alpine Bakery is one of them. Which site?', sites)).toBe(false);
+    // The command's first step is to list the sites, so asking on its own is
+    // only half the step — a check the question matcher deliberately allows.
+    expect(answerListsAllSites('Which site would you like me to troubleshoot?', sites)).toBe(false);
+    expect(matchesSiteSelectionRequestAnswer('Which site would you like me to troubleshoot?')).toBe(
+      true
+    );
   });
 });
 

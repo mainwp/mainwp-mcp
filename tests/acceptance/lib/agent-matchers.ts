@@ -517,6 +517,42 @@ const UPDATE_COUNT_AFTER =
 const UPDATE_COUNT_BEFORE =
   /\b(?:updates?|total|totals|count|number|there (?:are|is)|pending|available|outstanding)\b[a-z\s:,'(—–-]{0,20}$/;
 
+/** Phrasings that report an empty update inventory. */
+const ZERO_UPDATE_CLAIM =
+  /\b(?:no|zero)\s+(?:pending\s+|available\s+|outstanding\s+)?updates?\b|\bup[- ]to[- ]date\b|\ball\s+(?:sites?\s+are\s+)?current\b/g;
+/**
+ * A negation sitting on the zero claim. The window is short so a negation
+ * belonging to an earlier clause cannot reach across and disqualify an honest
+ * claim; `normalizeAnswer` has already folded curly apostrophes, so the
+ * contractions are matched as written.
+ */
+const NEGATED_ZERO_CLAIM =
+  /\b(?:not|never|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|far from)\b[a-z\s']{0,12}$/;
+
+/**
+ * True when the answer affirmatively reports an empty update inventory.
+ *
+ * "Not all sites are current" and "the sites aren't up to date" are built from
+ * the same words as the claim and mean its opposite, so an occurrence with a
+ * negation on it is dropped rather than credited.
+ */
+function claimsZeroUpdates(answer: string): boolean {
+  for (const match of answer.matchAll(ZERO_UPDATE_CLAIM)) {
+    const index = match.index ?? 0;
+    if (!NEGATED_ZERO_CLAIM.test(answer.slice(Math.max(0, index - 40), index))) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the answer claims nothing is pending. A scenario whose oracle has
+ * pending updates uses this as a contradiction check: naming the updates and
+ * then denying them is not a faithful report of either.
+ */
+export function claimsNoPendingUpdates(text: string): boolean {
+  return claimsZeroUpdates(normalizeAnswer(text));
+}
+
 /**
  * True when the answer states `total` as the pending-update count.
  *
@@ -525,12 +561,7 @@ const UPDATE_COUNT_BEFORE =
  * inventory is normally reported in words rather than as a numeral.
  */
 function statesUpdateTotal(answer: string, total: number): boolean {
-  if (
-    total === 0 &&
-    /\b(?:no|zero)\s+(?:pending\s+|available\s+|outstanding\s+)?updates?\b|\bup[- ]to[- ]date\b|\ball\s+(?:sites?\s+are\s+)?current\b/.test(
-      answer
-    )
-  ) {
+  if (total === 0 && claimsZeroUpdates(answer)) {
     return true;
   }
   for (const match of answer.matchAll(NUMBER_TOKEN)) {
@@ -593,6 +624,75 @@ export function matchesNetworkSummaryAnswer(
   );
 }
 
+/** Vocabulary reporting a site as not talking to the dashboard. */
+const DISCONNECTED_STATE = /\b(?:disconnected|not connected|offline|down|unreachable|inactive)\b/;
+/** The opposite verdict, which stops a bare list item inheriting the heading. */
+const CONNECTED_STATE = /\b(?:connected|online|reachable|responding|operational|healthy)\b/;
+/**
+ * The same vocabulary scanned occurrence by occurrence, minus "inactive": a
+ * summary counts inactive plugins and themes, which says nothing about whether
+ * a site is reachable.
+ */
+const DOWN_WORD = /\b(?:disconnected|not connected|offline|down|unreachable)\b/g;
+/**
+ * An empty count or a negation disarming a down-word, on either side of it:
+ * "no sites are down", "0 disconnected", "disconnected: 0". The character
+ * class excludes digits so an intervening count ("no updates and 2 sites are
+ * down") breaks the negation's reach instead of extending it over the claim.
+ */
+const EMPTIED_DOWN_CLAIM_BEFORE = /\b(?:no|not|nothing|none|neither|zero|0)\b[a-z\s]{0,30}$/;
+const EMPTIED_DOWN_CLAIM_AFTER =
+  /^[\s:=—–-]*(?:sites?|websites?)?[\s:=—–-]*(?:0|none|zero|nothing)\b/;
+
+/**
+ * True when the answer reports every disconnected site as disconnected, and,
+ * for a fully connected network, claims nothing is down.
+ *
+ * Naming a hostname is not reporting it: the same summary prints the connected
+ * sites too. So the verdict travels by fragment — a fragment carrying a state
+ * word owns the hostnames in it, and a bare list item inherits the fragment
+ * that introduced the list ("Disconnected: alpha.local, beta.local"). The
+ * sentence split cannot treat a bare period as a boundary because hostnames
+ * are full of them, so a period only ends a clause when whitespace or the
+ * answer follows it.
+ */
+export function answerLabelsDisconnectedSites(
+  text: string,
+  disconnectedHostnames: string[]
+): boolean {
+  const answer = normalizeAnswer(text);
+  if (disconnectedHostnames.length === 0) {
+    // A summary of a healthy network still prints the vocabulary, so a
+    // down-word only claims something when nothing empties it.
+    for (const match of answer.matchAll(DOWN_WORD)) {
+      const index = match.index ?? 0;
+      const end = index + match[0].length;
+      if (
+        !EMPTIED_DOWN_CLAIM_BEFORE.test(answer.slice(Math.max(0, index - 40), index)) &&
+        !EMPTIED_DOWN_CLAIM_AFTER.test(answer.slice(end, end + 20))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const disconnectedFragments: string[] = [];
+  for (const clause of answer.split(/[;!?]|\.(?:\s|$)/)) {
+    let state: 'disconnected' | 'connected' | undefined;
+    for (const fragment of clause.split(',')) {
+      // "not connected" carries "connected", so the down verdict reads first.
+      if (DISCONNECTED_STATE.test(fragment)) state = 'disconnected';
+      else if (CONNECTED_STATE.test(fragment)) state = 'connected';
+      if (state === 'disconnected') disconnectedFragments.push(fragment);
+    }
+  }
+  return disconnectedHostnames.every(hostname => {
+    const name = hostname.trim().toLowerCase();
+    return name.length > 0 && disconnectedFragments.some(fragment => fragment.includes(name));
+  });
+}
+
 /**
  * True when the text names every pending update in the oracle.
  *
@@ -640,6 +740,27 @@ export function matchesSiteSelectionRequestAnswer(text: string): boolean {
     /\b(?:let me know|tell me|specify|choose|pick|select|name|reply with|respond with)\b[^.;!?]{0,50}\b(?:site|website)\b/,
     /\b(?:site|website)\b[^.;!?]{0,40}\b(?:would you like|do you want)\b[^.;!?]{0,40}\b(?:diagnose|troubleshoot|check|investigate|look at)\b/,
   ].some(pattern => pattern.test(answer));
+}
+
+/**
+ * True when the answer presents every managed site, by display name or by
+ * hostname.
+ *
+ * A command whose first step is to list the sites and ask which one has only
+ * done half of it when the answer is a bare question.
+ */
+export function answerListsAllSites(
+  text: string,
+  sites: { name: string; hostname: string }[]
+): boolean {
+  if (sites.length === 0) return false;
+  const answer = normalizeAnswer(text);
+  return sites.every(site =>
+    [site.name, site.hostname].some(value => {
+      const label = normalizeAnswer(value ?? '').trim();
+      return label.length > 0 && answer.includes(label);
+    })
+  );
 }
 
 /**

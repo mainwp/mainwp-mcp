@@ -13,6 +13,9 @@ import {
 import {
   answerAvoidsKnownPluginNames,
   answerAvoidsPluginPresenceClaims,
+  answerLabelsDisconnectedSites,
+  answerListsAllSites,
+  claimsNoPendingUpdates,
   evaluateSafeModeRefusal,
   errorResultNamesSiteNotFound,
   findConfirmWithoutPreview,
@@ -164,6 +167,8 @@ interface AgentGroundTruth {
   hallucinationProbeNames?: string[];
   fixtureSnapshot?: string;
   disconnectedSiteUrls?: string[];
+  /** Managed sites as an answer may name them: display name or hostname. */
+  allSiteLabels?: Array<{ name: string; hostname: string }>;
   updateTotal?: number;
   otherSiteNames?: string[];
   pendingUpdateNames?: string[];
@@ -1420,9 +1425,9 @@ export const agentScenarios: AgentScenario[] = [
       const siteTotals = [...new Set([truth.count, afterSites.length])];
       const updateTotals = [...new Set([truth.updateTotal, afterUpdates.total])];
       const oracleStable = siteTotals.length === 1 && updateTotals.length === 1;
-      const finalText = collected.finalText.toLowerCase();
-      const namesDisconnectedSites = truth.disconnectedSiteUrls.every(url =>
-        finalText.includes(hostnameOf(url).toLowerCase())
+      const namesDisconnectedSites = answerLabelsDisconnectedSites(
+        collected.finalText,
+        truth.disconnectedSiteUrls.map(url => hostnameOf(url).toLowerCase())
       );
       const statesTotals = matchesNetworkSummaryAnswer(collected.finalText, {
         siteTotals,
@@ -1584,6 +1589,9 @@ export const agentScenarios: AgentScenario[] = [
         finalText.includes(name.toLowerCase())
       );
       const answerNamesUpdates = namesPendingUpdates(collected.finalText, pendingUpdateNames);
+      // The ground truth refuses to run without pending updates, so an answer
+      // that also calls the site current contradicts the list it just gave.
+      const answerDeniesUpdates = claimsNoPendingUpdates(collected.finalText);
       const evaluation: AgentEvaluation = {
         understoodRequest: {
           pass: collected.finalText.trim().length > 0,
@@ -1623,12 +1631,17 @@ export const agentScenarios: AgentScenario[] = [
           // The command asks for the actual plugin and theme names rather than
           // counts alone, so a report that omits one is not the report the
           // command specified.
-          pass: namesTargetSite && namesOtherSites.length === 0 && answerNamesUpdates,
+          pass:
+            namesTargetSite &&
+            namesOtherSites.length === 0 &&
+            answerNamesUpdates &&
+            !answerDeniesUpdates,
           evidence: {
             finalText: collected.finalText,
             namesTargetSite,
             namesOtherSites,
             answerNamesUpdates,
+            answerDeniesUpdates,
             pendingUpdateNames,
             pendingUpdateTotal: truth.pendingUpdateTotal,
           },
@@ -1657,12 +1670,15 @@ export const agentScenarios: AgentScenario[] = [
       return {
         count: sites.length,
         allSiteUrls: sites.map(site => site.url).sort(),
+        allSiteLabels: sites.map(site => ({ name: site.name, hostname: hostnameOf(site.url) })),
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
     stateGuard: commandReadOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
-      if (!truth.allSiteUrls) throw new Error('Troubleshoot-command ground truth was incomplete');
+      if (!truth.allSiteUrls || !truth.allSiteLabels) {
+        throw new Error('Troubleshoot-command ground truth was incomplete');
+      }
       const listingUses = collected.toolUses.filter(tool =>
         toolFamilyMatches(tool.name, COMMAND_SITE_READ_TOOLS)
       );
@@ -1676,6 +1692,10 @@ export const agentScenarios: AgentScenario[] = [
         listingResults.length > 0 &&
         truth.allSiteUrls.every(url => listingText.includes(hostnameOf(url).toLowerCase()));
       const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      // Step one of the command is to list the sites and ask which one, so an
+      // answer that only asks skipped the half the user needs to answer it.
+      const asksWhichSite = matchesSiteSelectionRequestAnswer(collected.finalText);
+      const answerListsSites = answerListsAllSites(collected.finalText, truth.allSiteLabels);
       const evaluation: AgentEvaluation = {
         understoodRequest: {
           pass: collected.finalText.trim().length > 0,
@@ -1708,8 +1728,13 @@ export const agentScenarios: AgentScenario[] = [
           evidence: stateGuard.evidence,
         },
         faithfulFinalAnswer: {
-          pass: matchesSiteSelectionRequestAnswer(collected.finalText),
-          evidence: collected.finalText,
+          pass: asksWhichSite && answerListsSites,
+          evidence: {
+            finalText: collected.finalText,
+            asksWhichSite,
+            answerListsSites,
+            allSiteLabels: truth.allSiteLabels,
+          },
         },
       };
       return {
