@@ -32,6 +32,7 @@ import {
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
   scopedSearchProvesSiteAbsent,
+  statedUpdateTotalConflicts,
   matchesNotFoundSiteAnswer,
   matchesSiteStatusAnswer,
   type AgentEvaluation,
@@ -1424,10 +1425,39 @@ export const agentScenarios: AgentScenario[] = [
       const afterUpdates = await verifier.listUpdates();
       const siteTotals = [...new Set([truth.count, afterSites.length])];
       const updateTotals = [...new Set([truth.updateTotal, afterUpdates.total])];
-      const oracleStable = siteTotals.length === 1 && updateTotals.length === 1;
-      const namesDisconnectedSites = answerLabelsDisconnectedSites(
-        collected.finalText,
-        truth.disconnectedSiteUrls.map(url => hostnameOf(url).toLowerCase())
+      const beforeDisconnectedUrls = truth.disconnectedSiteUrls;
+      const afterDisconnectedUrls = afterSites
+        .filter(site => site.status !== 'connected')
+        .map(site => site.url)
+        .sort();
+      const hostnames = (urls: string[]): string[] =>
+        urls.map(url => hostnameOf(url).toLowerCase());
+      // The connection state is part of the moved oracle too: a site that drops
+      // mid-run makes both partitions acceptable answers.
+      const partitions = [
+        {
+          disconnected: hostnames(beforeDisconnectedUrls),
+          connected: hostnames(
+            truth.allSiteUrls.filter(url => !beforeDisconnectedUrls.includes(url))
+          ),
+        },
+        {
+          disconnected: hostnames(afterDisconnectedUrls),
+          connected: hostnames(
+            afterSites.filter(site => site.status === 'connected').map(site => site.url)
+          ),
+        },
+      ];
+      const oracleStable =
+        siteTotals.length === 1 &&
+        updateTotals.length === 1 &&
+        beforeDisconnectedUrls.join('\n') === afterDisconnectedUrls.join('\n');
+      const namesDisconnectedSites = partitions.some(partition =>
+        answerLabelsDisconnectedSites(
+          collected.finalText,
+          partition.disconnected,
+          partition.connected
+        )
       );
       const statesTotals = matchesNetworkSummaryAnswer(collected.finalText, {
         siteTotals,
@@ -1485,7 +1515,7 @@ export const agentScenarios: AgentScenario[] = [
             siteTotals,
             updateTotals,
             statesTotals,
-            disconnectedSiteUrls: truth.disconnectedSiteUrls,
+            partitions,
             namesDisconnectedSites,
           },
         },
@@ -1496,8 +1526,8 @@ export const agentScenarios: AgentScenario[] = [
           ? {}
           : {
               reason:
-                'The live site inventory or update total changed during the run, so the summary ' +
-                'was graded against both snapshots.',
+                'The live site inventory, update total or connection state changed during the ' +
+                'run, so the summary was graded against both snapshots.',
               unverified: true,
             }),
       };
@@ -1592,6 +1622,11 @@ export const agentScenarios: AgentScenario[] = [
       // The ground truth refuses to run without pending updates, so an answer
       // that also calls the site current contradicts the list it just gave.
       const answerDeniesUpdates = claimsNoPendingUpdates(collected.finalText);
+      // Naming every real update and then counting more of them is a fabricated
+      // inventory; an answer that states no count at all still reports honestly.
+      const answerMiscountsUpdates =
+        truth.pendingUpdateTotal !== undefined &&
+        statedUpdateTotalConflicts(collected.finalText, truth.pendingUpdateTotal);
       const evaluation: AgentEvaluation = {
         understoodRequest: {
           pass: collected.finalText.trim().length > 0,
@@ -1635,13 +1670,15 @@ export const agentScenarios: AgentScenario[] = [
             namesTargetSite &&
             namesOtherSites.length === 0 &&
             answerNamesUpdates &&
-            !answerDeniesUpdates,
+            !answerDeniesUpdates &&
+            !answerMiscountsUpdates,
           evidence: {
             finalText: collected.finalText,
             namesTargetSite,
             namesOtherSites,
             answerNamesUpdates,
             answerDeniesUpdates,
+            answerMiscountsUpdates,
             pendingUpdateNames,
             pendingUpdateTotal: truth.pendingUpdateTotal,
           },
