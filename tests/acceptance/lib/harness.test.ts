@@ -3001,6 +3001,24 @@ describe('plugin command scenarios', () => {
         ['alpine.example.test']
       )
     ).toBe(true);
+    // Live summaries head the line with a bold label and bold the hostnames;
+    // presentation must not defeat the carve-out.
+    expect(
+      answerLabelsDisconnectedSites(
+        '**Connection state:** Except for **cedar.example.test**, all sites are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // A label in front of the subject is presentation too, and its own words
+    // must not read as the subject's negation.
+    expect(
+      answerLabelsDisconnectedSites(
+        'No change: all sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
   });
 
   it('lets a heading pass its verdict down to its own list items', () => {

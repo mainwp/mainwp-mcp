@@ -938,11 +938,26 @@ const NEGATED_EXCEPTION_SUBJECT = /\b(?:no|none|neither|nothing|zero)\b/;
  * Only hostnames and connectors: what a clause-opening carve-out lists.
  * "Except for cedar.example.test, all sites…" carves cedar out; "Apart from a
  * sync warning on alpine.example.test, all sites…" is an aside about alpine,
- * and the extra words are how the two are told apart.
+ * and the extra words are how the two are told apart. Markdown emphasis around
+ * a hostname is presentation, not prose.
  */
 function isHostnameList(segment: string): boolean {
-  const tokens = segment.split(/[\s,]+|\band\b|&/).filter(token => token.length > 0);
+  const tokens = segment
+    .split(/[\s,]+|\band\b|&/)
+    .map(token => token.replace(/^[*_`]+|[*_`]+$/g, ''))
+    .filter(token => token.length > 0);
   return tokens.length > 0 && tokens.every(token => /^[\w-]+(?:\.[\w-]+)+\.?$/.test(token));
+}
+
+/**
+ * A presentation label heading the sentence ("**Connection state:**"): words
+ * ending in a colon, possibly emphasized, saying nothing about connectivity
+ * themselves. Live summaries put one in front of the carve-out, and it must
+ * not defeat the clause-opening reading.
+ */
+function isPresentationLabel(text: string): boolean {
+  const label = text.replace(/[*_`]/g, '').trim();
+  return label.length > 0 && label.length <= 40 && label.endsWith(':') && !statesConnection(label);
 }
 
 /**
@@ -967,7 +982,7 @@ function connectionFragments(clause: string): string[] {
       return [clause];
     }
     if (
-      beforeMarker.trim().length === 0 &&
+      (beforeMarker.trim().length === 0 || isPresentationLabel(beforeMarker)) &&
       EXCEPTION_VERDICT_BEHIND.test(afterMarker) &&
       isHostnameList(afterMarker.split(',')[0])
     ) {
@@ -1083,8 +1098,11 @@ export function answerLabelsDisconnectedSites(
       let verdict = beforeMarker + (behind ? afterMarker.slice(behind.index) : '');
       // A negated subject hands the excepted names the trailing predicate as it
       // stands rather than its opposite, so they are what the predicate says
-      // and the emptied subject in front of them states nothing.
-      if (behind && NEGATED_EXCEPTION_SUBJECT.test(beforeMarker)) {
+      // and the emptied subject in front of them states nothing. Only the
+      // subject itself may negate: a label in front of it ("No change: all
+      // sites except…") is presentation, cut away at its colon.
+      const exceptionSubject = beforeMarker.slice(beforeMarker.lastIndexOf(':') + 1);
+      if (behind && NEGATED_EXCEPTION_SUBJECT.test(exceptionSubject)) {
         carvedOut = '';
         verdict = afterMarker;
       }
