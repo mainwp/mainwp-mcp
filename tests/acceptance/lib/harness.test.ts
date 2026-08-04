@@ -2540,6 +2540,11 @@ describe('plugin command scenarios', () => {
         'Updates: Akismet Anti-spam is pending. Hello Dolly — 1.7.2, up to date (active).'
       )
     ).toBe(false);
+    // The version's reach ends with its sentence: a denial in the next
+    // sentence is its own claim.
+    expect(
+      claimsNoPendingUpdates('Akismet Anti-spam 5.3.6 is installed. Everything is up to date.')
+    ).toBe(true);
     // An adverb between the component and its verdict does not widen it.
     expect(
       claimsNoPendingUpdates(

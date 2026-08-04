@@ -205,10 +205,13 @@ function clauseBefore(text: string, index: number): string {
 /**
  * The whole statement an occurrence sits in. A comma stays inside it, unlike in
  * `clauseBefore`, so a per-item marker in an earlier fragment of the same
- * sentence ("Hello Dolly — 1.7.2, up to date") is still in view.
+ * sentence ("Hello Dolly — 1.7.2, up to date") is still in view. The classes
+ * exclude the period so only a non-boundary one ("5.3.6", a hostname) stays
+ * inside — the same rule as `CLAUSE_TAIL` — or the statement would swallow the
+ * sentences around it.
  */
-const STATEMENT_HEAD = /(?:[^;!?\n]|\.(?!\s))*$/;
-const STATEMENT_TAIL = /^(?:[^;!?\n]|\.(?!\s))*/;
+const STATEMENT_HEAD = /(?:[^;!?\n.]|\.(?!\s))*$/;
+const STATEMENT_TAIL = /^(?:[^;!?\n.]|\.(?!\s|$))*/;
 
 function statementAround(text: string, index: number, length: number): string {
   const head = text.slice(0, index).match(STATEMENT_HEAD)?.[0] ?? '';
