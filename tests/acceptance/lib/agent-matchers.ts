@@ -601,6 +601,15 @@ const INVENTORY_WIDE_SUBJECT =
  * "WordPress sites" is the network rather than a component.
  */
 const COMPONENT_SUBJECT = /\b(?:core|wordpress(?!\s+(?:sites?|websites?))|php|translations?)\b/;
+/**
+ * A site named as where the subject lives rather than as the subject itself:
+ * "core on this site" is a verdict on core, however close the word "site" sits
+ * to the claim. Masked out of the proximity contest so the modifier cannot
+ * outrank what it modifies; an inventory word of its own survives the mask, so
+ * "all plugins on this site are up to date" stays the denial it is.
+ */
+const SITE_MODIFIER_PHRASE =
+  /\b(?:on|of|for|at|across)\s+(?:this\s+|that\s+|the\s+|your\s+|our\s+|each\s+|every\s+|all\s+)?(?:sites?|websites?|dashboards?|networks?)\b/g;
 
 /** Where the last match sits, or -1: subject scoping is decided by proximity. */
 function lastSubjectIndex(clause: string, pattern: RegExp): number {
@@ -644,22 +653,25 @@ function claimsZeroUpdates(answer: string): boolean {
     const index = match.index ?? 0;
     const clause = clauseBefore(answer, index);
     if (NEGATED_ZERO_CLAIM.test(clause)) continue;
+    const statement = statementAround(answer, index, match[0].length);
     // "Hello Dolly — 1.7.2, up to date" is one row of an inventory listing,
     // printed next to the rows that are pending.
-    if (VERSION_NUMERAL.test(statementAround(answer, index, match[0].length))) continue;
+    if (VERSION_NUMERAL.test(statement)) continue;
     // "Everything else is up to date" is the report's own wording for a
-    // non-empty inventory, not a denial of it, and so is an exception carved
-    // out after the claim ("all up to date except Alpine").
+    // non-empty inventory, not a denial of it.
     if (REMAINDER_SCOPE.test(clause)) continue;
-    const statementAfter = answer.slice(index + match[0].length).match(STATEMENT_TAIL)?.[0] ?? '';
-    if (EXCEPTION_MARKER.test(statementAfter)) continue;
+    // An exception concedes the same pending items from either side of the
+    // claim: "all up to date except Alpine" and "apart from Akismet and
+    // Bakehouse, all plugins are up to date" report one inventory, not two.
+    if (EXCEPTION_MARKER.test(statement)) continue;
     if (QUANTIFIED_ZERO_CLAIM.test(match[0])) return true;
     // A clause can open on the site and close on one of its parts ("this
     // site's WordPress core is up to date"), so the subject standing next to
     // the claim is the one making it.
-    const componentAt = lastSubjectIndex(clause, COMPONENT_SUBJECT);
-    if (lastSubjectIndex(clause, INVENTORY_WIDE_SUBJECT) > componentAt) return true;
-    if (SUBJECT_COPULA.test(clause) && componentAt === -1) return true;
+    const subject = clause.replace(SITE_MODIFIER_PHRASE, phrase => ' '.repeat(phrase.length));
+    const componentAt = lastSubjectIndex(subject, COMPONENT_SUBJECT);
+    if (lastSubjectIndex(subject, INVENTORY_WIDE_SUBJECT) > componentAt) return true;
+    if (SUBJECT_COPULA.test(subject) && componentAt === -1) return true;
   }
   return false;
 }
@@ -705,6 +717,14 @@ const VERSION_NUMERAL_AFTER = /^\.\d/;
 const LIST_ORDINAL_AFTER = /^[:)]/;
 const BRACKETED_COUNT_BEFORE = /\($/;
 /**
+ * The label a count attaches to rather than the one an ordinal does: numbering
+ * runs off the singular item ("Update 1:"), while a count runs off the plural
+ * inventory or a counting word ("Pending updates — 3:", "update count: 3"). The
+ * colon behind the numeral is the same in both, so the label decides.
+ */
+const UPDATE_TALLY_LABEL_BEFORE =
+  /\b(?:updates|(?:updates?|pending|outstanding|total)\s(?:count|number|tally|total)s?)[\s:=(*_—–-]{0,4}$/;
+/**
  * The same numbering with a period, which only reads as numbering when the
  * numeral opens its own line: "Pending updates: 7." ends a sentence with one.
  */
@@ -732,7 +752,13 @@ function updateCountMentions(answer: string): UpdateCountMention[] {
     const after = answer.slice(index + token.length, index + token.length + 40);
     if (NEGATED_NUMBER.test(before)) continue;
     if (VERSION_NUMERAL_BEFORE.test(before) || VERSION_NUMERAL_AFTER.test(after)) continue;
-    if (LIST_ORDINAL_AFTER.test(after) && !BRACKETED_COUNT_BEFORE.test(before)) continue;
+    if (
+      LIST_ORDINAL_AFTER.test(after) &&
+      !BRACKETED_COUNT_BEFORE.test(before) &&
+      !UPDATE_TALLY_LABEL_BEFORE.test(before)
+    ) {
+      continue;
+    }
     if (LINE_ORDINAL_AFTER.test(after) && LINE_ORDINAL_BEFORE.test(before)) continue;
     // "Pending updates: 3 sites affected" counts sites under an update label.
     if (UPDATE_COUNT_SITE_NOUN_AFTER.test(after)) continue;
@@ -894,6 +920,63 @@ function statesConnection(text: string): boolean {
   );
 }
 
+/**
+ * The subject an exception is carved out of. Without one in front of the
+ * marker the carve-out is an aside opening the sentence ("apart from the sync
+ * warning on alpine, all sites are connected"), whose subject sits behind the
+ * comma rather than in front of the marker.
+ */
+const EXCEPTION_SUBJECT_BEFORE = /\b(?:sites?|websites?|all|every|each|everything)\b/;
+/**
+ * A subject that already empties itself, which flips what the carve-out means:
+ * "no sites except cedar are connected" says cedar is the connected one, where
+ * "all sites except cedar are connected" says it is the one that is not.
+ */
+const NEGATED_EXCEPTION_SUBJECT = /\b(?:no|none|neither|nothing|zero)\b/;
+
+/**
+ * Only hostnames and connectors: what a clause-opening carve-out lists.
+ * "Except for cedar.example.test, all sites…" carves cedar out; "Apart from a
+ * sync warning on alpine.example.test, all sites…" is an aside about alpine,
+ * and the extra words are how the two are told apart.
+ */
+function isHostnameList(segment: string): boolean {
+  const tokens = segment.split(/[\s,]+|\band\b|&/).filter(token => token.length > 0);
+  return tokens.length > 0 && tokens.every(token => /^[\w-]+(?:\.[\w-]+)+\.?$/.test(token));
+}
+
+/**
+ * The fragments a clause is scored in. Commas separate list items, except in a
+ * subject-position exception ("all sites except a, b and c are connected"),
+ * where splitting on them severs the carved-out names from the verdict sitting
+ * behind the last of them: there the clause is one fragment. A clause-opening
+ * exception ("Except for cedar, all sites are connected") is the same carve-out
+ * with the subject behind the comma, and only a bare hostname list earns that
+ * reading.
+ */
+function connectionFragments(clause: string): string[] {
+  const exception = EXCEPTION_MARKER.exec(clause);
+  if (exception) {
+    const beforeMarker = clause.slice(0, exception.index);
+    const afterMarker = clause.slice(exception.index + exception[0].length);
+    if (
+      !statesConnection(beforeMarker) &&
+      EXCEPTION_SUBJECT_BEFORE.test(beforeMarker) &&
+      EXCEPTION_VERDICT_BEHIND.test(afterMarker)
+    ) {
+      return [clause];
+    }
+    if (
+      beforeMarker.trim().length === 0 &&
+      EXCEPTION_VERDICT_BEHIND.test(afterMarker) &&
+      isHostnameList(afterMarker.split(',')[0])
+    ) {
+      return [clause];
+    }
+  }
+  return clause.split(',');
+}
+
 function downClaimEmptied(scope: string, index: number, word: string): boolean {
   const end = index + word.length;
   return (
@@ -987,7 +1070,7 @@ export function answerLabelsDisconnectedSites(
       ? carriedState
       : undefined;
     let hasOwnState = false;
-    for (const fragment of clause.split(',')) {
+    for (const fragment of connectionFragments(clause)) {
       const exception = EXCEPTION_MARKER.exec(fragment);
       const beforeMarker = exception ? fragment.slice(0, exception.index) : fragment;
       const afterMarker = exception ? fragment.slice(exception.index + exception[0].length) : '';
@@ -996,8 +1079,15 @@ export function answerLabelsDisconnectedSites(
       const behind = statesConnection(beforeMarker)
         ? null
         : EXCEPTION_VERDICT_BEHIND.exec(afterMarker);
-      const carvedOut = behind ? afterMarker.slice(0, behind.index) : afterMarker;
-      const verdict = beforeMarker + (behind ? afterMarker.slice(behind.index) : '');
+      let carvedOut = behind ? afterMarker.slice(0, behind.index) : afterMarker;
+      let verdict = beforeMarker + (behind ? afterMarker.slice(behind.index) : '');
+      // A negated subject hands the excepted names the trailing predicate as it
+      // stands rather than its opposite, so they are what the predicate says
+      // and the emptied subject in front of them states nothing.
+      if (behind && NEGATED_EXCEPTION_SUBJECT.test(beforeMarker)) {
+        carvedOut = '';
+        verdict = afterMarker;
+      }
       const downWords = [...verdict.matchAll(DOWN_WORD)];
       // "not connected" carries "connected", so the down verdict reads first.
       const claimsDown =

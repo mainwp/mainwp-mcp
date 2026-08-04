@@ -2580,6 +2580,29 @@ describe('plugin command scenarios', () => {
     ).toBe(false);
   });
 
+  it('reads an exception in front of the claim as the concession it is', () => {
+    // The carve-out can open the sentence, where it concedes the pending items
+    // exactly as a trailing "except" does.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery — Apart from Akismet Anti-spam and Bakehouse, all plugins are up to date.'
+      )
+    ).toBe(false);
+  });
+
+  it('does not let a prepositional site reference own the verdict', () => {
+    // "core on this site" says where core lives, not that the site as a whole
+    // is current; the plugin updates beside it are still pending.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery — WordPress core on this site is up to date. ' +
+          'Pending plugin updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+    // The same modifier over an inventory-wide subject leaves the denial standing.
+    expect(claimsNoPendingUpdates('All plugins on this site are up to date.')).toBe(true);
+  });
+
   it('lets a negation reach the claim across a percentage', () => {
     // "not 100% up to date" denies the phrase it is built from, so the updates
     // it introduces stand.
@@ -2742,6 +2765,28 @@ describe('plugin command scenarios', () => {
     ).toBe(true);
   });
 
+  it('counts a labelled total the item list follows with a colon', () => {
+    // "Pending updates — 3:" states the count and then lists the items. The
+    // plural label is what tells it apart from the "Update 1:" numbering: an
+    // ordinal numbers one item, a count counts them all.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Pending updates — 3: Akismet Anti-spam and Bakehouse.',
+        2
+      )
+    ).toBe(true);
+    expect(
+      matchesNetworkSummaryAnswer('Sites: 3. Pending updates — 2: Akismet and Bakehouse.', {
+        siteTotals: [3],
+        updateTotals: [2],
+      })
+    ).toBe(true);
+    // A count the label itself bracketed still counts, colon or no colon.
+    expect(
+      statedUpdateTotalConflicts('Pending updates (3): Akismet Anti-spam and Bakehouse.', 2)
+    ).toBe(true);
+  });
+
   it('catches a site report that names the updates and then denies them', () => {
     // The name check runs against JSON-ish tool output too, where the words
     // around a name mean nothing, so the contradiction is graded separately.
@@ -2882,6 +2927,78 @@ describe('plugin command scenarios', () => {
         'All sites except cedar.example.test are connected.',
         ['cedar.example.test'],
         ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('reads a negated subject-position exception as stated, not inverted', () => {
+    // "No sites except cedar are connected" names cedar as the one site that
+    // IS connected, which is the inverse of this oracle rather than a report
+    // of it: a negative quantifier hands the excepted name the predicate as it
+    // stands.
+    expect(
+      answerLabelsDisconnectedSites(
+        'No sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(false);
+    // The same shape with a plain subject still carves cedar out of the
+    // connected verdict.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('keeps a comma-separated exception list attached to its verdict', () => {
+    // The carve-out can name several sites, and the verdict sits behind the
+    // last of them; splitting the commas first would leave the earlier names
+    // with no verdict at all.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test, beacon.example.test, and delta.example.test are ' +
+          'connected.',
+        ['cedar.example.test', 'beacon.example.test', 'delta.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // A comma list in a clause that carves nothing out keeps reading fragment
+    // by fragment, so the connected items stay connected.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: cedar.example.test. Connected: alpine.example.test, beacon.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('reads a clause-opening exception as the carve-out it introduces', () => {
+    expect(
+      answerLabelsDisconnectedSites(
+        'Except for cedar.example.test, all sites are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    expect(
+      answerLabelsDisconnectedSites(
+        'Apart from cedar.example.test and beacon.example.test, all sites are connected.',
+        ['cedar.example.test', 'beacon.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // An opening aside that merely mentions a hostname is not a carve-out, so
+    // the connected site it names is never read as down.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Apart from a sync warning on alpine.example.test, all sites are connected.',
+        [],
+        ['alpine.example.test']
       )
     ).toBe(true);
   });
