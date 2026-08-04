@@ -2479,6 +2479,17 @@ describe('plugin command scenarios', () => {
     ).toBe(false);
   });
 
+  it('reads a bolded update label as the label it is', () => {
+    // Markdown emphasis between the label and the number is formatting, not a
+    // different subject: "**Pending updates:** 4" counts updates.
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Sites: 3. **Pending updates:** 4. Disconnected: cedar.example.test.',
+        { siteTotals: [3], updateTotals: [4] }
+      )
+    ).toBe(true);
+  });
+
   it('rejects a network summary that negates its own zero-update claim', () => {
     // These say the opposite of the phrase they are built from, so none of
     // them may satisfy an oracle of zero pending updates.
@@ -2546,6 +2557,38 @@ describe('plugin command scenarios', () => {
       )
     ).toBe(false);
     expect(claimsNoPendingUpdates('The rest of the plugins are current.')).toBe(false);
+    // An exception after the claim concedes the pending inventory the same way
+    // a remainder phrase before it does.
+    expect(
+      claimsNoPendingUpdates(
+        'All sites are up to date except Alpine Bakery, which has 2 pending updates.'
+      )
+    ).toBe(false);
+    expect(claimsNoPendingUpdates('Everything is current except the Alpine Bakery site.')).toBe(
+      false
+    );
+  });
+
+  it('scopes an up-to-date verdict to the nearest subject', () => {
+    // The clause opens with the site and ends with the component, so the
+    // verdict belongs to core; the plugin updates beside it are still pending.
+    expect(
+      claimsNoPendingUpdates(
+        "Alpine Bakery: This site's WordPress core is up to date. " +
+          'Pending plugin updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+  });
+
+  it('lets a negation reach the claim across a percentage', () => {
+    // "not 100% up to date" denies the phrase it is built from, so the updates
+    // it introduces stand.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery report. This site is not 100% up to date. ' +
+          'Pending updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
   });
 
   it('fails a network summary whose explicit update total conflicts', () => {
@@ -2671,6 +2714,34 @@ describe('plugin command scenarios', () => {
     ).toBe(true);
   });
 
+  it('reads numbered update items as list numbering, not as a count', () => {
+    // "Update 1:" and "Update 2:" number the items they introduce. The report
+    // states no total at all, so it cannot state a conflicting one.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Update 1: Akismet Anti-spam. Update 2: Bakehouse.',
+        2
+      )
+    ).toBe(false);
+    // The markdown numbered list is the same numbering with a period, sitting
+    // under the label that would otherwise lend the numerals its meaning.
+    expect(
+      statedUpdateTotalConflicts('Pending updates:\n1. Akismet Anti-spam\n2. Bakehouse', 2)
+    ).toBe(false);
+  });
+
+  it('reads a count word between the update label and the numeral', () => {
+    // "Pending update count: 3" states a whole-inventory count as plainly as
+    // "Pending updates: 3". The colon in front of the numeral is what tells it
+    // apart from the "Update 1:" numbering above.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Pending update count: 3 — Akismet Anti-spam and Bakehouse.',
+        2
+      )
+    ).toBe(true);
+  });
+
   it('catches a site report that names the updates and then denies them', () => {
     // The name check runs against JSON-ish tool output too, where the words
     // around a name mean nothing, so the contradiction is graded separately.
@@ -2787,6 +2858,30 @@ describe('plugin command scenarios', () => {
         'All sites are connected except cedar.example.test.',
         ['cedar.example.test'],
         ['alpine.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('does not credit a site carved out of a down verdict', () => {
+    // "All sites are disconnected except cedar" names cedar as the one site
+    // still up, so crediting it as the down one inverts the answer.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites are disconnected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(false);
+  });
+
+  it('reads a verdict stated behind the excepted sites', () => {
+    // The predicate can sit after the exception ("all sites except cedar are
+    // connected"), which reports cedar down exactly like the front-loaded form.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
       )
     ).toBe(true);
   });

@@ -560,11 +560,12 @@ export function matchesSessionCapAnswer(text: string, expectedTotal?: number): b
  */
 const UPDATE_COUNT_AFTER =
   /^[ \t,:;)—–-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
-// The label-to-number bridge admits em and en dashes and an opening paren:
-// live answers headline counts as "Pending updates — 7" and
-// "Pending updates (7 total)". A bare total, count or number word is not an
-// update label — "Total sites: 3" and "Total plugins: 12" count other things.
-const UPDATE_COUNT_BEFORE = /\b(?:updates?|pending|available|outstanding)\b[a-z\s:,'(—–-]{0,20}$/;
+// The label-to-number bridge admits em and en dashes, an opening paren and
+// markdown emphasis: live answers headline counts as "Pending updates — 7",
+// "Pending updates (7 total)" and "**Pending updates:** 4". A bare total, count
+// or number word is not an update label — "Total sites: 3" and "Total plugins:
+// 12" count other things.
+const UPDATE_COUNT_BEFORE = /\b(?:updates?|pending|available|outstanding)\b[a-z\s:,'(*_—–-]{0,20}$/;
 /** The number counts sites, whatever update label sits in front of it. */
 const UPDATE_COUNT_SITE_NOUN_AFTER =
   /^[\s,.:;)—–-]*(?:(?:connected|managed|child|active|total)\s+)*(?:sites?|websites?)\b/;
@@ -578,11 +579,11 @@ const ZERO_UPDATE_CLAIM =
  * cut keeps a negation belonging to an earlier clause from disqualifying an
  * honest one. `normalizeAnswer` has already folded curly apostrophes, so the
  * contractions are matched as written, and a count inside the window belongs to
- * the negated subject ("none of the 3 sites are") rather than breaking its
- * reach.
+ * the negated subject ("none of the 3 sites are", "not 100% up to date")
+ * rather than breaking its reach.
  */
 const NEGATED_ZERO_CLAIM =
-  /\b(?:not|never|none|nothing|neither|no one|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|far from)\b[a-z\d\s']{0,25}$/;
+  /\b(?:not|never|none|nothing|neither|no one|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|far from)\b[a-z\d\s'%]{0,25}$/;
 /**
  * A subject covering the whole inventory rather than one part of it. Sites of
  * this network are named by their own display names, which belong to no
@@ -594,11 +595,20 @@ const INVENTORY_WIDE_SUBJECT =
 /**
  * The claim's subject is one component rather than the site's whole inventory:
  * "WordPress core is up to date" sits happily above a list of pending plugin
- * updates. An inventory-wide word in the same clause outranks this, so "core
- * and plugins are up to date" stays the full-inventory claim it is, and
+ * updates. Whichever of the two subjects sits nearer the claim owns it, so
+ * "core and plugins are up to date" stays the full-inventory claim it is while
+ * "this site's WordPress core is up to date" is a verdict on core, and
  * "WordPress sites" is the network rather than a component.
  */
 const COMPONENT_SUBJECT = /\b(?:core|wordpress(?!\s+(?:sites?|websites?))|php|translations?)\b/;
+
+/** Where the last match sits, or -1: subject scoping is decided by proximity. */
+function lastSubjectIndex(clause: string, pattern: RegExp): number {
+  let last = -1;
+  for (const match of clause.matchAll(new RegExp(pattern.source, 'g'))) last = match.index ?? last;
+  return last;
+}
+
 /** The clause hands the claim a subject of its own ("Alpine Bakery is …"). */
 const SUBJECT_COPULA = /\b(?:is|are|was|were|remains?|stays?)\b[a-z\s'-]{0,20}$/;
 /** A version string, which only ever belongs to one product. */
@@ -611,6 +621,14 @@ const QUANTIFIED_ZERO_CLAIM = /^(?:no|zero|all)\b/;
  * down" concedes the down one.
  */
 const REMAINDER_SCOPE = /\b(?:other|others|remaining|rest|else|otherwise|further|additional)\b/;
+/**
+ * A carve-out from the claim or verdict around it. "All sites are connected
+ * except cedar" is the most natural way English reports one site down, and
+ * "all sites are up to date except Alpine" concedes Alpine's pending updates
+ * the same way a remainder phrase does.
+ */
+const EXCEPTION_MARKER =
+  /\b(?:except(?:\s+for)?|besides|apart from|aside from|other than|save for)\b/;
 
 /**
  * True when the answer affirmatively reports an empty update inventory.
@@ -630,11 +648,18 @@ function claimsZeroUpdates(answer: string): boolean {
     // printed next to the rows that are pending.
     if (VERSION_NUMERAL.test(statementAround(answer, index, match[0].length))) continue;
     // "Everything else is up to date" is the report's own wording for a
-    // non-empty inventory, not a denial of it.
+    // non-empty inventory, not a denial of it, and so is an exception carved
+    // out after the claim ("all up to date except Alpine").
     if (REMAINDER_SCOPE.test(clause)) continue;
+    const statementAfter = answer.slice(index + match[0].length).match(STATEMENT_TAIL)?.[0] ?? '';
+    if (EXCEPTION_MARKER.test(statementAfter)) continue;
     if (QUANTIFIED_ZERO_CLAIM.test(match[0])) return true;
-    if (INVENTORY_WIDE_SUBJECT.test(clause)) return true;
-    if (SUBJECT_COPULA.test(clause) && !COMPONENT_SUBJECT.test(clause)) return true;
+    // A clause can open on the site and close on one of its parts ("this
+    // site's WordPress core is up to date"), so the subject standing next to
+    // the claim is the one making it.
+    const componentAt = lastSubjectIndex(clause, COMPONENT_SUBJECT);
+    if (lastSubjectIndex(clause, INVENTORY_WIDE_SUBJECT) > componentAt) return true;
+    if (SUBJECT_COPULA.test(clause) && componentAt === -1) return true;
   }
   return false;
 }
@@ -662,13 +687,29 @@ const CATEGORY_SCOPED_UPDATE_BEFORE =
   /\b(?:core|plugins?|themes?|translations?)\b[a-z\s:,'(—–-]{0,10}$/;
 /**
  * Headline counts put the label on the number itself ("Pending updates — 7",
- * "Updates (7)"). Letters between the label and the number mean the number
- * belongs to something else, usually a version after a product name.
+ * "Updates (7)", "**Pending updates:** 4"). One counting word may bridge the
+ * two ("Pending update count: 3"); any other letters between them mean the
+ * number belongs to something else, usually a version after a product name.
  */
-const UPDATE_COUNT_LABEL_BEFORE = /\b(?:updates?|pending|outstanding|total)\b[\s:=(—–-]{0,4}$/;
+const UPDATE_COUNT_LABEL_BEFORE =
+  /\b(?:updates?|pending|outstanding|total)\b(?:\s(?:count|number|tally|total)s?)?[\s:=(*_—–-]{0,4}$/;
 /** A numeral that is part of a version string rather than a count of anything. */
 const VERSION_NUMERAL_BEFORE = /(?:\d\.|\bv|\bversion\s+)$/;
 const VERSION_NUMERAL_AFTER = /^\.\d/;
+/**
+ * List numbering rather than a count: "Update 1:", "1) Akismet" and "2.
+ * Bakehouse" introduce the item behind them. A numeral the label itself
+ * bracketed is the exception — in "Pending updates (7)" the paren it closes is
+ * the label's own, which is what separates the two shapes.
+ */
+const LIST_ORDINAL_AFTER = /^[:)]/;
+const BRACKETED_COUNT_BEFORE = /\($/;
+/**
+ * The same numbering with a period, which only reads as numbering when the
+ * numeral opens its own line: "Pending updates: 7." ends a sentence with one.
+ */
+const LINE_ORDINAL_AFTER = /^\.\s/;
+const LINE_ORDINAL_BEFORE = /(?:^|\n)[\s*+-]*$/;
 
 interface UpdateCountMention {
   value: number;
@@ -691,6 +732,8 @@ function updateCountMentions(answer: string): UpdateCountMention[] {
     const after = answer.slice(index + token.length, index + token.length + 40);
     if (NEGATED_NUMBER.test(before)) continue;
     if (VERSION_NUMERAL_BEFORE.test(before) || VERSION_NUMERAL_AFTER.test(after)) continue;
+    if (LIST_ORDINAL_AFTER.test(after) && !BRACKETED_COUNT_BEFORE.test(before)) continue;
+    if (LINE_ORDINAL_AFTER.test(after) && LINE_ORDINAL_BEFORE.test(before)) continue;
     // "Pending updates: 3 sites affected" counts sites under an update label.
     if (UPDATE_COUNT_SITE_NOUN_AFTER.test(after)) continue;
     if (!UPDATE_COUNT_AFTER.test(after) && !UPDATE_COUNT_BEFORE.test(before)) continue;
@@ -751,9 +794,10 @@ export function statedUpdateTotalConflicts(text: string, total: number): boolean
  * the session-cap answer and wrong here.
  */
 // The colon form carries its own boundary: a \b after ":" would demand a word
-// character where the headline puts a space ("Sites: 4").
+// character where the headline puts a space ("Sites: 4"), and markdown
+// emphasis around the label is formatting rather than a different subject.
 const NETWORK_SITE_COUNT_BEFORE =
-  /\bsites?:[\s'(—–-]{0,4}$|\b(?:manages?|managing|connected to)\b[a-z\s:,'(—–-]{0,20}$/;
+  /\bsites?:[\s'(*_—–-]{0,4}$|\b(?:manages?|managing|connected to)\b[a-z\s:,'(*_—–-]{0,20}$/;
 
 /**
  * True when the answer states `total` as the managed-site count. A summary
@@ -831,13 +875,24 @@ const EMPTIED_DOWN_CLAIM_BEFORE =
 const EMPTIED_DOWN_CLAIM_AFTER =
   /^[\s:=(—–-]*(?:sites?|websites?)?[\s:=(—–-]*(?:0|none|zero|nothing)\b/;
 /**
- * A carve-out from the verdict in front of it. "All sites are connected except
- * cedar" is the most natural way English reports one site down, and it reads as
- * a healthy network to any check that only looks at the words before the
- * marker.
+ * The verdict a subject-position exception puts behind the excepted sites:
+ * "all sites except cedar are connected" states the same thing as "all sites
+ * are connected except cedar", with the excepted name in the middle. Only a
+ * fragment that stated nothing in front of the marker reads this far, so a
+ * relative clause about the excepted site itself ("except cedar, which is
+ * offline") stays part of the carve-out.
  */
-const EXCEPTION_MARKER =
-  /\b(?:except(?:\s+for)?|besides|apart from|aside from|other than|save for)\b/;
+const EXCEPTION_VERDICT_BEHIND =
+  /\b(?:is|are|was|were|remains?|stays?|appears?|seems?)\b[a-z\s'-]{0,20}\b(?:connected|disconnected|online|offline|up|down|reachable|unreachable|responding|operational|healthy|erroring|errored)\b/;
+
+/** True when this side of an exception marker carries a connection verdict. */
+function statesConnection(text: string): boolean {
+  return (
+    CONNECTED_STATE.test(text) ||
+    NEGATED_CONNECTED_STATE.test(text) ||
+    [...text.matchAll(DOWN_WORD)].length > 0
+  );
+}
 
 function downClaimEmptied(scope: string, index: number, word: string): boolean {
   const end = index + word.length;
@@ -934,10 +989,15 @@ export function answerLabelsDisconnectedSites(
     let hasOwnState = false;
     for (const fragment of clause.split(',')) {
       const exception = EXCEPTION_MARKER.exec(fragment);
-      // The verdict belongs to the words in front of the marker; the sites
-      // after it are the exception to that verdict.
-      const verdict = exception ? fragment.slice(0, exception.index) : fragment;
-      const carvedOut = exception ? fragment.slice(exception.index + exception[0].length) : '';
+      const beforeMarker = exception ? fragment.slice(0, exception.index) : fragment;
+      const afterMarker = exception ? fragment.slice(exception.index + exception[0].length) : '';
+      // The verdict is what the fragment says about everything it did not carve
+      // out, and it sits on whichever side of the marker the state words do.
+      const behind = statesConnection(beforeMarker)
+        ? null
+        : EXCEPTION_VERDICT_BEHIND.exec(afterMarker);
+      const carvedOut = behind ? afterMarker.slice(0, behind.index) : afterMarker;
+      const verdict = beforeMarker + (behind ? afterMarker.slice(behind.index) : '');
       const downWords = [...verdict.matchAll(DOWN_WORD)];
       // "not connected" carries "connected", so the down verdict reads first.
       const claimsDown =
@@ -947,7 +1007,10 @@ export function answerLabelsDisconnectedSites(
         downClaimEmptied(verdict, match.index ?? 0, match[0])
       );
       // "All sites are connected except cedar" and "none are disconnected
-      // except cedar" both report cedar down, and neither denies anything.
+      // except cedar" both report cedar down, and neither denies anything. The
+      // carve-out takes the opposite verdict either way, so an exception to a
+      // down claim ("all sites are disconnected except cedar") names the site
+      // that is up and must never be credited as down.
       const carvesOut =
         carvedOut.trim().length > 0 &&
         !claimsDown &&
@@ -965,7 +1028,7 @@ export function answerLabelsDisconnectedSites(
         state = 'connected';
         hasOwnState = true;
       }
-      if (state === 'disconnected') disconnectedFragments.push(carvesOut ? carvedOut : fragment);
+      if (state === 'disconnected') disconnectedFragments.push(carvesOut ? carvedOut : verdict);
     }
     if (hasOwnState && HEADING_END.test(trimmed)) carriedState = state;
     else if (!isListItem) carriedState = undefined;
