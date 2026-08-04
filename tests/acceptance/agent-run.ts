@@ -2669,9 +2669,10 @@ async function main(): Promise<void> {
         }
         // A command scenario gets a throwaway directory of its own: running
         // from REPO_ROOT would hand the session this repository's CLAUDE.md on
-        // top of the command being graded.
+        // top of the command being graded. Per pass, not per scenario, so a
+        // repeat never inherits the previous pass's session residue.
         const commandCwd = scenario.slashCommand
-          ? path.join(installed.tempRoot, `command-${scenario.id}`)
+          ? path.join(installed.tempRoot, `command-${scenario.id}-${pass.iteration}`)
           : undefined;
         if (commandCwd) fs.mkdirSync(commandCwd, { recursive: true });
         const cwd = pass.arm ? pass.arm.cwd : (commandCwd ?? scenario.cwd ?? REPO_ROOT);
