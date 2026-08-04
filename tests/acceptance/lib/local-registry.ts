@@ -23,7 +23,7 @@ export interface LocalRegistry {
 function compareVersions(a: string, b: string): number {
   const parse = (version: string) =>
     version
-      .split('-')[0]
+      .split(/[-+]/)[0]
       .split('.')
       .map(part => Number(part) || 0);
   const left = parse(a);
