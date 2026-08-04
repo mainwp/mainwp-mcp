@@ -2450,6 +2450,14 @@ describe('plugin command scenarios', () => {
         updateTotals: [7],
       })
     ).toBe(true);
+    // A labelled site count is not a second update count, however close the
+    // update label sits behind it.
+    expect(
+      matchesNetworkSummaryAnswer('Total sites: 3. Pending updates: 4. Disconnected: none.', {
+        siteTotals: [3],
+        updateTotals: [4],
+      })
+    ).toBe(true);
     // Either side of a moved live oracle is faithful; a wrong number is not.
     expect(
       matchesNetworkSummaryAnswer('All 4 sites are connected and fully up to date.', {
@@ -2486,6 +2494,14 @@ describe('plugin command scenarios', () => {
         false
       );
     }
+    // A count between the negation and the claim must not cut the negation's
+    // reach: "none of the 3 sites are" denies exactly what it says.
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Sites: 3. None of the 3 sites are up to date. Disconnected: none.',
+        { siteTotals: [3], updateTotals: [0] }
+      )
+    ).toBe(false);
     expect(
       matchesNetworkSummaryAnswer('You manage 3 sites and every one is up to date.', {
         siteTotals: [3],
@@ -2506,9 +2522,30 @@ describe('plugin command scenarios', () => {
     // Markdown reports put each component on its own line and skip the
     // punctuation, so the line break has to carry the clause boundary.
     expect(claimsNoPendingUpdates('- Core: up to date\n- Plugins: 2 pending')).toBe(false);
+    // One plugin's status line, listed beside a pending peer. The version
+    // numeral on it is what marks it as a single item's status.
+    expect(
+      claimsNoPendingUpdates(
+        'Updates: Akismet Anti-spam is pending. Hello Dolly — 1.7.2, up to date (active).'
+      )
+    ).toBe(false);
+    // An adverb between the component and its verdict does not widen it.
+    expect(
+      claimsNoPendingUpdates(
+        'WordPress core is fully up to date.\nPending plugin updates: Akismet and Bakehouse.'
+      )
+    ).toBe(false);
     // A claim about the site rather than one of its components is a denial.
     expect(claimsNoPendingUpdates('Alpine Bakery is up to date.')).toBe(true);
     expect(claimsNoPendingUpdates('Core and plugins are all up to date.')).toBe(true);
+    // "Everything else" concedes the pending items it sits next to, so it is
+    // part of the report rather than a denial of it.
+    expect(
+      claimsNoPendingUpdates(
+        'Akismet Anti-spam and Bakehouse are pending; everything else is up to date.'
+      )
+    ).toBe(false);
+    expect(claimsNoPendingUpdates('The rest of the plugins are current.')).toBe(false);
   });
 
   it('fails a network summary whose explicit update total conflicts', () => {
@@ -2524,6 +2561,55 @@ describe('plugin command scenarios', () => {
         updateTotals: [4],
       })
     ).toBe(true);
+  });
+
+  it('marks the network summary unverified when the roster changes mid-run', async () => {
+    const scenario = agentScenarios.find(candidate => candidate.id === 'command-network-summary');
+    if (!scenario?.evaluate) throw new Error('The network-summary scenario lost its evaluator');
+    const dashboard = (hostnames: string[]) =>
+      ({
+        listSites: async () =>
+          hostnames.map((hostname, index) => ({
+            id: index + 1,
+            url: `https://${hostname}`,
+            name: hostname,
+            status: 'connected',
+          })),
+        listUpdates: async () => ({ total: 0, summary: { total: 0 } }),
+      }) as unknown as IndependentVerifier;
+    const truth = {
+      count: 2,
+      allSiteUrls: ['https://alpine.example.test', 'https://beacon.example.test'],
+      disconnectedSiteUrls: [],
+      updateTotal: 0,
+    };
+    const collected = {
+      toolUses: [],
+      toolResults: [],
+      finalText: 'You manage 2 sites, both connected, and everything is up to date.',
+      totalToolUses: 0,
+      turns: 0,
+      resourceReads: [],
+      skill: { discovered: false, invoked: false },
+      assistantText: true,
+    };
+
+    // Swapping one connected site for another keeps every count and the
+    // disconnected set identical, so only the identities can catch it.
+    expect(
+      await scenario.evaluate(
+        truth,
+        collected,
+        dashboard(['alpine.example.test', 'cedar.example.test'])
+      )
+    ).toMatchObject({ unverified: true });
+    expect(
+      await scenario.evaluate(
+        truth,
+        collected,
+        dashboard(['alpine.example.test', 'beacon.example.test'])
+      )
+    ).not.toHaveProperty('unverified');
   });
 
   it('grades a site report on naming every pending update', () => {
@@ -2571,6 +2657,18 @@ describe('plugin command scenarios', () => {
         2
       )
     ).toBe(false);
+    // An installed-inventory count says nothing about what is pending.
+    expect(
+      statedUpdateTotalConflicts('Total plugins: 12. Pending updates: Akismet and Bakehouse.', 2)
+    ).toBe(false);
+    // Two whole-inventory counts that disagree cannot both be this site's, so
+    // matching the oracle once is not enough.
+    expect(
+      statedUpdateTotalConflicts(
+        'There are 3 pending updates. Pending updates: 2 — Akismet and Bakehouse.',
+        2
+      )
+    ).toBe(true);
   });
 
   it('catches a site report that names the updates and then denies them', () => {
@@ -2646,6 +2744,51 @@ describe('plugin command scenarios', () => {
     expect(
       answerLabelsDisconnectedSites('All 3 sites are connected. Disconnected sites (0).', [])
     ).toBe(true);
+    // A contracted negation empties the down-word as flatly as the spelled-out
+    // one, so it reports nothing down either way the oracle falls.
+    for (const denial of [
+      "Cedar.example.test isn't offline; it is connected.",
+      'Cedar.example.test is never offline.',
+    ]) {
+      expect(
+        answerLabelsDisconnectedSites(denial, ['cedar.example.test'], ['alpine.example.test'])
+      ).toBe(false);
+      expect(answerLabelsDisconnectedSites(denial, [], ['cedar.example.test'])).toBe(true);
+    }
+  });
+
+  it('reads the erroring bucket as a disconnected verdict', () => {
+    // The command groups the network by connected, disconnected and erroring,
+    // and the oracle buckets every non-connected status as disconnected.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Erroring:\n- cedar.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // Emptied the same way as any other down-word.
+    expect(answerLabelsDisconnectedSites('All 3 sites are connected, none erroring.', [])).toBe(
+      true
+    );
+  });
+
+  it('reads an exception as the down verdict it carries', () => {
+    expect(
+      answerLabelsDisconnectedSites(
+        'No sites are disconnected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // The most natural one-site-down summary in English.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites are connected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
   });
 
   it('lets a heading pass its verdict down to its own list items', () => {
@@ -2656,6 +2799,15 @@ describe('plugin command scenarios', () => {
         'Disconnected:\n- cedar.example.test\nConnected:\n- alpine.example.test\n- beacon.example.test',
         ['cedar.example.test'],
         ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // Bold headings put the emphasis marks after the colon that carries the
+    // verdict down to the list.
+    expect(
+      answerLabelsDisconnectedSites(
+        '**Disconnected:**\n- cedar.example.test\n**Connected:**\n- alpine.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test']
       )
     ).toBe(true);
     // A bare hostname line under the heading is the same list without bullets.
@@ -2706,6 +2858,15 @@ describe('plugin command scenarios', () => {
           'connected.',
         ['cedar.example.test'],
         ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // A hostname inside a longer one is a different site: the connected
+    // example.test is not the disconnected staging.example.test.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: staging.example.test. Connected: example.test.',
+        ['staging.example.test'],
+        ['example.test']
       )
     ).toBe(true);
   });
@@ -2761,6 +2922,15 @@ describe('plugin command scenarios', () => {
       answerListsAllSites(
         'Managed sites: Alpine Bakery and Beacon Studio. Cedar Nonprofit is not managed by ' +
           'this Dashboard. Which site should I troubleshoot?',
+        sites
+      )
+    ).toBe(false);
+    // Listing the site and then disowning it contradicts the roster, so the
+    // earlier mention cannot pay for the exclusion.
+    expect(
+      answerListsAllSites(
+        'Managed sites: Alpine Bakery, Beacon Studio, Cedar Nonprofit. However, Cedar ' +
+          'Nonprofit is not managed by this Dashboard. Which site?',
         sites
       )
     ).toBe(false);

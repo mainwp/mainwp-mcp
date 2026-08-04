@@ -203,6 +203,20 @@ function clauseBefore(text: string, index: number): string {
 }
 
 /**
+ * The whole statement an occurrence sits in. A comma stays inside it, unlike in
+ * `clauseBefore`, so a per-item marker in an earlier fragment of the same
+ * sentence ("Hello Dolly — 1.7.2, up to date") is still in view.
+ */
+const STATEMENT_HEAD = /(?:[^;!?\n]|\.(?!\s))*$/;
+const STATEMENT_TAIL = /^(?:[^;!?\n]|\.(?!\s))*/;
+
+function statementAround(text: string, index: number, length: number): string {
+  const head = text.slice(0, index).match(STATEMENT_HEAD)?.[0] ?? '';
+  const tail = text.slice(index + length).match(STATEMENT_TAIL)?.[0] ?? '';
+  return head + text.slice(index, index + length) + tail;
+}
+
+/**
  * Matches an answer that says the requested site or domain is absent from the
  * dashboard. This deliberately does not treat a missing plugin list as a
  * missing site.
@@ -539,14 +553,21 @@ export function matchesSessionCapAnswer(text: string, expectedTotal?: number): b
   ].some(pattern => pattern.test(answer));
 }
 
-/** The number is being offered as an update count, not as a version or a site. */
+/**
+ * The number is being offered as an update count, not as a version or a site.
+ * The bridge stops at the end of the statement: in "Sites: 4. Pending updates:
+ * 7" the label introduces the next number, not this one.
+ */
 const UPDATE_COUNT_AFTER =
-  /^[\s,.:;)—–-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
+  /^[ \t,:;)—–-]*(?:(?:are|is)\s+)?(?:(?:pending|available|outstanding|total|core|plugin|theme|translation)\s+)*updates?\b/;
 // The label-to-number bridge admits em and en dashes and an opening paren:
 // live answers headline counts as "Pending updates — 7" and
-// "Pending updates (7 total)".
-const UPDATE_COUNT_BEFORE =
-  /\b(?:updates?|total|totals|count|number|there (?:are|is)|pending|available|outstanding)\b[a-z\s:,'(—–-]{0,20}$/;
+// "Pending updates (7 total)". A bare total, count or number word is not an
+// update label — "Total sites: 3" and "Total plugins: 12" count other things.
+const UPDATE_COUNT_BEFORE = /\b(?:updates?|pending|available|outstanding)\b[a-z\s:,'(—–-]{0,20}$/;
+/** The number counts sites, whatever update label sits in front of it. */
+const UPDATE_COUNT_SITE_NOUN_AFTER =
+  /^[\s,.:;)—–-]*(?:(?:connected|managed|child|active|total)\s+)*(?:sites?|websites?)\b/;
 
 /** Phrasings that report an empty update inventory. */
 const ZERO_UPDATE_CLAIM =
@@ -556,37 +577,64 @@ const ZERO_UPDATE_CLAIM =
  * window is wide enough for "none of the sites are up to date" and the clause
  * cut keeps a negation belonging to an earlier clause from disqualifying an
  * honest one. `normalizeAnswer` has already folded curly apostrophes, so the
- * contractions are matched as written, and the character class excludes digits
- * so an intervening count breaks the negation's reach.
+ * contractions are matched as written, and a count inside the window belongs to
+ * the negated subject ("none of the 3 sites are") rather than breaking its
+ * reach.
  */
 const NEGATED_ZERO_CLAIM =
-  /\b(?:not|never|none|nothing|neither|no one|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|far from)\b[a-z\s']{0,25}$/;
+  /\b(?:not|never|none|nothing|neither|no one|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|far from)\b[a-z\d\s']{0,25}$/;
+/**
+ * A subject covering the whole inventory rather than one part of it. Sites of
+ * this network are named by their own display names, which belong to no
+ * vocabulary, so "Alpine Bakery is up to date" qualifies through the copula
+ * below instead.
+ */
+const INVENTORY_WIDE_SUBJECT =
+  /\b(?:sites?|websites?|plugins?|themes?|everything|every|all|anywhere|network|fleet|dashboard)\b/;
 /**
  * The claim's subject is one component rather than the site's whole inventory:
  * "WordPress core is up to date" sits happily above a list of pending plugin
- * updates. Only a copula or a status noun may bridge the component to the
- * claim, so "core and plugins are up to date" stays the full-inventory claim it
- * is; "WordPress sites" is the network, not a component.
+ * updates. An inventory-wide word in the same clause outranks this, so "core
+ * and plugins are up to date" stays the full-inventory claim it is, and
+ * "WordPress sites" is the network rather than a component.
  */
-const COMPONENT_SCOPED_CLAIM =
-  /\b(?:core|wordpress(?!\s+(?:sites?|websites?))|php|translations?)\b[\s:'-]{0,3}(?:(?:is|are|was|were|version|updates?|status)[\s:'-]{0,3}){0,2}$/;
+const COMPONENT_SUBJECT = /\b(?:core|wordpress(?!\s+(?:sites?|websites?))|php|translations?)\b/;
+/** The clause hands the claim a subject of its own ("Alpine Bakery is …"). */
+const SUBJECT_COPULA = /\b(?:is|are|was|were|remains?|stays?)\b[a-z\s'-]{0,20}$/;
+/** A version string, which only ever belongs to one product. */
+const VERSION_NUMERAL = /\d+\.\d+/;
+/** The zero forms that carry their own quantifier, so they need no subject. */
+const QUANTIFIED_ZERO_CLAIM = /^(?:no|zero|all)\b/;
+/**
+ * A statement narrowed to what was not already reported: "everything else is
+ * up to date" concedes the pending items beside it, and "no other sites are
+ * down" concedes the down one.
+ */
+const REMAINDER_SCOPE = /\b(?:other|others|remaining|rest|else|otherwise|further|additional)\b/;
 
 /**
  * True when the answer affirmatively reports an empty update inventory.
  *
  * "Not all sites are current" and "the sites aren't up to date" are built from
  * the same words as the claim and mean its opposite, so an occurrence with a
- * negation on it is dropped rather than credited.
+ * negation on it is dropped rather than credited. The up-to-date family
+ * attaches to a single plugin as readily as to the whole site, so it is
+ * credited only where the clause hands it an inventory-wide subject.
  */
 function claimsZeroUpdates(answer: string): boolean {
   for (const match of answer.matchAll(ZERO_UPDATE_CLAIM)) {
-    const clause = clauseBefore(answer, match.index ?? 0);
+    const index = match.index ?? 0;
+    const clause = clauseBefore(answer, index);
     if (NEGATED_ZERO_CLAIM.test(clause)) continue;
-    // The "no updates" form only ever matches unscoped phrasing ("no core
-    // updates" is not one of its shapes); the up-to-date family attaches to a
-    // single component just as readily as to the site.
-    if (!/^(?:no|zero)\b/.test(match[0]) && COMPONENT_SCOPED_CLAIM.test(clause)) continue;
-    return true;
+    // "Hello Dolly — 1.7.2, up to date" is one row of an inventory listing,
+    // printed next to the rows that are pending.
+    if (VERSION_NUMERAL.test(statementAround(answer, index, match[0].length))) continue;
+    // "Everything else is up to date" is the report's own wording for a
+    // non-empty inventory, not a denial of it.
+    if (REMAINDER_SCOPE.test(clause)) continue;
+    if (QUANTIFIED_ZERO_CLAIM.test(match[0])) return true;
+    if (INVENTORY_WIDE_SUBJECT.test(clause)) return true;
+    if (SUBJECT_COPULA.test(clause) && !COMPONENT_SUBJECT.test(clause)) return true;
   }
   return false;
 }
@@ -643,6 +691,8 @@ function updateCountMentions(answer: string): UpdateCountMention[] {
     const after = answer.slice(index + token.length, index + token.length + 40);
     if (NEGATED_NUMBER.test(before)) continue;
     if (VERSION_NUMERAL_BEFORE.test(before) || VERSION_NUMERAL_AFTER.test(after)) continue;
+    // "Pending updates: 3 sites affected" counts sites under an update label.
+    if (UPDATE_COUNT_SITE_NOUN_AFTER.test(after)) continue;
     if (!UPDATE_COUNT_AFTER.test(after) && !UPDATE_COUNT_BEFORE.test(before)) continue;
     mentions.push({
       value,
@@ -680,16 +730,18 @@ function statesUpdateTotal(answer: string, total: number): boolean {
  * Live reports routinely list the updates without counting them, and a
  * per-category count is not the total ("1 plugin update and 1 theme update" is
  * a faithful breakdown of two), so only a stated whole-inventory count can
- * conflict. Invented update NAMES stay undetectable here for the same reason
- * they do in `answerAvoidsKnownPluginNames`: the oracle has nothing to compare
- * them against.
+ * conflict. Two whole-inventory counts that disagree with each other cannot
+ * both be this site's, so every one of them has to match rather than one of
+ * them. Invented update NAMES stay undetectable here for the same reason they
+ * do in `answerAvoidsKnownPluginNames`: the oracle has nothing to compare them
+ * against.
  */
 export function statedUpdateTotalConflicts(text: string, total: number): boolean {
   const mentions = updateCountMentions(normalizeAnswerKeepingBreaks(text, LINE_BREAKS));
   const explicitTotals = mentions.filter(mention => mention.explicitTotal);
   if (explicitTotals.length > 0) return !explicitTotals.every(mention => mention.value === total);
   const stated = mentions.filter(mention => mention.labelled && !mention.categoryScoped);
-  return stated.length > 0 && !stated.some(mention => mention.value === total);
+  return stated.length > 0 && !stated.every(mention => mention.value === total);
 }
 
 /**
@@ -746,11 +798,16 @@ export function matchesNetworkSummaryAnswer(
 
 /**
  * Vocabulary reporting a site as not talking to the dashboard, scanned
- * occurrence by occurrence so a negation on any one of them can be read.
- * "inactive" is deliberately absent: a report counts inactive plugins and
- * themes, which says nothing about whether the site is reachable.
+ * occurrence by occurrence so a negation on any one of them can be read. The
+ * summary command groups the network into connected, disconnected and erroring
+ * while the oracle buckets every non-connected status as disconnected, so an
+ * erroring verdict belongs here. "inactive" is deliberately absent: a report
+ * counts inactive plugins and themes, which says nothing about whether the site
+ * is reachable, and bare "error" is absent for the same reason — a connected
+ * site still reports sync and plugin errors.
  */
-const DOWN_WORD = /\b(?:disconnected|not connected|offline|down|unreachable)\b/g;
+const DOWN_WORD =
+  /\b(?:disconnected|not connected|offline|down|unreachable|erroring|errored|error[- ]state)\b/g;
 /** The opposite verdict, which stops a bare list item inheriting the heading. */
 const CONNECTED_STATE = /\b(?:connected|online|reachable|responding|operational|healthy)\b/;
 /**
@@ -764,15 +821,23 @@ const NEGATED_CONNECTED_STATE =
 /**
  * An empty count or a negation disarming a down-word, on either side of it:
  * "no sites are down", "0 disconnected", "disconnected: 0", "disconnected
- * sites (0)". The before-class excludes digits so an intervening count ("no
- * updates and 2 sites are down") breaks the negation's reach instead of
- * extending it over the claim.
+ * sites (0)". Contractions deny exactly what the spelled-out negations do
+ * ("cedar isn't offline"). The before-class excludes digits so an intervening
+ * count ("no updates and 2 sites are down") breaks the negation's reach instead
+ * of extending it over the claim.
  */
-const EMPTIED_DOWN_CLAIM_BEFORE = /\b(?:no|not|nothing|none|neither|zero|0)\b[a-z\s]{0,30}$/;
+const EMPTIED_DOWN_CLAIM_BEFORE =
+  /\b(?:no|not|nothing|none|neither|never|zero|0|isn't|aren't|wasn't|weren't)\b[a-z\s]{0,30}$/;
 const EMPTIED_DOWN_CLAIM_AFTER =
   /^[\s:=(—–-]*(?:sites?|websites?)?[\s:=(—–-]*(?:0|none|zero|nothing)\b/;
-/** A denial narrowed to the sites not already reported down. */
-const REMAINDER_SCOPE = /\b(?:other|others|remaining|rest|else|otherwise|further|additional)\b/;
+/**
+ * A carve-out from the verdict in front of it. "All sites are connected except
+ * cedar" is the most natural way English reports one site down, and it reads as
+ * a healthy network to any check that only looks at the words before the
+ * marker.
+ */
+const EXCEPTION_MARKER =
+  /\b(?:except(?:\s+for)?|besides|apart from|aside from|other than|save for)\b/;
 
 function downClaimEmptied(scope: string, index: number, word: string): boolean {
   const end = index + word.length;
@@ -788,9 +853,35 @@ function downClaimEmptied(scope: string, index: number, word: string): boolean {
  * marker is a sentence and inherits nothing.
  */
 const LIST_ITEM = /^(?:[-*+•|]|\d+[.)])\s*/;
+/** The colon that makes a line a heading, behind any markdown emphasis. */
+const HEADING_END = /:[*_]*$/;
 
 /** Advice about a hypothetical outage is not a claim that one exists. */
 const CONDITIONAL_CLAUSE = /\b(?:if|when|unless|once|should|in case)\b/;
+
+/**
+ * True when the fragment names this host and not a longer one containing it:
+ * "example.test" sits inside "staging.example.test", and crediting the
+ * substring reports a verdict about the wrong site.
+ */
+const HOSTNAME_CHARACTER = /[\w.-]/;
+
+function fragmentNamesHost(fragment: string, hostname: string): boolean {
+  for (
+    let index = fragment.indexOf(hostname);
+    index !== -1;
+    index = fragment.indexOf(hostname, index + 1)
+  ) {
+    const end = index + hostname.length;
+    if (
+      !HOSTNAME_CHARACTER.test(fragment.slice(Math.max(0, index - 1), index)) &&
+      !HOSTNAME_CHARACTER.test(fragment.slice(end, end + 1))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * True when the answer reports every disconnected site as disconnected, never
@@ -842,28 +933,41 @@ export function answerLabelsDisconnectedSites(
       : undefined;
     let hasOwnState = false;
     for (const fragment of clause.split(',')) {
-      const downWords = [...fragment.matchAll(DOWN_WORD)];
+      const exception = EXCEPTION_MARKER.exec(fragment);
+      // The verdict belongs to the words in front of the marker; the sites
+      // after it are the exception to that verdict.
+      const verdict = exception ? fragment.slice(0, exception.index) : fragment;
+      const carvedOut = exception ? fragment.slice(exception.index + exception[0].length) : '';
+      const downWords = [...verdict.matchAll(DOWN_WORD)];
       // "not connected" carries "connected", so the down verdict reads first.
       const claimsDown =
-        downWords.some(match => !downClaimEmptied(fragment, match.index ?? 0, match[0])) ||
-        NEGATED_CONNECTED_STATE.test(fragment);
+        downWords.some(match => !downClaimEmptied(verdict, match.index ?? 0, match[0])) ||
+        NEGATED_CONNECTED_STATE.test(verdict);
       const emptiesDown = downWords.some(match =>
-        downClaimEmptied(fragment, match.index ?? 0, match[0])
+        downClaimEmptied(verdict, match.index ?? 0, match[0])
       );
-      if (emptiesDown && !claimsDown && !REMAINDER_SCOPE.test(fragment)) deniesAnythingDown = true;
-      if (claimsDown) {
+      // "All sites are connected except cedar" and "none are disconnected
+      // except cedar" both report cedar down, and neither denies anything.
+      const carvesOut =
+        carvedOut.trim().length > 0 &&
+        !claimsDown &&
+        (emptiesDown || CONNECTED_STATE.test(verdict));
+      if (emptiesDown && !claimsDown && !carvesOut && !REMAINDER_SCOPE.test(fragment)) {
+        deniesAnythingDown = true;
+      }
+      if (claimsDown || carvesOut) {
         state = 'disconnected';
         hasOwnState = true;
       } else if (emptiesDown) {
         state = 'denied';
         hasOwnState = true;
-      } else if (CONNECTED_STATE.test(fragment)) {
+      } else if (CONNECTED_STATE.test(verdict)) {
         state = 'connected';
         hasOwnState = true;
       }
-      if (state === 'disconnected') disconnectedFragments.push(fragment);
+      if (state === 'disconnected') disconnectedFragments.push(carvesOut ? carvedOut : fragment);
     }
-    if (hasOwnState && trimmed.endsWith(':')) carriedState = state;
+    if (hasOwnState && HEADING_END.test(trimmed)) carriedState = state;
     else if (!isListItem) carriedState = undefined;
   }
   // Denying that anything is down contradicts an oracle that has a site down,
@@ -874,13 +978,17 @@ export function answerLabelsDisconnectedSites(
     .filter(name => name.length > 0);
   // Calling a connected site down is as unfaithful as missing a down one.
   if (
-    disconnectedFragments.some(fragment => connectedNames.some(name => fragment.includes(name)))
+    disconnectedFragments.some(fragment =>
+      connectedNames.some(name => fragmentNamesHost(fragment, name))
+    )
   ) {
     return false;
   }
   return disconnectedHostnames.every(hostname => {
     const name = hostname.trim().toLowerCase();
-    return name.length > 0 && disconnectedFragments.some(fragment => fragment.includes(name));
+    return (
+      name.length > 0 && disconnectedFragments.some(fragment => fragmentNamesHost(fragment, name))
+    );
   });
 }
 
@@ -949,22 +1057,24 @@ const NOT_MANAGED_CLAUSE =
  * A command whose first step is to list the sites and ask which one has only
  * done half of it when the answer is a bare question. The clause scope keeps
  * an exclusion of something else ("example.org is not managed") from throwing
- * out the roster around it.
+ * out the roster around it, and a managed site put outside the dashboard
+ * contradicts the roster outright: listing it first does not pay for that.
  */
 export function answerListsAllSites(
   text: string,
   sites: { name: string; hostname: string }[]
 ): boolean {
   if (sites.length === 0) return false;
-  const clauses = normalizeAnswerKeepingBreaks(text, LINE_BREAKS)
-    .split(CLAUSE_BOUNDARY)
-    .filter(clause => !NOT_MANAGED_CLAUSE.test(clause));
-  return sites.every(site =>
-    [site.name, site.hostname].some(value => {
-      const label = normalizeAnswer(value ?? '').trim();
-      return label.length > 0 && clauses.some(clause => clause.includes(label));
-    })
-  );
+  const allClauses = normalizeAnswerKeepingBreaks(text, LINE_BREAKS).split(CLAUSE_BOUNDARY);
+  const excluding = allClauses.filter(clause => NOT_MANAGED_CLAUSE.test(clause));
+  const clauses = allClauses.filter(clause => !NOT_MANAGED_CLAUSE.test(clause));
+  return sites.every(site => {
+    const labels = [site.name, site.hostname]
+      .map(value => normalizeAnswer(value ?? '').trim())
+      .filter(label => label.length > 0);
+    if (labels.some(label => excluding.some(clause => clause.includes(label)))) return false;
+    return labels.some(label => clauses.some(clause => clause.includes(label)));
+  });
 }
 
 /**

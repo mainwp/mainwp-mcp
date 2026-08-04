@@ -1448,8 +1448,15 @@ export const agentScenarios: AgentScenario[] = [
           ),
         },
       ];
+      // Identities, not counts: swapping one connected site for another leaves
+      // every total and the disconnected set untouched while the roster the
+      // answer was written against no longer exists.
       const oracleStable =
-        siteTotals.length === 1 &&
+        truth.allSiteUrls.join('\n') ===
+          afterSites
+            .map(site => site.url)
+            .sort()
+            .join('\n') &&
         updateTotals.length === 1 &&
         beforeDisconnectedUrls.join('\n') === afterDisconnectedUrls.join('\n');
       const namesDisconnectedSites = partitions.some(partition =>
