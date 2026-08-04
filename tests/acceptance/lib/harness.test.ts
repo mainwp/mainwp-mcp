@@ -3133,6 +3133,14 @@ describe('plugin command scenarios', () => {
       answerListsAllSites('I manage alpine.example.test and beacon.example.test.', sites)
     ).toBe(true);
     expect(answerListsAllSites('Alpine Bakery is one of them. Which site?', sites)).toBe(false);
+    // A hostname is a substring of every longer hostname ending in it, so
+    // naming staging.example.test does not present example.test.
+    expect(
+      answerListsAllSites('Your sites: staging.example.test and beacon.example.test. Which one?', [
+        { name: '', hostname: 'example.test' },
+        { name: '', hostname: 'beacon.example.test' },
+      ])
+    ).toBe(false);
     // The command's first step is to list the sites, so asking on its own is
     // only half the step — a check the question matcher deliberately allows.
     expect(answerListsAllSites('Which site would you like me to troubleshoot?', sites)).toBe(false);

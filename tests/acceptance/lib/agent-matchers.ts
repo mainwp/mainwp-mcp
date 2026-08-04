@@ -1240,11 +1240,16 @@ export function answerListsAllSites(
   const excluding = allClauses.filter(clause => NOT_MANAGED_CLAUSE.test(clause));
   const clauses = allClauses.filter(clause => !NOT_MANAGED_CLAUSE.test(clause));
   return sites.every(site => {
-    const labels = [site.name, site.hostname]
-      .map(value => normalizeAnswer(value ?? '').trim())
-      .filter(label => label.length > 0);
-    if (labels.some(label => excluding.some(clause => clause.includes(label)))) return false;
-    return labels.some(label => clauses.some(clause => clause.includes(label)));
+    // A hostname is a substring of every longer hostname ending in it, so it
+    // is matched on its own boundaries; a display name is prose and is not.
+    const name = normalizeAnswer(site.name ?? '').trim();
+    const hostname = normalizeAnswer(site.hostname ?? '').trim();
+    if (name.length === 0 && hostname.length === 0) return false;
+    const named = (clause: string): boolean =>
+      (name.length > 0 && clause.includes(name)) ||
+      (hostname.length > 0 && fragmentNamesHost(clause, hostname));
+    if (excluding.some(named)) return false;
+    return clauses.some(named);
   });
 }
 
