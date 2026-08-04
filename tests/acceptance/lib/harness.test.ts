@@ -70,7 +70,7 @@ import {
   toolFamilyMatches,
   transcriptIsGradeable,
 } from '../agent-run.js';
-import { commandNotLoaded } from './agent-commands.js';
+import { commandNotLoaded, type AgentCommandEvidence } from './agent-commands.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
@@ -2280,7 +2280,7 @@ describe('plugin command scenarios', () => {
     turns: number;
     resourceReads: string[];
     skill: AgentSkillEvidence;
-    command: { name: string; evidence: { registered: boolean; launched: boolean } };
+    command: { name: string; evidence: AgentCommandEvidence };
     assistantText: boolean;
   } => ({
     toolUses: [],
@@ -2290,7 +2290,7 @@ describe('plugin command scenarios', () => {
     turns: 0,
     resourceReads: [],
     skill: { discovered: false, invoked: false },
-    command: { name, evidence: { registered: false, launched: false } },
+    command: { name, evidence: { registered: false, launched: false, assistantSeen: false } },
     assistantText: false,
   });
 
@@ -2345,7 +2345,7 @@ describe('plugin command scenarios', () => {
       },
       collected
     );
-    expect(collected.command.evidence).toEqual({ registered: false, launched: false });
+    expect(collected.command.evidence).toMatchObject({ registered: false, launched: false });
     expect(classify()).toBe('skill-not-loaded');
 
     collectEvent(
@@ -2357,7 +2357,7 @@ describe('plugin command scenarios', () => {
       collected
     );
     // Registration without expansion is still an ungraded command.
-    expect(collected.command.evidence).toEqual({ registered: true, launched: false });
+    expect(collected.command.evidence).toMatchObject({ registered: true, launched: false });
     expect(classify()).toBe('skill-not-loaded');
 
     collectEvent(
@@ -2369,7 +2369,7 @@ describe('plugin command scenarios', () => {
       },
       collected
     );
-    expect(collected.command.evidence).toEqual({ registered: true, launched: true });
+    expect(collected.command.evidence).toMatchObject({ registered: true, launched: true });
     expect(classify()).toBe('passed');
   });
 
@@ -2390,7 +2390,59 @@ describe('plugin command scenarios', () => {
       collected
     );
 
-    expect(collected.command.evidence).toEqual({ registered: false, launched: true });
+    expect(collected.command.evidence.launched).toBe(true);
+  });
+
+  it('rejects launch evidence that does not belong to this command', () => {
+    // A longer command name carries the shorter one as a prefix, so the
+    // marker has to end where the name does.
+    const collected = collectedWithCommand('mainwp:site-report');
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:site-report-extra' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(false);
+
+    // The expansion is a synthetic result at the start of the conversation; a
+    // tool_reference arriving after the assistant has spoken is some other
+    // result and proves nothing about this command.
+    collectEvent(
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } },
+      collected
+    );
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              content: [{ type: 'tool_reference', name: 'mcp__mainwp__get_site_v1' }],
+            },
+          ],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(false);
+
+    // The exact marker still counts wherever it appears: it carries the
+    // command's identity on its face.
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:site-report' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(true);
   });
 
   it('leaves comparison modes without command scenarios', () => {

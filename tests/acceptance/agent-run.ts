@@ -2718,7 +2718,7 @@ async function main(): Promise<void> {
             ? {
                 command: {
                   name: scenario.slashCommand,
-                  evidence: { registered: false, launched: false },
+                  evidence: { registered: false, launched: false, assistantSeen: false },
                 },
               }
             : {}),

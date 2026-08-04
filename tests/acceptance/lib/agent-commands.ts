@@ -17,6 +17,13 @@ export interface AgentCommandEvidence {
   registered: boolean;
   /** The transcript carried the command-expansion marker. */
   launched: boolean;
+  /**
+   * An assistant turn has been seen. A tool_reference block carries no command
+   * identity, so it only counts as the start-of-conversation expansion while
+   * this is still false; the literal marker names its command and counts
+   * anywhere.
+   */
+  assistantSeen: boolean;
 }
 
 function contentBlocks(event: Record<string, unknown>): unknown[] {
@@ -26,16 +33,30 @@ function contentBlocks(event: Record<string, unknown>): unknown[] {
   return Array.isArray(content) ? content : [];
 }
 
-function isLaunchMarker(content: unknown, commandName: string): boolean {
+/**
+ * True when `text` carries the marker for exactly this command: command names
+ * use word characters and hyphens, so the character after the name must not
+ * extend it or `mainwp:site-report` would claim `mainwp:site-report-extra`'s
+ * launch.
+ */
+function textCarriesMarker(text: string, commandName: string): boolean {
   const marker = `Launching skill: ${commandName}`;
-  if (typeof content === 'string') return content.includes(marker);
+  for (let index = text.indexOf(marker); index !== -1; index = text.indexOf(marker, index + 1)) {
+    const next = text.charAt(index + marker.length);
+    if (next === '' || !/[\w-]/.test(next)) return true;
+  }
+  return false;
+}
+
+function isLaunchMarker(content: unknown, commandName: string, assistantSeen: boolean): boolean {
+  if (typeof content === 'string') return textCarriesMarker(content, commandName);
   if (!Array.isArray(content)) return false;
   return content.some(block => {
-    if (typeof block === 'string') return block.includes(marker);
+    if (typeof block === 'string') return textCarriesMarker(block, commandName);
     if (!block || typeof block !== 'object') return false;
     const item = block as Record<string, unknown>;
-    if (item.type === 'tool_reference') return true;
-    return typeof item.text === 'string' && item.text.includes(marker);
+    if (item.type === 'tool_reference') return !assistantSeen;
+    return typeof item.text === 'string' && textCarriesMarker(item.text, commandName);
   });
 }
 
@@ -54,8 +75,9 @@ export function collectCommandEvidence(
     if (!block || typeof block !== 'object') continue;
     const item = block as Record<string, unknown>;
     if (item.type !== 'tool_result') continue;
-    if (isLaunchMarker(item.content, commandName)) evidence.launched = true;
+    if (isLaunchMarker(item.content, commandName, evidence.assistantSeen)) evidence.launched = true;
   }
+  if (record.type === 'assistant') evidence.assistantSeen = true;
 }
 
 /**
