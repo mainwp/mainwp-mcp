@@ -533,7 +533,7 @@ const EXPLICIT_TOTAL_BEFORE =
  * disqualifies it before they run.
  */
 const NON_SITE_UNIT_AFTER =
-  /^\s*(?:sessions?|calls?|requests?|responses?|messages?|turns?|pages?|batch(?:es)?|chunks?|attempts?|queries|query|bytes?|go|slice)\b/;
+  /^\s*(?:(?:connected|managed|child|active|total)\s+)*(?:(?:site|website)\s+(?:\w+\s+){0,2})?(?:sessions?|calls?|requests?|responses?|messages?|turns?|pages?|batch(?:es)?|chunks?|attempts?|queries|query|bytes?|go|slice)\b/;
 
 const NUMBER_TOKEN = new RegExp(`\\b(?:\\d+|${NUMBER_WORDS.join('|')})\\b`, 'g');
 

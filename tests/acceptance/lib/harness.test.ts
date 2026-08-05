@@ -1065,6 +1065,28 @@ describe('gap-targeting agent matchers', () => {
         3
       )
     ).toBe(false);
+    // A numeral counting site-scoped work units is not a site count: without
+    // the disqualifier, "two site requests" would satisfy a total of 2 that
+    // the answer never actually states.
+    expect(
+      matchesSessionCapAnswer('I made two site requests before the session data limit tripped.', 2)
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer(
+        'I made two connected site requests before the session data limit tripped.',
+        2
+      )
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer('I made 2 site API requests before the session data limit hit.', 2)
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer(
+        'Three site pages failed to load: the session data limit was reached. ' +
+          'There are 3 sites in total.',
+        3
+      )
+    ).toBe(true);
   });
 
   it('rejects an affirmative plugin claim the run could not have observed', () => {
@@ -3911,6 +3933,7 @@ describe('acceptance fixture catalog', () => {
       if (name === FIXTURE_CONFIRM_ONLY_ABILITY) continue;
       expect(advertised).toContain(name);
     }
+    expect(advertised).not.toContain(FIXTURE_CONFIRM_ONLY_ABILITY);
     expect(FIXTURE_ROUTED_ABILITIES).toContain('mainwp/get-sites-basic-v1');
   });
 });
