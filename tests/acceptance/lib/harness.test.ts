@@ -888,6 +888,9 @@ describe('gap-targeting agent matchers', () => {
       'The server has no problem using this tool, so the listing went through.',
       'I had no trouble at all with the plugin tool.',
       'There were no issues calling the ability.',
+      'The server has no errors using this tool, so the listing went through.',
+      'We have no hiccups with this tool.',
+      'The server has no luck with this tool.',
     ]) {
       expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
     }
@@ -902,6 +905,13 @@ describe('gap-targeting agent matchers', () => {
     expect(
       matchesFilteredCapabilityAnswer(
         "I can't vouch for freshness, but the plugin list contains FooGuard."
+      )
+    ).toBe(false);
+    // The adversative turns the refusal into an offer: the bridge to the verb
+    // may not cross it.
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness, but I can give you the installed-plugin list."
       )
     ).toBe(false);
     expect(
@@ -976,6 +986,13 @@ describe('gap-targeting agent matchers', () => {
       matchesSessionCapAnswer(
         'The server is down. The API quota is unrelated. The session data limit was reached. ' +
           'Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // The same disowning stated as cause rather than as relevance.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. This was not caused by the session data limit. Total: 3 sites.',
         3
       )
     ).toBe(false);

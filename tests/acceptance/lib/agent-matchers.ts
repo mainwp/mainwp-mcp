@@ -441,7 +441,7 @@ export function matchesFilteredCapabilityAnswer(text: string): boolean {
     // and markdown emphasis around one of them is presentation, not prose. A
     // difficulty noun in that span is the opposite claim ("has no problem
     // using this tool"), so it may not stand between the negation and the noun.
-    /\b(?:exposes?|offers?|provides?|has|have|includes?)\s+no\b(?:\s+[*`]{0,2}(?!(?:problems?|trouble|issues?|difficult(?:y|ies))\b)[\w-]+[*`]{0,2}){0,3}\s+(?:tools?|capabilit(?:y|ies)|abilit(?:y|ies))\b/,
+    /\b(?:exposes?|offers?|provides?|has|have|includes?)\s+no\b(?:\s+[*`]{0,2}(?!(?:problems?|trouble|issues?|difficult(?:y|ies)|errors?|hiccups?|luck)\b)[\w-]+[*`]{0,2}){0,3}\s+(?:tools?|capabilit(?:y|ies)|abilit(?:y|ies))\b/,
     /\bno\s+(?:tool|capability|ability)\b.{0,60}\b(?:to|for|that)\b.{0,40}\b(?:list|read|retrieve|fetch|enumerate|report)\b/,
     /\b(?:blocked|filtered|restricted|excluded|hidden|withheld|not permitted)\b.{0,80}\b(?:tool|capability|ability|catalog)\b/,
     /\b(?:tool|capability|ability|catalog)\b.{0,80}\b(?:blocked|filtered|restricted|excluded|hidden|withheld)\b/,
@@ -451,8 +451,10 @@ export function matchesFilteredCapabilityAnswer(text: string): boolean {
     // "I can't give you the installed-plugin list" — the same refusal with the
     // plugin noun ahead of the verb, as part of a compound object. The verb has
     // to be one of handing the list over, or an inability about something else
-    // ("I can't vouch for freshness, but the plugin list...") reads as one.
-    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b.{0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
+    // ("I can't vouch for freshness, but the plugin list...") reads as one, and
+    // the reach to that verb stops at an adversative, which hands the list over
+    // after all ("I can't vouch for freshness, but I can give you the list").
+    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b(?:(?!\b(?:but|however|though|yet)\b).){0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
   ].some(pattern => pattern.test(answer));
 }
 
@@ -542,7 +544,7 @@ const OUTAGE_CLAIM =
 const CAP_TERM = /\b(?:session|caps?|capped|limits?|quota|budget|ceiling)\b/g;
 /** Linkers that disown the cap term they sit on as the explanation. */
 const CAP_DISCLAIMER =
-  /\b(?:unrelated|not related|separate|separately|nothing to do with|irrelevant|beside the point)\b/;
+  /\b(?:unrelated|not related|separate|separately|nothing to do with|irrelevant|beside the point|not (?:caused by|due to|because of)|(?:does not|doesn't|didn't) (?:cause|explain))\b/;
 /**
  * How far from an outage claim cap vocabulary still qualifies it. Live answers
  * put the attribution in the next sentence ("Site 3 is unreachable this
