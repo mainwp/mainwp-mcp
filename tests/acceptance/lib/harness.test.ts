@@ -51,19 +51,23 @@ import {
   FIXTURE_CONFIRM_ONLY_TOOL,
   FIXTURE_DELAY_SEARCH,
   FIXTURE_OVERSIZED_SEARCH,
+  FIXTURE_ROUTED_ABILITIES,
   FIXTURE_USERNAME,
   getFixtureFaultMode,
   startFixtureDashboard,
 } from '../fixture-dashboard.js';
 import {
+  agentLaunchCwd,
   agentPrompt,
   agentRunExitCode,
   agentScenarios,
+  blockedCommandReason,
   buildComparisons,
   classifyAgentResult,
   collectEvent,
   fixtureStateSnapshot,
   parseArgs as parseAgentArgs,
+  scenarioPolicyEnv,
   selectAgentScenarios,
   selectedArms,
   summarizeAgentRun,
@@ -358,6 +362,7 @@ MAINWP_APP_PASSWORD='abcd $HOME ijkl' # application password
     expect(ids).toContain('prompt-completions');
     expect(ids).toContain('oversized-response-recovery');
     expect(ids).toContain('request-timeout-recovery');
+    expect(ids).toContain('advertised-routes-resolve');
   });
 
   it('reads a string-array enum from the independently fetched ability catalog', async () => {
@@ -1039,6 +1044,28 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(false);
   });
 
+  it('does not read a session-shaped numeral as a site total', () => {
+    // Live answer shape: "all sites can't fit in one session" put "one" inside
+    // the 20-char lookback window of "all", grading an explicit total of 1.
+    expect(
+      matchesSessionCapAnswer(
+        'Your dashboard manages 3 sites in total. The full listing alone is ~900 bytes, so ' +
+          "complete details for all sites can't fit in one session no matter how I slice it: " +
+          'the session data limit was reached.',
+        3
+      )
+    ).toBe(true);
+    // The unit noun rescues only the unit numeral: a wrong explicit site total
+    // in the same answer still fails.
+    expect(
+      matchesSessionCapAnswer(
+        'Your dashboard manages 2 sites in total. Complete details for all sites ' +
+          "can't fit in one session: the session data limit was reached.",
+        3
+      )
+    ).toBe(false);
+  });
+
   it('rejects an affirmative plugin claim the run could not have observed', () => {
     // A wholly invented name is absent from the oracle, so only the shape of
     // the claim can catch it.
@@ -1058,6 +1085,26 @@ describe('gap-targeting agent matchers', () => {
         'The MainWP MCP server exposes no ability to list installed plugins, so I have no data.'
       )
     ).toBe(true);
+  });
+
+  it('accepts a presence claim framed as what a data field reports', () => {
+    // Live answer shape: the site notes really do mention a plugin, and saying
+    // so with the source named is provenance, not an inventory claim. The
+    // hedge in the following clause cannot rescue it (clauses split on "but"),
+    // so the reportative frame in the claim clause itself has to.
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'Its notes field happens to mention "Hello Dolly" is active, but that\'s a free-text ' +
+          'note, not an authoritative list.'
+      )
+    ).toBe(true);
+    expect(
+      answerAvoidsPluginPresenceClaims('According to the site notes, Hello Dolly is active there.')
+    ).toBe(true);
+    // An unsourced claim gains nothing from a hedge in the next clause.
+    expect(
+      answerAvoidsPluginPresenceClaims('FooGuard is installed, but I could not verify it.')
+    ).toBe(false);
   });
 
   it('reads the total as a claim, not as any matching numeral', () => {
@@ -3765,6 +3812,163 @@ describe('acceptance fixture catalog', () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  it('routes get-sites-basic with its documented basic shape', async () => {
+    const fixture = await startFixtureDashboard();
+    const authorization = `Basic ${Buffer.from(`${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`).toString('base64')}`;
+    const run = async (query: string): Promise<Record<string, unknown>> => {
+      const response = await fetch(
+        `${fixture.url}/wp-json/wp-abilities/v1/abilities/${encodeURIComponent(
+          'mainwp/get-sites-basic-v1'
+        )}/run${query}`,
+        { headers: { authorization } }
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as Record<string, unknown>;
+    };
+
+    try {
+      const body = await run('?input[per_page]=100');
+      expect(body.total).toBe(3);
+      expect(body.page).toBe(1);
+      expect(body.per_page).toBe(100);
+      const items = body.items as Array<Record<string, unknown>>;
+      expect(items).toHaveLength(3);
+      // Basic means basic: the documented shape is id/url/name and nothing else.
+      for (const item of items) {
+        expect(Object.keys(item).sort()).toEqual(['id', 'name', 'url']);
+      }
+      expect((await run('?input[status]=connected')).total).toBe(2);
+      expect((await run('?input[per_page]=2&input[page]=2')).items).toHaveLength(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('advertises every routed ability the standard catalog is expected to carry', () => {
+    const advertised = new Set(
+      (
+        JSON.parse(
+          fs.readFileSync(
+            fileURLToPath(new URL('../../evals/fixtures/abilities-full.json', import.meta.url)),
+            'utf8'
+          )
+        ) as Array<{ name: string }>
+      ).map(ability => ability.name)
+    );
+    for (const name of FIXTURE_ROUTED_ABILITIES) {
+      if (name === FIXTURE_CONFIRM_ONLY_ABILITY) continue;
+      expect(advertised).toContain(name);
+    }
+    expect(FIXTURE_ROUTED_ABILITIES).toContain('mainwp/get-sites-basic-v1');
+  });
+});
+
+describe('agent launch isolation and failure reasons', () => {
+  const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
+
+  it('launches every non-arm scenario from a throwaway directory, never the repository', () => {
+    const plain = agentLaunchCwd({
+      tempRoot: '/tmp/pack',
+      scenarioId: 'agent-count-sites',
+      iteration: 2,
+    });
+    expect(plain).toBe(path.join('/tmp/pack', 'agent-agent-count-sites-2'));
+    expect(plain.startsWith(repoRoot)).toBe(false);
+    expect(
+      agentLaunchCwd({
+        tempRoot: '/tmp/pack',
+        scenarioId: 'agent-network-summary-command',
+        iteration: 1,
+        slashCommand: true,
+      })
+    ).toBe(path.join('/tmp/pack', 'command-agent-network-summary-command-1'));
+    expect(
+      agentLaunchCwd({
+        tempRoot: '/tmp/pack',
+        scenarioId: 'agent-count-sites',
+        iteration: 1,
+        armCwd: '/tmp/pack/arm-bare',
+      })
+    ).toBe('/tmp/pack/arm-bare');
+    expect(
+      agentLaunchCwd({
+        tempRoot: '/tmp/pack',
+        scenarioId: 'agent-count-sites',
+        iteration: 1,
+        scenarioCwd: '/elsewhere',
+      })
+    ).toBe('/elsewhere');
+  });
+
+  it('names the CLI terminal reason when a blocked command has no stderr', () => {
+    const argv = ['claude', '-p', 'task'];
+    const maxTurns = blockedCommandReason(
+      argv,
+      { exitCode: 1, stderr: '' },
+      { terminalReason: 'error_max_turns' }
+    );
+    expect(maxTurns).toContain('error_max_turns');
+    expect(maxTurns).not.toMatch(/Exit 1: $/);
+
+    const withText = blockedCommandReason(
+      argv,
+      { exitCode: 1, stderr: '' },
+      { terminalReason: 'error_during_execution', cliResultText: 'Execution error' }
+    );
+    expect(withText).toContain('error_during_execution');
+    expect(withText).toContain('Execution error');
+
+    const stderrToo = blockedCommandReason(
+      argv,
+      { exitCode: 1, stderr: 'spawn failure' },
+      { terminalReason: 'error_max_turns' }
+    );
+    expect(stderrToo).toContain('spawn failure');
+    expect(stderrToo).toContain('error_max_turns');
+
+    expect(blockedCommandReason(argv, { exitCode: 1, stderr: '' })).toContain(
+      'the CLI reported no error output'
+    );
+  });
+
+  it('collects the terminal subtype even when the error result carries no message', () => {
+    const collected = {
+      toolUses: [] as RecordedAgentToolUse[],
+      toolResults: [] as RecordedAgentToolResult[],
+      finalText: '',
+      totalToolUses: 0,
+      turns: 0,
+      resourceReads: [] as string[],
+      skill: { discovered: false, invoked: false },
+      assistantText: false,
+    };
+    collectEvent({ type: 'result', subtype: 'error_max_turns', is_error: true }, collected);
+    expect(collected).toMatchObject({ terminalReason: 'error_max_turns' });
+    expect('cliResultText' in collected && collected.cliResultText !== undefined).toBe(false);
+  });
+
+  it('hides unrouted catalog tools from fixture passes unless the scenario sets its own policy', () => {
+    const env = scenarioPolicyEnv({ target: 'fixture' });
+    const allowed = env.MAINWP_ALLOWED_TOOLS?.split(',') ?? [];
+    expect(allowed).toContain('get_sites_basic_v1');
+    expect(allowed).toContain('purge_site_cache_v1');
+    expect(allowed).toHaveLength(FIXTURE_ROUTED_ABILITIES.length);
+    expect(scenarioPolicyEnv({ target: 'live' })).toEqual({});
+    expect(
+      scenarioPolicyEnv({ target: 'fixture', serverEnv: { MAINWP_BLOCKED_TOOLS: 'x_v1' } })
+    ).toEqual({});
+    expect(
+      scenarioPolicyEnv({ target: 'fixture', serverEnv: { MAINWP_ALLOWED_TOOLS: 'x_v1' } })
+    ).toEqual({});
+  });
+
+  it('parses a max-turns override and keeps the default at twenty', () => {
+    expect(parseAgentArgs([]).maxTurns).toBe(20);
+    expect(parseAgentArgs(['--max-turns', '1']).maxTurns).toBe(1);
+    expect(() => parseAgentArgs(['--max-turns', 'zero'])).toThrow('--max-turns');
+    expect(() => parseAgentArgs(['--max-turns', '0'])).toThrow('--max-turns');
   });
 });
 

@@ -278,6 +278,29 @@ export function getFixtureFaultMode(
   return null;
 }
 
+/**
+ * Every ability `runAbility` executes. The catalog deliberately advertises far
+ * more (the full eval catalog, for parity with what a real Dashboard lists),
+ * so agent passes hide everything else behind MAINWP_ALLOWED_TOOLS and the
+ * advertised-routes-resolve scenario holds this list to what really routes.
+ */
+export const FIXTURE_ROUTED_ABILITIES = [
+  'mainwp/list-sites-v1',
+  'mainwp/get-sites-basic-v1',
+  'mainwp/count-sites-v1',
+  'mainwp/get-site-v1',
+  'mainwp/get-site-plugins-v1',
+  'mainwp/get-site-themes-v1',
+  'mainwp/get-site-updates-v1',
+  'mainwp/list-updates-v1',
+  'mainwp/list-ignored-updates-v1',
+  'mainwp/get-site-security-v1',
+  'mainwp/get-site-changes-v1',
+  'mainwp/check-site-v1',
+  'mainwp/delete-site-v1',
+  FIXTURE_CONFIRM_ONLY_ABILITY,
+] as const;
+
 async function runAbility(
   abilityName: string,
   input: Record<string, unknown>,
@@ -309,6 +332,27 @@ async function runAbility(
     const start = (page - 1) * perPage;
     json(response, 200, {
       items: filtered.slice(start, start + perPage).map(publicSite),
+      page,
+      per_page: perPage,
+      total: filtered.length,
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-sites-basic-v1') {
+    const page = typeof input.page === 'number' ? input.page : 1;
+    const perPage = typeof input.per_page === 'number' ? input.per_page : 20;
+    const status = typeof input.status === 'string' ? input.status : null;
+    const clientId = typeof input.client_id === 'number' ? input.client_id : null;
+    const filtered = sites.filter(
+      site =>
+        (!status || site.status === status) && (clientId === null || site.client_id === clientId)
+    );
+    const start = (page - 1) * perPage;
+    json(response, 200, {
+      items: filtered
+        .slice(start, start + perPage)
+        .map(site => ({ id: site.id, url: site.url, name: site.name })),
       page,
       per_page: perPage,
       total: filtered.length,

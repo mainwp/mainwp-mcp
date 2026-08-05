@@ -1,4 +1,5 @@
 import type { AcceptanceClient } from '../lib/client.js';
+import { FIXTURE_CONFIRM_ONLY_ABILITY, FIXTURE_ROUTED_ABILITIES } from '../fixture-dashboard.js';
 import { BoundedPagination } from '../lib/pagination.js';
 import type { IndependentVerifier, VerifiedSite } from '../lib/verify.js';
 import type {
@@ -370,10 +371,60 @@ export const listTagsCrossCheck: ScenarioDefinition = {
   },
 };
 
+export const advertisedRoutesResolve: ScenarioDefinition = {
+  id: 'advertised-routes-resolve',
+  purpose:
+    'Every ability the fixture routes is advertised in its catalog and resolves without rest_no_route.',
+  kind: 'read',
+  targets: ['fixture'],
+  async run(ctx) {
+    // The confirm-only ability is deliberately absent from the standard
+    // catalog (the eval safety suite forbids it there), so it is checked only
+    // when a run serves the acceptance-only additions.
+    const advertised = new Set((await ctx.verifier.fetchCatalog()).map(ability => ability.name));
+    const checkable = FIXTURE_ROUTED_ABILITIES.filter(name => advertised.has(name));
+    ctx.assert.deepEqual(
+      'every routed ability is advertised',
+      FIXTURE_ROUTED_ABILITIES.filter(
+        name => name !== FIXTURE_CONFIRM_ONLY_ABILITY && !advertised.has(name)
+      ),
+      []
+    );
+
+    // Minimal input suffices: an unrouted ability answers rest_no_route no
+    // matter the input, while a routed one answers with data or a validation
+    // or not-found error of its own.
+    const unrouted: string[] = [];
+    for (const name of checkable) {
+      try {
+        await ctx.verifier.execute(name, {});
+      } catch (error) {
+        if (String(error).includes('rest_no_route')) unrouted.push(name);
+      }
+    }
+    ctx.assert.deepEqual('every advertised routed ability resolves', unrouted, []);
+
+    const basic = (await ctx.verifier.execute('mainwp/get-sites-basic-v1', { per_page: 100 })) as {
+      items: Array<Record<string, unknown>>;
+      page: number;
+      per_page: number;
+      total: number;
+    };
+    ctx.assert.equal('get-sites-basic returns every fixture site', basic.total, 3);
+    ctx.assert.equal('get-sites-basic pages match the request', basic.per_page, 100);
+    ctx.assert.deepEqual(
+      'get-sites-basic items carry the documented basic shape',
+      [...new Set(basic.items.map(item => Object.keys(item).sort().join(',')))],
+      ['id,name,url']
+    );
+  },
+};
+
 export const abilityReadScenarios = [
   checkSite,
   siteThemes,
   listUpdatesCrossCheck,
   clientsCountConsistency,
   listTagsCrossCheck,
+  advertisedRoutesResolve,
 ];
