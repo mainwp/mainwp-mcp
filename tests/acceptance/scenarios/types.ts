@@ -90,8 +90,19 @@ export interface ScenarioPreconditionResult {
   state?: Record<string, unknown>;
 }
 
+export interface RelaunchedServer {
+  client: AcceptanceClient;
+  close(): Promise<void>;
+}
+
 export interface ScenarioContext {
   client: AcceptanceClient;
+  /**
+   * Start a second server process against the same home directory, for
+   * scenarios that must prove something survived a restart. The caller closes
+   * it; the harness closes the original.
+   */
+  relaunch(): Promise<RelaunchedServer>;
   verifier: IndependentVerifier;
   config: {
     target: AcceptanceTarget;

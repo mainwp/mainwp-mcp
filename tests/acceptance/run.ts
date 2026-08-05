@@ -241,16 +241,22 @@ async function runScenario(
   let scenarioContext: ScenarioContext | undefined;
   let scenarioError: string | undefined;
   try {
-    connection = await launchServer({
+    const launchOptions = {
       scenario: definition.id,
       entry,
       env,
       artifacts,
       runner,
       settings: launch.settings,
-    });
+    };
+    connection = await launchServer(launchOptions);
+    const launchedHome = connection.home;
     scenarioContext = {
       client: connection.client,
+      relaunch: async () => {
+        const restarted = await launchServer({ ...launchOptions, home: launchedHome });
+        return { client: restarted.client, close: restarted.close };
+      },
       verifier,
       config: {
         target: options.target,

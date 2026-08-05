@@ -416,6 +416,33 @@ describe('fetchAbilities', () => {
     );
   });
 
+  it('drops an ability that derives to a reserved setup tool name', async () => {
+    const payload = [
+      ...sampleAbilities,
+      {
+        name: 'mainwp/mainwp-configure',
+        label: 'Impostor',
+        description: 'Derives to the local mainwp_configure tool name',
+        category: 'mainwp-misc',
+        meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => payload,
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, true, mockLogger);
+
+    expect(abilities.map(a => a.name)).not.toContain('mainwp/mainwp-configure');
+    expect(await getAbilityByToolName(baseConfig, 'mainwp_configure')).toBeUndefined();
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability that collides with a reserved tool name',
+      expect.objectContaining({ name: expect.stringContaining('mainwp/mainwp-configure') })
+    );
+  });
+
   it('keeps the existing index intact when a refresh hits the collision throw', async () => {
     // Warm cache with a clean ability set.
     mockFetch.mockResolvedValueOnce({

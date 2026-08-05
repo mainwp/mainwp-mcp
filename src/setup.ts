@@ -1,0 +1,628 @@
+/**
+ * First-run setup mode.
+ *
+ * Holds server readiness as mutable state the MCP handlers dereference at call
+ * time, exposes the two setup tools, and owns the configure flow: precondition
+ * refusals, hostile-input validation of the submitted tuple, live credential
+ * validation, persistence, and the state swap.
+ *
+ * Readiness is an authorization boundary, not a listing filter. Handlers must
+ * consult it at execution time, and every string this module returns is
+ * scrubbed of registered secrets before it leaves.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { formatJson, type Config, type ConfigResolution, type PolicyConfig } from './config.js';
+import { initRateLimiter, type Ability } from './abilities.js';
+import { clearPendingPreviews } from './confirmation.js';
+import { validateCredentials } from './credential-check.js';
+import { getErrorMessage, McpErrorFactory } from './errors.js';
+import type { Logger } from './logging.js';
+import { RESERVED_TOOL_NAMES } from './naming.js';
+import { decidePolicy } from './policy.js';
+import { redactKnownSecrets, registerKnownSecrets, sanitizeError } from './security.js';
+import { clearToolsCache, type ToolCallResult } from './tools.js';
+import {
+  trustedSettingsPath,
+  writeConnectionSettings,
+  SettingsWriteError,
+} from './settings-writer.js';
+
+export const SETUP_STATUS_TOOL = 'mainwp_get_setup_status';
+export const CONFIGURE_TOOL = 'mainwp_configure';
+
+const SETUP_GUIDE_URL = 'https://github.com/mainwp/mainwp-mcp#readme';
+
+/** Connection environment variables. Any of them set makes the file we write moot. */
+const CONNECTION_ENV_VARS = [
+  'MAINWP_URL',
+  'MAINWP_USER',
+  'MAINWP_APP_PASSWORD',
+  'MAINWP_TOKEN',
+] as const;
+
+/** Submitted-value caps. Oversized input is rejected, never trimmed. */
+const MAX_URL_INPUT = 500;
+const MAX_USERNAME_INPUT = 200;
+const MAX_PASSWORD_INPUT = 200;
+
+export type SetupState = 'ready' | 'unconfigured' | 'degraded' | 'configuring';
+
+/**
+ * Mutable readiness holder. Handlers keep a reference to this, not to a
+ * Config, so a successful configure changes what every already-registered
+ * handler sees.
+ */
+export class ConfigState {
+  private currentConfig: Config | null;
+  private readonly missingSetting: 'MAINWP_URL' | 'credentials' | null;
+  private policySettings: PolicyConfig;
+  private failureReason: string | null = null;
+  private configureInFlight = false;
+
+  private constructor(
+    config: Config | null,
+    missing: 'MAINWP_URL' | 'credentials' | null,
+    policy: PolicyConfig
+  ) {
+    this.currentConfig = config;
+    this.missingSetting = missing;
+    this.policySettings = policy;
+  }
+
+  static fromResolution(resolution: ConfigResolution): ConfigState {
+    return resolution.status === 'ready'
+      ? ConfigState.fromConfig(resolution.config)
+      : new ConfigState(null, resolution.missing, resolution.policy);
+  }
+
+  static fromConfig(config: Config): ConfigState {
+    return new ConfigState(config, null, policyOf(config));
+  }
+
+  get state(): SetupState {
+    if (this.configureInFlight) return 'configuring';
+    if (this.currentConfig === null) return 'unconfigured';
+    return this.failureReason === null ? 'ready' : 'degraded';
+  }
+
+  get isReady(): boolean {
+    return this.state === 'ready';
+  }
+
+  /** The effective config, or null while the server is not ready. */
+  get readyConfig(): Config | null {
+    return this.isReady ? this.currentConfig : null;
+  }
+
+  /** The config retained for a degraded retry, or null when unconfigured. */
+  get retainedConfig(): Config | null {
+    return this.currentConfig;
+  }
+
+  get policy(): PolicyConfig {
+    return this.policySettings;
+  }
+
+  get missing(): 'MAINWP_URL' | 'credentials' | null {
+    return this.missingSetting;
+  }
+
+  get degradedReason(): string | null {
+    return this.failureReason;
+  }
+
+  markDegraded(reason: string): void {
+    this.failureReason = reason;
+  }
+
+  markReady(): void {
+    this.failureReason = null;
+  }
+
+  /** Claim the configure mutex. False means another call already holds it. */
+  beginConfigure(): boolean {
+    if (this.configureInFlight) return false;
+    this.configureInFlight = true;
+    return true;
+  }
+
+  endConfigure(): void {
+    this.configureInFlight = false;
+  }
+
+  /** Adopt a validated config. Callers own the rest of the swap sequence. */
+  adopt(config: Config): void {
+    this.currentConfig = config;
+    this.policySettings = policyOf(config);
+    this.failureReason = null;
+  }
+}
+
+function policyOf(config: Config): PolicyConfig {
+  const {
+    dashboardUrl: _dashboardUrl,
+    authType: _authType,
+    username: _username,
+    appPassword: _appPassword,
+    apiToken: _apiToken,
+    ...policy
+  } = config;
+  return policy;
+}
+
+/** Fired after a state swap so clients re-read every affected surface. */
+export interface SetupNotifier {
+  (): Promise<void>;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '[invalid-url]';
+  }
+}
+
+function manualSetupBlock(): string {
+  return `Option 1 (recommended): add the credentials yourself. The password never passes through this chat. Put these in the "env" block of this server's entry in your MCP client config, then restart the client:
+
+  MAINWP_URL            https://your-dashboard.com
+  MAINWP_USER           your admin username
+  MAINWP_APP_PASSWORD   the application password
+
+They can also go in ~/.config/mainwp-mcp/settings.json. Setup guide: ${SETUP_GUIDE_URL}`;
+}
+
+function chatSetupBlock(): string {
+  return `Option 2: paste them here and I will set it up for you. That is a fine choice too. Why it should be okay: an Application Password is separate from your real login password, and you can revoke it any time from your WordPress profile with one click. The server stores it only in a config file on this machine with owner-only permissions, and scrubs it from its own logs. Worth knowing: the password also becomes part of this conversation's history, which your chat app and AI provider may retain. If that ever bothers you, revoke the password and create a new one. It takes a few seconds.`;
+}
+
+function setupGuidance(chatSetupAvailable: boolean): string {
+  const intro = `The MainWP MCP server is installed but not connected to your Dashboard yet. Three things are needed: your Dashboard URL, your WordPress admin username, and an Application Password (WordPress profile page, Application Passwords section, name it something like "MainWP MCP" and click Add).`;
+  if (!chatSetupAvailable) {
+    return `${intro}
+
+${manualSetupBlock()}`;
+  }
+  return `${intro}
+
+There are two ways to finish setup.
+
+${manualSetupBlock()}
+
+${chatSetupBlock()}`;
+}
+
+function relayInstructions(chatSetupAvailable: boolean): string {
+  if (!chatSetupAvailable) {
+    return "Relay the guidance to the user as written. Chat-based setup is disabled by this server's tool policy, so the manual path is the only option.";
+  }
+  return 'Present both options to the user neutrally, including the note about chat history, and let them choose. If they pick option 2, collect all three values and then call mainwp_configure once with dashboard_url, username, and application_password. Do not guess or reuse values the user did not give you.';
+}
+
+function degradedGuidance(reason: string, chatSetupAvailable: boolean): string {
+  const base = `The MainWP MCP server has credentials but could not reach the Dashboard at startup: ${reason}
+
+The credentials are still loaded. Ask me to check again once the Dashboard is reachable and I will retry with them; call ${SETUP_STATUS_TOOL} to run that retry.`;
+  if (!chatSetupAvailable) {
+    return base;
+  }
+  return `${base}
+
+If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client.`;
+}
+
+/** JSON tool result. Every string is scrubbed of registered secrets first. */
+function setupResult(
+  policy: PolicyConfig,
+  data: Record<string, unknown>,
+  isError = false
+): ToolCallResult {
+  return {
+    content: [{ type: 'text', text: redactKnownSecrets(formatJson(policy, data)) }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function refusal(policy: PolicyConfig, code: string, message: string): ToolCallResult {
+  return setupResult(policy, { status: 'refused', code, message }, true);
+}
+
+/**
+ * Tool definitions for setup mode, after allow/block filtering.
+ * Only listed while the server is not ready.
+ */
+export function getSetupTools(state: ConfigState): Tool[] {
+  const policy = state.policy;
+  const tools: Tool[] = [
+    {
+      name: SETUP_STATUS_TOOL,
+      description:
+        'Report whether the MainWP MCP server is connected to a Dashboard yet, and return the setup instructions to show the user. Call this first when MainWP tools are missing. If the server has credentials but could not reach the Dashboard, this retries the connection.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: {
+        title: 'MainWP setup status',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    {
+      name: CONFIGURE_TOOL,
+      description:
+        'Connect this server to a MainWP Dashboard using credentials the user supplied in chat. Requires all three values at once. The credentials are verified against the Dashboard, then saved to ~/.config/mainwp-mcp/settings.json on this machine with owner-only permissions; the password is scrubbed from server logs and never echoed back. Only usable before the server is connected.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          dashboard_url: {
+            type: 'string',
+            description:
+              'HTTPS URL of the MainWP Dashboard, for example https://dashboard.example.com',
+          },
+          username: { type: 'string', description: 'WordPress admin username on the Dashboard' },
+          application_password: {
+            type: 'string',
+            description: 'WordPress Application Password for that user',
+          },
+        },
+        required: ['dashboard_url', 'username', 'application_password'],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: 'Configure MainWP connection',
+        readOnlyHint: false,
+        // Configure rewrites local server state and sends the supplied
+        // credentials to a model-supplied origin, so clients should surface it
+        // for approval like any other consequential call.
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+  ];
+  return tools.filter(tool => decidePolicy(policy, tool.name) === 'allow');
+}
+
+export function isSetupToolName(name: string): boolean {
+  return RESERVED_TOOL_NAMES.has(name);
+}
+
+/**
+ * Validate a model-supplied Dashboard URL.
+ *
+ * Stricter than the config loader: the value came from a conversation, so
+ * userinfo, query, and fragment (credential-carrying or request-shaping parts)
+ * are rejected rather than normalized away, and HTTP is allowed only when the
+ * operator already opted into it through env or trusted config.
+ */
+export function validateConfigureUrl(raw: unknown, allowHttp: boolean): string {
+  if (typeof raw !== 'string') {
+    throw McpErrorFactory.invalidParams('dashboard_url must be a string');
+  }
+  if (raw.length === 0 || raw.length > MAX_URL_INPUT) {
+    throw McpErrorFactory.invalidParams(
+      `dashboard_url must be between 1 and ${MAX_URL_INPUT} characters`
+    );
+  }
+  if (raw !== raw.trim()) {
+    throw McpErrorFactory.invalidParams('dashboard_url must not have leading or trailing spaces');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw McpErrorFactory.invalidParams('dashboard_url is not a valid URL');
+  }
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && allowHttp)) {
+    throw McpErrorFactory.invalidParams(
+      'dashboard_url must use https. Plain HTTP would send the Application Password in clear text.'
+    );
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw McpErrorFactory.invalidParams('dashboard_url must not contain credentials');
+  }
+  if (parsed.search !== '' || parsed.hash !== '') {
+    throw McpErrorFactory.invalidParams(
+      'dashboard_url must not contain a query string or fragment'
+    );
+  }
+  // Keep any base path (MainWP runs in subdirectories) but normalize it the
+  // same way loadConfig does, so cache identity matches a hand-written config.
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+function validateCredentialField(raw: unknown, field: string, maxLength: number): string {
+  if (typeof raw !== 'string') {
+    throw McpErrorFactory.invalidParams(`${field} must be a string`);
+  }
+  if (raw.trim() === '') {
+    throw McpErrorFactory.invalidParams(`${field} must not be empty`);
+  }
+  if (raw.length > maxLength) {
+    throw McpErrorFactory.invalidParams(`${field} must be at most ${maxLength} characters`);
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(raw)) {
+    throw McpErrorFactory.invalidParams(`${field} must not contain control characters`);
+  }
+  return raw;
+}
+
+/** Environment variables that would outrank anything configure could persist. */
+function activeConnectionEnvVars(): string[] {
+  return CONNECTION_ENV_VARS.filter(name => {
+    const value = process.env[name];
+    return value !== undefined && value !== '';
+  });
+}
+
+async function handleSetupStatus(
+  state: ConfigState,
+  logger: Logger,
+  notify: SetupNotifier
+): Promise<ToolCallResult> {
+  const policy = state.policy;
+  const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
+
+  if (state.state === 'degraded') {
+    const config = state.retainedConfig;
+    if (config) {
+      try {
+        // Credential-free recovery: the retained config may simply have hit a
+        // Dashboard that was down at startup.
+        const abilities = await validateCredentials(config, logger);
+        state.markReady();
+        await notify();
+        return setupResult(policy, {
+          state: 'ready',
+          dashboardHost: hostOf(config.dashboardUrl),
+          abilitiesCount: abilities.length,
+          message: `Connected to ${hostOf(config.dashboardUrl)}. The MainWP tools are available now.`,
+          clientRefreshNote: CLIENT_REFRESH_NOTE,
+        });
+      } catch (error) {
+        const reason = sanitizeError(getErrorMessage(error));
+        state.markDegraded(reason);
+        return setupResult(policy, {
+          state: 'degraded',
+          dashboardHost: hostOf(config.dashboardUrl),
+          problem: reason,
+          guidance: degradedGuidance(reason, chatSetupAvailable),
+        });
+      }
+    }
+  }
+
+  if (state.isReady) {
+    const config = state.readyConfig!;
+    return setupResult(policy, {
+      state: 'ready',
+      dashboardHost: hostOf(config.dashboardUrl),
+      message: 'The MainWP MCP server is already connected. No setup is needed.',
+    });
+  }
+
+  return setupResult(policy, {
+    state: 'unconfigured',
+    missing: state.missing ?? 'credentials',
+    chatSetupAvailable,
+    guidance: setupGuidance(chatSetupAvailable),
+    relayInstructions: relayInstructions(chatSetupAvailable),
+  });
+}
+
+const CLIENT_REFRESH_NOTE =
+  'If your MCP client does not refresh its tool list on its own, reconnect or restart the server to see the MainWP tools.';
+
+async function handleConfigure(
+  state: ConfigState,
+  args: Record<string, unknown>,
+  logger: Logger,
+  notify: SetupNotifier
+): Promise<ToolCallResult> {
+  const policy = state.policy;
+
+  // Registered before any other work so every later error string, log line,
+  // and result is scrubbed by value even if a code path forgets.
+  const submittedPassword = args.application_password;
+  const submittedUser = args.username;
+  if (typeof submittedPassword === 'string') {
+    registerKnownSecrets([
+      submittedPassword,
+      typeof submittedUser === 'string'
+        ? Buffer.from(`${submittedUser}:${submittedPassword}`).toString('base64')
+        : undefined,
+    ]);
+  }
+
+  if (state.state === 'configuring') {
+    return refusal(
+      policy,
+      'CONFIGURE_IN_PROGRESS',
+      'Another setup attempt is still running. Wait for it to finish before trying again.'
+    );
+  }
+  if (state.isReady) {
+    return refusal(
+      policy,
+      'ALREADY_CONFIGURED',
+      `This server is already connected to a MainWP Dashboard. To change credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
+    );
+  }
+
+  const envVars = activeConnectionEnvVars();
+  if (envVars.length > 0) {
+    // Env outranks the file this tool writes, so persisting here would validate
+    // one identity and silently activate another later.
+    return refusal(
+      policy,
+      'ENV_CONFIGURED',
+      `This server reads its connection settings from environment variables (${envVars.join(', ')}), which take precedence over the file this tool writes. Finish setup in the "env" block of this server's entry in your MCP client config, then restart the client.`
+    );
+  }
+
+  const cwdSettings = path.join(process.cwd(), 'settings.json');
+  if (fs.existsSync(cwdSettings)) {
+    // The loader stops at the first file it finds, so this one would shadow the
+    // home file forever and the save would be a lie.
+    return refusal(
+      policy,
+      'SHADOWED_BY_WORKING_DIRECTORY_FILE',
+      `A settings.json in the server's working directory (${cwdSettings}) is loaded before ${trustedSettingsPath()}, so anything saved here would be ignored. Complete the connection settings in that file, or remove it, then restart the client.`
+    );
+  }
+
+  let dashboardUrl: string;
+  let username: string;
+  let appPassword: string;
+  try {
+    dashboardUrl = validateConfigureUrl(args.dashboard_url, policy.allowHttp);
+    username = validateCredentialField(args.username, 'username', MAX_USERNAME_INPUT);
+    appPassword = validateCredentialField(
+      args.application_password,
+      'application_password',
+      MAX_PASSWORD_INPUT
+    );
+  } catch (error) {
+    return refusal(policy, 'INVALID_INPUT', sanitizeError(getErrorMessage(error)));
+  }
+
+  if (!state.beginConfigure()) {
+    return refusal(
+      policy,
+      'CONFIGURE_IN_PROGRESS',
+      'Another setup attempt is still running. Wait for it to finish before trying again.'
+    );
+  }
+
+  try {
+    // Exactly the submitted tuple: never merged with stored or environment
+    // values, so validation and persistence describe the same identity.
+    const candidate: Config = {
+      ...policy,
+      dashboardUrl,
+      authType: 'basic',
+      username,
+      appPassword,
+      configSource: 'settings file',
+    };
+
+    let abilities: Ability[];
+    try {
+      abilities = await validateCredentials(candidate, logger);
+    } catch (error) {
+      return refusal(
+        policy,
+        'CONNECTION_FAILED',
+        `${sanitizeError(getErrorMessage(error))} Nothing was saved. Check the values and try again, or set them up manually.`
+      );
+    }
+
+    // Readiness is rechecked inside the mutex: another path could have
+    // promoted the server while the network call was in flight.
+    if (state.readyConfig !== null) {
+      return refusal(
+        policy,
+        'ALREADY_CONFIGURED',
+        'This server was connected while the setup call was running. Nothing was saved.'
+      );
+    }
+
+    let savedPath: string;
+    try {
+      savedPath = writeConnectionSettings({ dashboardUrl, username, appPassword });
+    } catch (error) {
+      const detail =
+        error instanceof SettingsWriteError
+          ? sanitizeError(error.message)
+          : sanitizeError(getErrorMessage(error));
+      return refusal(
+        policy,
+        'SAVE_FAILED',
+        `${detail} The connection itself worked, so adding the same values to the "env" block of this server's entry in your MCP client config will get you running.`
+      );
+    }
+
+    // One ordered swap: adopt the config, re-arm the rate limiter for its
+    // settings, drop confirmation state and derived tools belonging to the old
+    // identity, then tell the client every surface changed. The ability cache
+    // is left alone on purpose: validateCredentials already populated it under
+    // the new identity, and clearing it here would force an immediate refetch.
+    state.adopt(candidate);
+    initRateLimiter(candidate.rateLimit);
+    clearPendingPreviews();
+    clearToolsCache();
+    await notify();
+
+    logger.info('Setup completed; server is connected', {
+      dashboardHost: hostOf(dashboardUrl),
+      abilitiesCount: abilities.length,
+    });
+
+    return setupResult(policy, {
+      status: 'connected',
+      dashboardHost: hostOf(dashboardUrl),
+      abilitiesCount: abilities.length,
+      message: `Connected to ${hostOf(dashboardUrl)}. ${abilities.length} MainWP tools are available now.`,
+      savedTo: savedPath,
+      storageNote:
+        'The credentials were saved on this machine with owner-only permissions. Edit that file to change them later.',
+      clientRefreshNote: CLIENT_REFRESH_NOTE,
+    });
+  } finally {
+    state.endConfigure();
+  }
+}
+
+/**
+ * Execute a setup tool. Callers must have established that the name is a
+ * setup tool; policy is rechecked here because listing is not authorization.
+ */
+export async function executeSetupTool(
+  state: ConfigState,
+  name: string,
+  args: Record<string, unknown>,
+  logger: Logger,
+  notify: SetupNotifier
+): Promise<ToolCallResult> {
+  if (decidePolicy(state.policy, name) !== 'allow') {
+    throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${name}`);
+  }
+  if (name === SETUP_STATUS_TOOL) {
+    return handleSetupStatus(state, logger, notify);
+  }
+  if (name === CONFIGURE_TOOL) {
+    return handleConfigure(state, args, logger, notify);
+  }
+  throw McpErrorFactory.toolNotFound(name);
+}
+
+/**
+ * The refusal every non-setup surface returns while the server is not ready.
+ * Never leaks whether a name exists in the Dashboard catalog.
+ */
+export function notReadyResult(state: ConfigState): ToolCallResult {
+  const policy = state.policy;
+  const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
+  const statusToolAvailable = decidePolicy(policy, SETUP_STATUS_TOOL) === 'allow';
+  const guidance =
+    state.state === 'degraded'
+      ? degradedGuidance(state.degradedReason ?? 'the connection check failed', chatSetupAvailable)
+      : setupGuidance(chatSetupAvailable);
+  return setupResult(
+    policy,
+    {
+      status: 'not_configured',
+      state: state.state,
+      message: statusToolAvailable
+        ? `The MainWP MCP server is not connected to a Dashboard yet, so its tools are unavailable. Call ${SETUP_STATUS_TOOL} for setup instructions.`
+        : 'The MainWP MCP server is not connected to a Dashboard yet, so its tools are unavailable.',
+      guidance,
+    },
+    true
+  );
+}

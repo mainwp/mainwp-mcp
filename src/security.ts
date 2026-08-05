@@ -149,6 +149,25 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
 }
 
 /**
+ * Replace every registered secret (in each encoding registerKnownSecrets
+ * covers) with a placeholder, leaving the rest of the text alone.
+ *
+ * Split out from sanitizeError for output that must survive intact: the
+ * first-run setup guidance is long-form prose, so the 500-character cap and
+ * the key=value patterns of the full sanitizer would mangle it, while the
+ * by-value scrub is exactly what a credential-carrying path needs.
+ */
+export function redactKnownSecrets(message: string): string {
+  let working = message;
+  for (const variant of knownSecretVariants) {
+    if (working.includes(variant)) {
+      working = working.split(variant).join('[redacted]');
+    }
+  }
+  return working;
+}
+
+/**
  * Sanitize error messages before returning to clients.
  * Removes potentially sensitive information like file paths, credentials, and stack traces.
  */
@@ -156,12 +175,7 @@ export function sanitizeError(message: string): string {
   // Known-secret pass runs on the FULL message, before the regex cap: literal
   // split/join is linear on a 64KB body, and a secret straddling the cap must
   // be removed whole, not truncated into an unrecognizable fragment.
-  let working = message;
-  for (const variant of knownSecretVariants) {
-    if (working.includes(variant)) {
-      working = working.split(variant).join('[redacted]');
-    }
-  }
+  const working = redactKnownSecrets(message);
   // Bound the working string before any regex runs. The input can be a 64KB
   // remote error body; without this cap the stack-trace pattern below (and the
   // other backtracking-capable patterns) could be driven into pathological,

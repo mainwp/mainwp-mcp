@@ -29,7 +29,7 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, Config, MissingConfigError } from './config.js';
+import { resolveConfig, Config, MissingConfigError } from './config.js';
 import { getTools, executeTool } from './tools.js';
 import { decidePolicy, classifyDestructive } from './policy.js';
 import { formatBytes } from './session.js';
@@ -47,6 +47,14 @@ import { createLogger, createStderrLogger, type Logger } from './logging.js';
 import { sanitizeError, registerKnownSecrets, isValidId } from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
+import {
+  ConfigState,
+  executeSetupTool,
+  getSetupTools,
+  isSetupToolName,
+  notReadyResult,
+  type SetupNotifier,
+} from './setup.js';
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
@@ -113,15 +121,21 @@ Run "npx -y @mainwp/mcp --help" for more options.`;
 /**
  * Create and configure the MCP server
  */
-export async function createServer(config: Config): Promise<{ server: Server; logger: Logger }> {
+export async function createServer(
+  input: Config | ConfigState
+): Promise<{ server: Server; logger: Logger }> {
+  // Readiness is mutable: handlers dereference this holder at call time so a
+  // mid-session configure changes what every already-registered handler sees.
+  const state = input instanceof ConfigState ? input : ConfigState.fromConfig(input);
+  const startupConfig = state.retainedConfig;
   // Every sanitizeError call site benefits, whatever path an error takes to a
   // client-visible string: the server's own credentials are scrubbed by value,
   // in the encodings a serialized error body preserves.
   registerKnownSecrets([
-    config.appPassword,
-    config.apiToken,
-    config.username && config.appPassword
-      ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
+    startupConfig?.appPassword,
+    startupConfig?.apiToken,
+    startupConfig?.username && startupConfig.appPassword
+      ? Buffer.from(`${startupConfig.username}:${startupConfig.appPassword}`).toString('base64')
       : undefined,
   ]);
   const server = new Server(
@@ -143,8 +157,20 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
   // Create structured logger
   const logger = createLogger(server);
 
+  // Fired after a readiness change so clients re-read the surfaces setup mode
+  // suppressed. Order matters only in that tools carry the visible change.
+  const notifyListChanged: SetupNotifier = async () => {
+    await server.sendToolListChanged().catch(() => {});
+    await server.sendResourceListChanged().catch(() => {});
+    await server.sendPromptListChanged().catch(() => {});
+  };
+
   // Handler: List available tools (derived from abilities)
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const config = state.readyConfig;
+    if (!config) {
+      return { tools: getSetupTools(state) };
+    }
     try {
       const tools = await getTools(config, logger);
       return { tools };
@@ -161,6 +187,22 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
     const { name, arguments: args } = request.params;
 
     try {
+      // Readiness is an authorization boundary checked here, not a listing
+      // filter: a client that remembers a tool name from a previous session
+      // must not reach the Dashboard path while the server is not ready.
+      if (isSetupToolName(name)) {
+        return await executeSetupTool(
+          state,
+          name,
+          (args as Record<string, unknown>) ?? {},
+          logger,
+          notifyListChanged
+        );
+      }
+      const config = state.readyConfig;
+      if (!config) {
+        return notReadyResult(state);
+      }
       // Pass abort signal for cancellation support; executeTool returns the
       // full CallToolResult shape including isError on failed calls
       return await executeTool(config, name, (args as Record<string, unknown>) ?? {}, logger, {
@@ -181,6 +223,9 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
 
   // Handler: List available resources (abilities info, categories, help)
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    if (!state.isReady) {
+      return { resources: [] };
+    }
     return {
       resources: [
         {
@@ -214,17 +259,37 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
 
   // Handler: Read a resource (URI validation + branch bodies live in resources.ts)
   server.setRequestHandler(ReadResourceRequestSchema, async request => {
+    const config = state.readyConfig;
+    if (!config) {
+      return {
+        contents: [
+          {
+            uri: request.params.uri,
+            mimeType: 'application/json',
+            text: notReadyResult(state).content[0].text,
+          },
+        ],
+      };
+    }
     return handleReadResource(config, request.params.uri, logger);
   });
 
   // Handler: List available prompts
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    if (!state.isReady) {
+      return { prompts: [] };
+    }
     return { prompts: getPromptList() };
   });
 
   // Handler: Get a specific prompt
   server.setRequestHandler(GetPromptRequestSchema, async request => {
     const { name, arguments: args } = request.params;
+    if (!state.isReady) {
+      throw McpErrorFactory.permissionDenied(
+        'The MainWP MCP server is not connected to a Dashboard yet, so its prompts are unavailable.'
+      );
+    }
     try {
       // Prompt arguments are flat strings. Guard their transport-safe shape
       // here; prompt-specific semantics belong to validatePromptArgs.
@@ -253,9 +318,10 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
   // Handler: Argument completions
   server.setRequestHandler(CompleteRequestSchema, async request => {
     const { ref, argument } = request.params;
+    const config = state.readyConfig;
 
     // Handle prompt argument completions
-    if (ref.type === 'ref/prompt') {
+    if (config && ref.type === 'ref/prompt') {
       const promptName = ref.name;
       const argName = argument.name;
 
@@ -339,6 +405,9 @@ export async function createServer(config: Config): Promise<{ server: Server; lo
 
   // Handler: List resource templates
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    if (!state.isReady) {
+      return { resourceTemplates: [] };
+    }
     return {
       resourceTemplates: [
         {
@@ -389,55 +458,73 @@ async function main(): Promise<void> {
   const startupLogger = createStderrLogger();
 
   try {
-    // Load configuration from environment
-    const config = loadConfig();
+    // Load configuration from environment. Missing connection settings are a
+    // first-run state, not a fatal error: the server starts in setup mode so
+    // the user gets guidance inside their client instead of a failed launch.
+    const resolution = resolveConfig();
+    const state = ConfigState.fromResolution(resolution);
+    const config = state.retainedConfig;
 
     // Register before any remote call: the startup credential check runs ahead
     // of createServer(), and its error path must already redact by value.
     registerKnownSecrets([
-      config.appPassword,
-      config.apiToken,
-      config.username && config.appPassword
+      config?.appPassword,
+      config?.apiToken,
+      config?.username && config.appPassword
         ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
         : undefined,
     ]);
 
     // Initialize rate limiter
-    initRateLimiter(config.rateLimit);
+    initRateLimiter(state.policy.rateLimit);
 
     startupLogger.info(`MainWP MCP Server v${SERVER_VERSION}`);
-    startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
-    startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
-    startupLogger.info(`Config source: ${config.configSource}`);
-    startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
-    if (config.skipSslVerify) {
-      startupLogger.error('WARNING: SSL verification disabled.');
-      startupLogger.error('The connection is vulnerable to man-in-the-middle attacks.');
-      startupLogger.error('Only use this for local development with self-signed certificates.');
-    }
+    if (resolution.status === 'unconfigured') {
+      console.error(getMissingConfigGuidance(resolution.missing));
+      startupLogger.info('Starting in setup mode; no Dashboard connection configured yet.');
+    } else if (config) {
+      startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
+      startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
+      startupLogger.info(`Config source: ${config.configSource}`);
+      startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
+      if (config.skipSslVerify) {
+        startupLogger.error('WARNING: SSL verification disabled.');
+        startupLogger.error('The connection is vulnerable to man-in-the-middle attacks.');
+        startupLogger.error('Only use this for local development with self-signed certificates.');
+      }
 
-    // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
-    // site ID prompt completions call mainwp/list-sites-v1. Without 'mainwp'
-    // in the allowlist those abilities are filtered out, so warn up front
-    // (see docs/configuration.md, "Keep mainwp in the list").
-    if (!config.abilityNamespaces.includes('mainwp')) {
-      startupLogger.warning(
-        "Namespace allowlist does not include 'mainwp'. The mainwp://site/{id} resource calls " +
-          'mainwp/get-site-v1 and site ID prompt completions call mainwp/list-sites-v1; with ' +
-          "'mainwp' filtered out, the resource returns an error payload and completions come " +
-          "back empty. Add 'mainwp' alongside other namespaces rather than replacing it.",
-        { abilityNamespaces: config.abilityNamespaces }
-      );
-    }
+      // The built-in mainwp://site/{id} resource calls mainwp/get-site-v1 and
+      // site ID prompt completions call mainwp/list-sites-v1. Without 'mainwp'
+      // in the allowlist those abilities are filtered out, so warn up front
+      // (see docs/configuration.md, "Keep mainwp in the list").
+      if (!config.abilityNamespaces.includes('mainwp')) {
+        startupLogger.warning(
+          "Namespace allowlist does not include 'mainwp'. The mainwp://site/{id} resource calls " +
+            'mainwp/get-site-v1 and site ID prompt completions call mainwp/list-sites-v1; with ' +
+            "'mainwp' filtered out, the resource returns an error payload and completions come " +
+            "back empty. Add 'mainwp' alongside other namespaces rather than replacing it.",
+          { abilityNamespaces: config.abilityNamespaces }
+        );
+      }
 
-    // Validate credentials with fail-fast behavior
-    startupLogger.info('Validating credentials...');
-    const abilities = await validateCredentials(config, startupLogger);
-    startupLogger.info(`Connected! Found ${abilities.length} abilities`);
-    abilities.forEach(a => startupLogger.debug(`  - ${a.name}: ${a.label}`));
+      // A failed check no longer kills the process: the session starts
+      // degraded, keeps the credentials, and the setup-status tool retries.
+      startupLogger.info('Validating credentials...');
+      try {
+        const abilities = await validateCredentials(config, startupLogger);
+        startupLogger.info(`Connected! Found ${abilities.length} abilities`);
+        abilities.forEach(a => startupLogger.debug(`  - ${a.name}: ${a.label}`));
+      } catch (error) {
+        const reason = sanitizeError(getErrorMessage(error));
+        state.markDegraded(reason);
+        startupLogger.warning(
+          `Could not reach the MainWP Dashboard at startup: ${reason} Starting anyway; MainWP tools stay hidden until the connection works.`
+        );
+      }
+    }
 
     // Create server (returns server + structured logger)
-    const { server, logger } = await createServer(config);
+    const { server, logger } = await createServer(state);
 
     // Connect via stdio transport
     const transport = new StdioServerTransport();
@@ -456,14 +543,6 @@ async function main(): Promise<void> {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
-    if (error instanceof MissingConfigError) {
-      // Nothing has created handles yet (loadConfig threw first), so setting
-      // exitCode and returning lets the event loop drain and flush the
-      // guidance even when stderr is a pipe; process.exit() could drop it.
-      console.error(getMissingConfigGuidance(error.missing));
-      process.exitCode = 1;
-      return;
-    }
     startupLogger.error(`Fatal error: ${getErrorMessage(error)}`);
     process.exit(1);
   }

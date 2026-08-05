@@ -18,7 +18,7 @@ import {
   MAX_URL_LENGTH,
 } from './http-client.js';
 import type { Logger } from './logging.js';
-import { abilityNameToToolName } from './naming.js';
+import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
 import { classifyDestructive } from './policy.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
@@ -602,6 +602,15 @@ export async function fetchAbilities(
         // name in ListTools and only fail at execute time.
         if (!ABILITY_NAME_RE.test(a.name)) {
           logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
+          return false;
+        }
+        // Same fail-loud rule as the tool-name collision below: an ability
+        // deriving to a name the server owns is dropped, never allowed to
+        // shadow the local setup tool.
+        if (RESERVED_TOOL_NAMES.has(abilityNameToToolName(a.name, namespaces[0]))) {
+          logger?.warning('Skipping ability that collides with a reserved tool name', {
+            name: sanitizeError(a.name),
+          });
           return false;
         }
         return true;

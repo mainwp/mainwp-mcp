@@ -51,6 +51,12 @@ export interface ServerLaunchOptions {
   artifacts: Artifacts;
   runner: CommandRunner;
   settings?: Record<string, unknown>;
+  /**
+   * Reuse an existing home directory instead of creating one. Restart
+   * scenarios need the second process to see what the first one wrote there.
+   * A borrowed home belongs to its owner and is not removed on close.
+   */
+  home?: string;
 }
 
 export interface ServerConnection {
@@ -75,9 +81,9 @@ function isolatedEnvironment(home: string, values: Record<string, string>): Reco
 export async function launchServer(options: ServerLaunchOptions): Promise<ServerConnection> {
   const isolationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-server-'));
   const cwd = path.join(isolationRoot, 'cwd');
-  const home = path.join(isolationRoot, 'home');
+  const home = options.home ?? path.join(isolationRoot, 'home');
   fs.mkdirSync(cwd);
-  fs.mkdirSync(home);
+  if (!options.home) fs.mkdirSync(home);
   if (options.settings) {
     const settingsPath = path.join(cwd, 'settings.json');
     fs.writeFileSync(settingsPath, `${JSON.stringify(options.settings, null, 2)}\n`, {

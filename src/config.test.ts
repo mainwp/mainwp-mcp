@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   loadConfig,
+  resolveConfig,
   loadSettingsFile,
   getAbilitiesApiUrl,
   getAuthHeaders,
@@ -185,6 +186,42 @@ describe('loadConfig', () => {
       expect(error).toBeInstanceOf(MissingConfigError);
       expect((error as MissingConfigError).missing).toBe('credentials');
     }
+  });
+
+  it('reports missing credentials as an unconfigured resolution carrying policy but no secrets', () => {
+    process.env.MAINWP_URL = 'https://test.com';
+    process.env.MAINWP_BLOCKED_TOOLS = 'delete_site_v1';
+    process.env.MAINWP_SAFE_MODE = 'true';
+
+    const resolution = resolveConfig();
+
+    expect(resolution.status).toBe('unconfigured');
+    if (resolution.status !== 'unconfigured') expect.unreachable('expected unconfigured');
+    expect(resolution.missing).toBe('credentials');
+    expect(resolution.policy.blockedTools).toEqual(['delete_site_v1']);
+    expect(resolution.policy.safeMode).toBe(true);
+    expect(resolution.policy.abilityNamespaces).toEqual(['mainwp']);
+    // The resolution must not carry connection identity in any form.
+    expect(Object.keys(resolution.policy)).not.toContain('dashboardUrl');
+    expect(Object.keys(resolution.policy)).not.toContain('username');
+    expect(Object.keys(resolution.policy)).not.toContain('appPassword');
+    expect(Object.keys(resolution.policy)).not.toContain('apiToken');
+  });
+
+  it('reports a missing URL as unconfigured rather than throwing', () => {
+    process.env = {};
+
+    const resolution = resolveConfig();
+
+    expect(resolution).toMatchObject({ status: 'unconfigured', missing: 'MAINWP_URL' });
+  });
+
+  it('still throws for configuration that is present but invalid', () => {
+    process.env.MAINWP_URL = 'not-a-url';
+    process.env.MAINWP_USER = 'admin';
+    process.env.MAINWP_APP_PASSWORD = 'xxxx';
+
+    expect(() => resolveConfig()).toThrow(/Invalid dashboardUrl/);
   });
 
   it('should load config with basic auth', () => {

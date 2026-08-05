@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import {
+  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
+  ToolListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { createServer } from './index.js';
 import { clearCache, initRateLimiter } from './abilities.js';
+import { clearToolsCache } from './tools.js';
+import { ConfigState } from './setup.js';
 import { makeBaseConfig } from '../tests/helpers/config.js';
 
 const mockFetch = vi.fn();
@@ -515,6 +525,204 @@ describe('MCP request handlers', () => {
     expect(helpDoc.overview.categories).not.toContain('mainwp-danger');
     expect(text).not.toContain('delete_site_v1');
     expect(text).toContain('list_sites_v1');
+    await client.close();
+    await server.close();
+  });
+});
+
+describe('setup mode handlers', () => {
+  const savedEnv = new Map<string, string | undefined>();
+  let home: string;
+  let cwd: string;
+
+  // Individual keys, never a wholesale process.env replacement: os.homedir()
+  // reads the real environment, and the settings writer follows it.
+  function setEnv(key: string, value: string | undefined): void {
+    if (!savedEnv.has(key)) savedEnv.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  function unconfiguredState(): ConfigState {
+    const {
+      dashboardUrl: _dashboardUrl,
+      authType: _authType,
+      username: _username,
+      appPassword: _appPassword,
+      apiToken: _apiToken,
+      ...policy
+    } = makeBaseConfig();
+    return ConfigState.fromResolution({
+      status: 'unconfigured',
+      missing: 'credentials',
+      message: 'Authentication required',
+      policy,
+    });
+  }
+
+  async function connectState(state: ConfigState) {
+    const { server } = await createServer(state);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return { client, server };
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearToolsCache();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    savedEnv.clear();
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('MAINWP_')) setEnv(key, undefined);
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-setup-mode-'));
+    home = path.join(root, 'home');
+    cwd = path.join(root, 'cwd');
+    fs.mkdirSync(home);
+    fs.mkdirSync(cwd);
+    setEnv('HOME', home);
+    vi.spyOn(process, 'cwd').mockReturnValue(cwd);
+  });
+
+  afterEach(() => {
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('lists only the setup tools while unconfigured', async () => {
+    const { client, server } = await connectState(unconfiguredState());
+
+    const result = await client.listTools();
+
+    expect(result.tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
+    expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('denies a direct call to a Dashboard tool name while unconfigured', async () => {
+    // Execution boundary, not a listing filter: a client replaying a name it
+    // remembers from an earlier session must not reach the ability path.
+    const { client, server } = await connectState(unconfiguredState());
+
+    const result = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain('not_configured');
+    expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('returns empty or safe results from every other surface while unconfigured', async () => {
+    const { client, server } = await connectState(unconfiguredState());
+
+    expect((await client.listResources()).resources).toEqual([]);
+    expect((await client.listResourceTemplates()).resourceTemplates).toEqual([]);
+    expect((await client.listPrompts()).prompts).toEqual([]);
+
+    const resource = await client.readResource({ uri: 'mainwp://abilities' });
+    expect((resource.contents as Array<{ text: string }>)[0].text).toContain('not_configured');
+
+    const completion = await client.complete({
+      ref: { type: 'ref/prompt', name: 'performance-check' },
+      argument: { name: 'site_id', value: '' },
+    });
+    expect(completion.completion.values).toEqual([]);
+
+    await expect(
+      client.getPrompt({ name: 'performance-check', arguments: {} })
+    ).rejects.toMatchObject({ code: -32008 });
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('swaps to the full tool surface after a successful configure', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    const { client, server } = await connectState(unconfiguredState());
+    const changed: string[] = [];
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      changed.push('tools');
+    });
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+      changed.push('resources');
+    });
+    client.setNotificationHandler(PromptListChangedNotificationSchema, () => {
+      changed.push('prompts');
+    });
+
+    const configured = await client.callTool({
+      name: 'mainwp_configure',
+      arguments: {
+        dashboard_url: 'https://dashboard.example.com',
+        username: 'admin',
+        application_password: 'abcd efgh ijkl mnop qrst uvwx',
+      },
+    });
+
+    expect(configured.isError).toBeUndefined();
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    expect(names).toEqual(expect.arrayContaining(['list_sites_v1', 'delete_site_v1']));
+    expect(names).not.toContain('mainwp_configure');
+    expect(names).not.toContain('mainwp_get_setup_status');
+    expect((await client.listPrompts()).prompts.length).toBeGreaterThan(0);
+    expect((await client.listResources()).resources.length).toBeGreaterThan(0);
+    expect(changed).toEqual(['tools', 'resources', 'prompts']);
+
+    const listed = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+    expect(listed.isError).toBeUndefined();
+
+    await client.close();
+    await server.close();
+  });
+
+  it('refuses configure once the server is connected', async () => {
+    const { client, server } = await connectState(ConfigState.fromConfig(makeBaseConfig()));
+
+    const result = await client.callTool({
+      name: 'mainwp_configure',
+      arguments: {
+        dashboard_url: 'https://dashboard.example.com',
+        username: 'admin',
+        application_password: 'abcd efgh ijkl mnop qrst uvwx',
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toContain('ALREADY_CONFIGURED');
+    expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('keeps the setup tools listed in the degraded state', async () => {
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+    const { client, server } = await connectState(state);
+
+    const result = await client.listTools();
+
+    expect(result.tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
     await client.close();
     await server.close();
   });

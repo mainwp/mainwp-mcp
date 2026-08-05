@@ -119,6 +119,29 @@ npm ci
 npm run build
 ```
 
+## First-run setup
+
+If the server starts without a Dashboard URL or credentials, it does not fail to launch. It connects to your AI client in **setup mode**: the MainWP tools stay hidden and two setup tools take their place, so you can finish the configuration in the conversation instead of hunting through stderr.
+
+- `mainwp_get_setup_status` reports what is missing and returns the setup instructions for your assistant to relay. If credentials are present but the Dashboard was unreachable at startup, calling it again retries the connection with the credentials already loaded.
+- `mainwp_configure` takes a Dashboard URL, username, and Application Password, verifies them against the Dashboard, and saves them.
+
+Two ways to finish setup:
+
+**Adding the credentials yourself is the recommended path.** Put `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` in the `env` block of this server's entry in your MCP client config (see [Quick Start](#quick-start)) or in `~/.config/mainwp-mcp/settings.json`, then restart the client. The password never passes through the conversation.
+
+**Pasting them in chat is also fine.** Your assistant collects the three values and calls `mainwp_configure`. The server verifies them, writes them to `~/.config/mainwp-mcp/settings.json` with owner-only permissions (0600, in a 0700 directory), and scrubs the password from its own logs and from every response. An Application Password is separate from your WordPress login password and you can revoke it from your profile at any time. Worth knowing before you choose: the password also becomes part of your chat history, which your AI client and provider may retain. If that bothers you later, revoke the password and create a new one.
+
+Once configuration succeeds, the full tool list appears in the same session for clients that honor MCP list-changed notifications. Clients that do not refresh on their own need a reconnect or restart.
+
+`mainwp_configure` refuses rather than saving something that would be ignored or overridden:
+
+- Any connection environment variable (`MAINWP_URL`, `MAINWP_USER`, `MAINWP_APP_PASSWORD`, `MAINWP_TOKEN`) is set. Environment variables outrank the file it writes, so finish setup there.
+- A `settings.json` exists in the server's working directory. That file is loaded first and would permanently shadow the saved credentials.
+- The server is already connected. Change credentials by editing the config file or the client's `env` block.
+
+It writes only those three connection fields, never security settings, and blocking `mainwp_configure` through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely while leaving the manual path documented.
+
 ## Configuration
 
 | Variable                           | Required       | Default    | Description                                                                                            |

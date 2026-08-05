@@ -75,17 +75,26 @@ describe('CLI entry point', () => {
     expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
   }, 30000);
 
-  it('unconfigured start prints setup guidance to stderr, not a fatal error', async () => {
+  it('unconfigured start prints setup guidance to stderr and starts in setup mode', async () => {
+    // stdin is closed here, so the stdio transport sees EOF and the session
+    // ends immediately; the point is that it started at all instead of
+    // exiting with a configuration failure.
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-cli-test-'));
     try {
       const result = await runCli([], { cwd: tempHome, env: unconfiguredEnv(tempHome) });
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain('not configured yet');
       expect(result.stderr).toContain('MAINWP_URL');
       expect(result.stderr).toContain('MAINWP_APP_PASSWORD');
       expect(result.stderr).toContain('Setup guide:');
+      expect(result.stderr).toContain('setup mode');
       expect(result.stderr).not.toContain('Fatal error');
+      // stdout stays protocol-only: guidance goes to stderr, and anything the
+      // server does write is a JSON-RPC message.
+      for (const line of result.stdout.split('\n').filter(Boolean)) {
+        expect(JSON.parse(line)).toMatchObject({ jsonrpc: '2.0' });
+      }
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }

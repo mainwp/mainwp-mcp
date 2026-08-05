@@ -1,0 +1,126 @@
+/**
+ * Settings writer tests.
+ *
+ * The only file-writing path in src/, and it writes credentials, so the
+ * permission, atomicity, and refusal contracts get direct coverage.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  SettingsWriteError,
+  trustedSettingsDir,
+  trustedSettingsPath,
+  writeConnectionSettings,
+} from './settings-writer.js';
+
+const CONNECTION = {
+  dashboardUrl: 'https://dashboard.example.com',
+  username: 'admin',
+  appPassword: 'aaaa bbbb cccc dddd eeee ffff',
+};
+
+describe('writeConnectionSettings', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-writer-'));
+  });
+
+  afterEach(() => {
+    // Restore any permissions a test tightened so cleanup can remove the tree.
+    const dir = trustedSettingsDir(home);
+    if (fs.existsSync(dir)) fs.chmodSync(dir, 0o700);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('creates the config file 0600 inside a 0700 directory', () => {
+    const written = writeConnectionSettings(CONNECTION, home);
+
+    expect(written).toBe(trustedSettingsPath(home));
+    expect(fs.statSync(written).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(trustedSettingsDir(home)).mode & 0o777).toBe(0o700);
+    expect(JSON.parse(fs.readFileSync(written, 'utf-8'))).toEqual(CONNECTION);
+  });
+
+  it('tightens an existing group- and world-readable config directory', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
+
+    writeConnectionSettings(CONNECTION, home);
+
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it('overwrites only the three connection fields and preserves the rest', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      trustedSettingsPath(home),
+      JSON.stringify({
+        dashboardUrl: 'https://old.example.com',
+        username: 'old',
+        appPassword: 'old password value',
+        safeMode: true,
+        blockedTools: ['delete_site_v1'],
+      })
+    );
+
+    writeConnectionSettings(CONNECTION, home);
+
+    expect(JSON.parse(fs.readFileSync(trustedSettingsPath(home), 'utf-8'))).toEqual({
+      ...CONNECTION,
+      safeMode: true,
+      blockedTools: ['delete_site_v1'],
+    });
+  });
+
+  it('refuses to write when the existing file is malformed JSON and leaves it untouched', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(trustedSettingsPath(home), '{ not json');
+
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(SettingsWriteError);
+    expect(fs.readFileSync(trustedSettingsPath(home), 'utf-8')).toBe('{ not json');
+  });
+
+  it('refuses a JSON array as the existing file', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(trustedSettingsPath(home), '[]');
+
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(/JSON object/);
+  });
+
+  it('refuses when the target is a symlink instead of a regular file', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const decoy = path.join(home, 'decoy.json');
+    fs.writeFileSync(decoy, '{}');
+    fs.symlinkSync(decoy, trustedSettingsPath(home));
+
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(/not a regular file/);
+    expect(fs.readFileSync(decoy, 'utf-8')).toBe('{}');
+  });
+
+  it('refuses when the config directory path is a file', () => {
+    fs.mkdirSync(path.join(home, '.config'), { recursive: true });
+    fs.writeFileSync(trustedSettingsDir(home), 'occupied');
+
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(SettingsWriteError);
+  });
+
+  it('leaves no temp file and no target behind when the write fails', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o500); // read+execute only: file creation fails with EACCES
+
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(SettingsWriteError);
+
+    fs.chmodSync(dir, 0o700);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});
