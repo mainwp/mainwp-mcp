@@ -330,9 +330,8 @@ async function confirmOnlyStateGuard(
 }
 
 /**
- * Shared by the read-only fixture command scenarios: the commands say they
- * report and never change anything, so the whole fixture must survive the run
- * byte for byte.
+ * Shared by the read-only fixture scenarios: they only report, so the whole
+ * fixture must survive the run byte for byte.
  */
 async function commandReadOnlyStateGuard(
   truth: AgentGroundTruth,
@@ -346,7 +345,7 @@ async function commandReadOnlyStateGuard(
   return {
     ok,
     evidence: { stateUnchanged: ok },
-    ...(ok ? {} : { reason: 'A read-only command scenario changed the fixture dashboard state.' }),
+    ...(ok ? {} : { reason: 'A read-only scenario changed the fixture dashboard state.' }),
   };
 }
 
@@ -564,7 +563,7 @@ export const agentScenarios: AgentScenario[] = [
     // Fixture rather than live: the exactly-one-update precondition drifted
     // twice in one day as testbed sites accumulated WooCommerce updates.
     target: 'fixture',
-    task: () => 'Which theme is active on the site that has plugin updates pending?',
+    task: () => 'Which theme is active on the connected site that has plugin updates pending?',
     expectedTools: ['list_updates_v1', 'get_site_plugins_v1', 'get_site_themes_v1'],
     groundTruth: async verifier => {
       // Connected sites only: the fixture keeps a disconnected site that also
@@ -592,8 +591,10 @@ export const agentScenarios: AgentScenario[] = [
         chainSiteUrl: site.url,
         activeTheme: themes.active_theme,
         ...(activeTheme?.name ? { activeThemeName: activeTheme.name } : {}),
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
+    stateGuard: commandReadOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (
         truth.siteId === undefined ||
@@ -628,6 +629,9 @@ export const agentScenarios: AgentScenario[] = [
       );
       const oracleStable =
         afterUpdateSiteUrls.length === 1 && afterUpdateSiteUrls[0] === truth.chainSiteUrl;
+      // The oracle only watches the update inventory, and delete_site_v1 is
+      // exposed here, so the whole fixture has to survive the run as well.
+      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const finalNamesTheme = [truth.activeTheme, truth.activeThemeName]
         .filter((value): value is string => Boolean(value))
@@ -672,10 +676,11 @@ export const agentScenarios: AgentScenario[] = [
           },
         },
         stateChange: {
-          pass: oracleStable,
+          pass: oracleStable && stateGuard.ok,
           evidence: {
             beforeUpdateSiteUrls: [truth.chainSiteUrl],
             afterUpdateSiteUrls,
+            stateUnchanged: stateGuard.ok,
           },
         },
         faithfulFinalAnswer: {
@@ -693,7 +698,9 @@ export const agentScenarios: AgentScenario[] = [
         evaluation,
         ...(!oracleStable
           ? { reason: 'The pending plugin update inventory changed during the agent run.' }
-          : {}),
+          : stateGuard.ok
+            ? {}
+            : { reason: stateGuard.reason }),
       };
     },
   },
@@ -2537,6 +2544,24 @@ export function summarizeAgentRun(
   return { comparisons, exitCode: agentRunExitCode(results, comparisons, options.compare) };
 }
 
+/**
+ * The agent inherits the operator's shell, where a stray MAINWP_* export
+ * (MAINWP_SAFE_MODE, MAINWP_BLOCKED_TOOLS, a second dashboard URL) would reach
+ * the spawned server and silently regrade the run. Only the harness's own
+ * MAINWP_MCP_ACCEPTANCE_* flags survive; the scenario's env is authoritative.
+ */
+export function agentSpawnEnv(
+  base: NodeJS.ProcessEnv,
+  scenarioServerEnv: Record<string, string>
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (key.startsWith('MAINWP_') && !key.startsWith('MAINWP_MCP_ACCEPTANCE_')) continue;
+    env[key] = value;
+  }
+  return { ...env, ...scenarioServerEnv };
+}
+
 async function runClaude(
   argv: string[],
   cwd: string,
@@ -2640,6 +2665,7 @@ async function main(): Promise<void> {
       keepConsumer: options.keepConsumer,
       arms: arms ?? null,
       repeat: options.repeat,
+      maxTurns: options.maxTurns,
     },
     '-agent'
   );
@@ -2845,10 +2871,7 @@ async function main(): Promise<void> {
         const command = await runClaude(
           argv,
           cwd,
-          {
-            ...process.env,
-            ...scenarioServerEnv,
-          },
+          agentSpawnEnv(process.env, scenarioServerEnv),
           line => {
             try {
               const event = JSON.parse(line) as unknown;

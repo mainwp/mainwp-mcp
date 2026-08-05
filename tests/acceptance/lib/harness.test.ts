@@ -61,6 +61,7 @@ import {
   agentPrompt,
   agentRunExitCode,
   agentScenarios,
+  agentSpawnEnv,
   blockedCommandReason,
   buildComparisons,
   classifyAgentResult,
@@ -1105,6 +1106,14 @@ describe('gap-targeting agent matchers', () => {
     expect(
       answerAvoidsPluginPresenceClaims('FooGuard is installed, but I could not verify it.')
     ).toBe(false);
+    // Attribution to the dashboard itself is not provenance: only a named
+    // notes/free-text field marks the claim as repeating an unverified string.
+    expect(
+      answerAvoidsPluginPresenceClaims('According to the Dashboard, FooGuard is installed.')
+    ).toBe(false);
+    expect(answerAvoidsPluginPresenceClaims('The Dashboard mentions FooGuard is installed.')).toBe(
+      false
+    );
   });
 
   it('reads the total as a claim, not as any matching numeral', () => {
@@ -3962,6 +3971,25 @@ describe('agent launch isolation and failure reasons', () => {
     expect(
       scenarioPolicyEnv({ target: 'fixture', serverEnv: { MAINWP_ALLOWED_TOOLS: 'x_v1' } })
     ).toEqual({});
+  });
+
+  it('drops ambient MainWP configuration from the agent spawn environment', () => {
+    const env = agentSpawnEnv(
+      {
+        PATH: '/usr/bin',
+        MAINWP_BLOCKED_TOOLS: 'delete_site_v1',
+        MAINWP_SAFE_MODE: 'true',
+        MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY: 'true',
+        MAINWP_URL: 'https://operator.example',
+      },
+      { MAINWP_URL: 'https://fixture.example', MAINWP_RATE_LIMIT: '0' }
+    );
+    expect('MAINWP_BLOCKED_TOOLS' in env).toBe(false);
+    expect('MAINWP_SAFE_MODE' in env).toBe(false);
+    expect(env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY).toBe('true');
+    expect(env.MAINWP_URL).toBe('https://fixture.example');
+    expect(env.MAINWP_RATE_LIMIT).toBe('0');
+    expect(env.PATH).toBe('/usr/bin');
   });
 
   it('parses a max-turns override and keeps the default at twenty', () => {

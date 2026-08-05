@@ -374,7 +374,7 @@ export const listTagsCrossCheck: ScenarioDefinition = {
 export const advertisedRoutesResolve: ScenarioDefinition = {
   id: 'advertised-routes-resolve',
   purpose:
-    'Every ability the fixture routes is advertised in its catalog and resolves without rest_no_route.',
+    'Every ability the fixture routes is advertised in its catalog and resolves with an expected outcome.',
   kind: 'read',
   targets: ['fixture'],
   async run(ctx) {
@@ -391,18 +391,29 @@ export const advertisedRoutesResolve: ScenarioDefinition = {
       []
     );
 
-    // Minimal input suffices: an unrouted ability answers rest_no_route no
-    // matter the input, while a routed one answers with data or a validation
-    // or not-found error of its own.
-    const unrouted: string[] = [];
+    // Minimal input suffices, and the accepted outcomes are whitelisted: a
+    // routed ability answers with data or one of the two errors an empty input
+    // provokes. Anything else (rest_no_route, a fixture fault, a malformed
+    // body) is a failure rather than a resolution nobody looked at.
+    const failures: Array<{ name: string; error: string }> = [];
     for (const name of checkable) {
       try {
         await ctx.verifier.execute(name, {});
       } catch (error) {
-        if (String(error).includes('rest_no_route')) unrouted.push(name);
+        const message = String(error);
+        if (
+          !message.includes('mainwp_site_not_found') &&
+          !message.includes('fixture_write_disabled')
+        ) {
+          failures.push({ name, error: message.slice(0, 300) });
+        }
       }
     }
-    ctx.assert.deepEqual('every advertised routed ability resolves', unrouted, []);
+    ctx.assert.deepEqual(
+      'every advertised routed ability resolves with an expected outcome',
+      failures,
+      []
+    );
 
     const basic = (await ctx.verifier.execute('mainwp/get-sites-basic-v1', { per_page: 100 })) as {
       items: Array<Record<string, unknown>>;
