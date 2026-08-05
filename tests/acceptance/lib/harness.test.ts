@@ -3973,6 +3973,16 @@ describe('agent launch isolation and failure reasons', () => {
         scenarioCwd: '/elsewhere',
       })
     ).toBe('/elsewhere');
+    // The explicit override cannot point back into the repository: that would
+    // quietly reintroduce the repo-root launches this builder exists to end.
+    expect(() =>
+      agentLaunchCwd({
+        tempRoot: '/tmp/pack',
+        scenarioId: 'agent-count-sites',
+        iteration: 1,
+        scenarioCwd: path.join(repoRoot, 'tests'),
+      })
+    ).toThrow('inside the repository');
   });
 
   it('names the CLI terminal reason when a blocked command has no stderr', () => {

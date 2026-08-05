@@ -333,7 +333,7 @@ async function confirmOnlyStateGuard(
  * Shared by the read-only fixture scenarios: they only report, so the whole
  * fixture must survive the run byte for byte.
  */
-async function commandReadOnlyStateGuard(
+async function readOnlyStateGuard(
   truth: AgentGroundTruth,
   verifier: IndependentVerifier
 ): Promise<{ ok: boolean; reason?: string; evidence?: unknown }> {
@@ -594,7 +594,7 @@ export const agentScenarios: AgentScenario[] = [
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
-    stateGuard: commandReadOnlyStateGuard,
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (
         truth.siteId === undefined ||
@@ -631,7 +631,7 @@ export const agentScenarios: AgentScenario[] = [
         afterUpdateSiteUrls.length === 1 && afterUpdateSiteUrls[0] === truth.chainSiteUrl;
       // The oracle only watches the update inventory, and delete_site_v1 is
       // exposed here, so the whole fixture has to survive the run as well.
-      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const finalNamesTheme = [truth.activeTheme, truth.activeThemeName]
         .filter((value): value is string => Boolean(value))
@@ -1612,7 +1612,7 @@ export const agentScenarios: AgentScenario[] = [
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
-    stateGuard: commandReadOnlyStateGuard,
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (
         truth.targetSiteId === undefined ||
@@ -1652,7 +1652,7 @@ export const agentScenarios: AgentScenario[] = [
         gradedResultText.includes(value.toLowerCase())
       );
       const resultsNameUpdates = namesPendingUpdates(gradedResultText, pendingUpdateNames);
-      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const namesTargetSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
         finalText.includes(value.toLowerCase())
@@ -1753,7 +1753,7 @@ export const agentScenarios: AgentScenario[] = [
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
-    stateGuard: commandReadOnlyStateGuard,
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (!truth.allSiteUrls || !truth.allSiteLabels) {
         throw new Error('Troubleshoot-command ground truth was incomplete');
@@ -1770,7 +1770,7 @@ export const agentScenarios: AgentScenario[] = [
       const listingCoversSites =
         listingResults.length > 0 &&
         truth.allSiteUrls.every(url => listingText.includes(hostnameOf(url).toLowerCase()));
-      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       // Step one of the command is to list the sites and ask which one, so an
       // answer that only asks skipped the half the user needs to answer it.
       const asksWhichSite = matchesSiteSelectionRequestAnswer(collected.finalText);
@@ -1835,6 +1835,16 @@ export interface AgentCliOptions {
   maxTurns: number;
 }
 
+function positiveIntegerFlag(args: string[], index: number, flag: string): number {
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a count`);
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${flag} requires a positive integer, got: ${value}`);
+  }
+  return parsed;
+}
+
 export function parseArgs(args: string[]): AgentCliOptions {
   const options: AgentCliOptions = {
     scenarioIds: [],
@@ -1861,22 +1871,10 @@ export function parseArgs(args: string[]): AgentCliOptions {
     } else if (arg === '--compare') {
       options.compare = true;
     } else if (arg === '--repeat') {
-      const value = args[index + 1];
-      if (!value || value.startsWith('--')) throw new Error('--repeat requires a count');
-      const parsed = Number(value);
-      if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new Error(`--repeat requires a positive integer, got: ${value}`);
-      }
-      options.repeat = parsed;
+      options.repeat = positiveIntegerFlag(args, index, '--repeat');
       index += 1;
     } else if (arg === '--max-turns') {
-      const value = args[index + 1];
-      if (!value || value.startsWith('--')) throw new Error('--max-turns requires a count');
-      const parsed = Number(value);
-      if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new Error(`--max-turns requires a positive integer, got: ${value}`);
-      }
-      options.maxTurns = parsed;
+      options.maxTurns = positiveIntegerFlag(args, index, '--max-turns');
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -1955,7 +1953,15 @@ export function agentLaunchCwd(options: {
   if (options.slashCommand) {
     return path.join(options.tempRoot, `command-${options.scenarioId}-${options.iteration}`);
   }
-  if (options.scenarioCwd) return options.scenarioCwd;
+  if (options.scenarioCwd) {
+    // The override must not quietly reintroduce repo-root launches.
+    if (!path.relative(REPO_ROOT, path.resolve(options.scenarioCwd)).startsWith('..')) {
+      throw new Error(
+        `Scenario ${options.scenarioId} sets cwd inside the repository: ${options.scenarioCwd}`
+      );
+    }
+    return options.scenarioCwd;
+  }
   return path.join(options.tempRoot, `agent-${options.scenarioId}-${options.iteration}`);
 }
 

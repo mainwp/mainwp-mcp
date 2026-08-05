@@ -421,7 +421,8 @@ export const advertisedRoutesResolve: ScenarioDefinition = {
       per_page: number;
       total: number;
     };
-    ctx.assert.equal('get-sites-basic returns every fixture site', basic.total, 3);
+    const allSites = await ctx.verifier.listSites();
+    ctx.assert.equal('get-sites-basic returns every fixture site', basic.total, allSites.length);
     ctx.assert.equal('get-sites-basic pages match the request', basic.per_page, 100);
     ctx.assert.deepEqual(
       'get-sites-basic items carry the documented basic shape',
