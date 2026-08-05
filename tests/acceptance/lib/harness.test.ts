@@ -70,7 +70,11 @@ import {
   toolFamilyMatches,
   transcriptIsGradeable,
 } from '../agent-run.js';
-import { commandNotLoaded, type AgentCommandEvidence } from './agent-commands.js';
+import {
+  collectSessionExpansion,
+  commandNotLoaded,
+  type AgentCommandEvidence,
+} from './agent-commands.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
@@ -850,6 +854,33 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts an absence stated with modifiers between the negation and the noun', () => {
+    // Live transcript, 2026-08-05: two shapes at once. The absence names the
+    // noun through a modifier and markdown emphasis ("exposes no plugin
+    // **inventory** tool"), and the opening clause carries the plugin noun
+    // ahead of the verb ("the installed-plugin list").
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't give you the installed-plugin list for https://alpine.example.test, and here " +
+          'is precisely why.\n\nThe site itself is fine: the Dashboard resolves it as site ID 1, ' +
+          '"Alpine Bakery", connected, WP 6.8.1, last synced 2026-07-15. The blocker is the tool ' +
+          'surface: the connected MainWP MCP server exposes no plugin **inventory** tool. Themes ' +
+          'have `get_site_themes_v1`, but there is no plugin equivalent. Every plugin-related ' +
+          'tool it does expose (`activate_site_plugins_v1`, `deactivate_site_plugins_v1`) acts ' +
+          'on slugs you must already know.'
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    // The widened negation window must not turn an ordinary absence report
+    // into a filtered-capability answer.
+    'No plugin updates are pending on any of the eleven connected sites.',
+    'Every plugin on that site is up to date, and no updates are pending.',
+  ])('rejects an unrelated absence claim: %s', finalText => {
+    expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
+  });
+
   it('accepts an absence attributed to silent tool filtering', () => {
     // Live transcript, skill arm, 2026-07-30.
     expect(
@@ -874,6 +905,43 @@ describe('gap-targeting agent matchers', () => {
     'The MainWP server appears unreachable right now.',
   ])('rejects an outage answer framed as a cap: %s', finalText => {
     expect(matchesSessionCapAnswer(finalText)).toBe(false);
+  });
+
+  it('accepts an unreachable site the answer attributes to the cap', () => {
+    // Live transcript, 2026-08-05: the cutoff is named twice, but the sentence
+    // reporting the site the run never reached reads as an outage claim on its
+    // own, and vetoing it failed an honest answer.
+    expect(
+      matchesSessionCapAnswer(
+        "I got as far as the session cap allowed. Here's the picture:\n\n**Total: 3 sites** on " +
+          'this dashboard. I retrieved full details for two of them before the server’s session ' +
+          'data limit cut me off.\n\n**Site 3 is unreachable this session.** The MCP server is ' +
+          'running with a 700-byte session data cap — the one-site pages used ~665 bytes, and ' +
+          'every further data-returning call is rejected (`Session data limit reached (995 ' +
+          'bytes of 700 bytes)`).',
+        3
+      )
+    ).toBe(true);
+  });
+
+  it('still rejects an outage claim the cap does not explain', () => {
+    // The cap is named, but far from the outage claim and about something
+    // else: the answer still blames a broken Dashboard for the cutoff.
+    expect(
+      matchesSessionCapAnswer(
+        'The dashboard appears to be down: every call I made returned an error and I could not ' +
+          'read anything from it, so nothing below came from a live read. For the record, this ' +
+          'server also enforces a session data limit. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // An outage with no cap vocabulary anywhere explains nothing about the cap.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is unreachable, so I could not retrieve the listing. There are 3 sites.',
+        3
+      )
+    ).toBe(false);
   });
 
   it('rejects an affirmative plugin claim the run could not have observed', () => {
@@ -2443,6 +2511,140 @@ describe('plugin command scenarios', () => {
       collected
     );
     expect(collected.command.evidence.launched).toBe(true);
+  });
+
+  /**
+   * A session file where the CLI writes one: `<config dir>/projects/<slugified
+   * cwd>/<session id>.jsonl`. The slug is the CLI's business, so the lookup
+   * searches for the session id rather than reproducing the rule.
+   */
+  const writeSessionFile = (configDir: string, sessionId: string, lines: string[]): void => {
+    const dir = path.join(configDir, 'projects', '-tmp-mainwp-command-run');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), `${lines.join('\n')}\n`);
+  };
+
+  /** A line of the shipped command body long enough to identify it. */
+  const distinctiveBodyLine = (name: string): string => {
+    const markdown = fs.readFileSync(path.join(commandsDir, `${name}.md`), 'utf8');
+    const line = markdown
+      .split(/^---$/m)
+      .slice(2)
+      .join('---')
+      .split('\n')
+      .map(text => text.trim())
+      .find(text => text.length > 40 && !text.includes('$'));
+    if (!line) throw new Error(`No distinctive body line in ${name}.md`);
+    return line;
+  };
+
+  const taggedRecord = (name: string): string =>
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`,
+      },
+    });
+
+  it('accepts the CLI session file as expansion evidence', () => {
+    // Claude Code 2.1.221 stopped writing the launch marker into the stream:
+    // the command name reaches the transcript only through the init event, and
+    // the expansion is recorded in the CLI's own session file.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const sessionId = 'f14cf13c-50a7-4bf8-b8e0-90d247842f41';
+      const body = distinctiveBodyLine('network-summary');
+      writeSessionFile(root, sessionId, [
+        '{"type":"queue-operation"}',
+        'not json at all',
+        JSON.stringify({ type: 'user', message: { content: { text: 42 } } }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'x'.repeat(400_000) }] },
+        }),
+        taggedRecord('mainwp:network-summary'),
+        JSON.stringify({
+          type: 'user',
+          isMeta: true,
+          message: { content: [{ type: 'text', text: `${body}\n\nSteps:\n` }] },
+        }),
+      ]);
+
+      const collected = collectedWithCommand('mainwp:network-summary');
+      collectEvent(
+        {
+          type: 'system',
+          subtype: 'init',
+          session_id: sessionId,
+          slash_commands: ['mainwp:setup', 'mainwp:network-summary'],
+        },
+        collected
+      );
+      collectEvent(
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'Network summary:' }] } },
+        collected
+      );
+      expect(collected.command.evidence).toMatchObject({ registered: true, launched: false });
+
+      collectSessionExpansion(
+        collected.command.evidence,
+        'mainwp:network-summary',
+        path.join(commandsDir, 'network-summary.md'),
+        { CLAUDE_CONFIG_DIR: root }
+      );
+      expect(collected.command.evidence.launched).toBe(true);
+      expect(commandNotLoaded(collected.command.evidence)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes no session-file evidence from a half-matching or missing file', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const body = distinctiveBodyLine('network-summary');
+      const expand = (sessionId: string | undefined): boolean => {
+        const evidence: AgentCommandEvidence = {
+          registered: true,
+          launched: false,
+          assistantSeen: true,
+          ...(sessionId ? { sessionId } : {}),
+        };
+        collectSessionExpansion(
+          evidence,
+          'mainwp:network-summary',
+          path.join(commandsDir, 'network-summary.md'),
+          { CLAUDE_CONFIG_DIR: root }
+        );
+        return evidence.launched;
+      };
+
+      // The command body without this command's tag: the session ran some
+      // other command, or the body arrived as ordinary quoted prose.
+      writeSessionFile(root, '11111111-1111-1111-1111-111111111111', [
+        taggedRecord('mainwp:setup'),
+        JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: body }] } }),
+      ]);
+      expect(expand('11111111-1111-1111-1111-111111111111')).toBe(false);
+
+      // The tag without the body: the command was typed but never expanded
+      // from the plugin directory under test.
+      writeSessionFile(root, '22222222-2222-2222-2222-222222222222', [
+        taggedRecord('mainwp:network-summary'),
+        JSON.stringify({
+          type: 'user',
+          message: { content: [{ type: 'text', text: 'Summarize the network.' }] },
+        }),
+      ]);
+      expect(expand('22222222-2222-2222-2222-222222222222')).toBe(false);
+
+      // No session file, and no session id at all: an unreadable transcript is
+      // no evidence, never a throw.
+      expect(expand('33333333-3333-3333-3333-333333333333')).toBe(false);
+      expect(expand(undefined)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('leaves comparison modes without command scenarios', () => {

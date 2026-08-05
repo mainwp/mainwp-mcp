@@ -39,6 +39,7 @@ import {
 } from './lib/agent-matchers.js';
 import {
   collectCommandEvidence,
+  collectSessionExpansion,
   commandNotLoaded,
   type AgentCommandEvidence,
 } from './lib/agent-commands.js';
@@ -228,6 +229,10 @@ const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const CANONICAL_SKILL_DIR = path.join(REPO_ROOT, '.agents', 'skills', AGENT_SKILL_NAME);
 /** The plugin whose `/mainwp:*` commands the command scenarios drive. */
 const PLUGIN_DIR = path.join(REPO_ROOT, 'plugins', 'mainwp');
+
+/** The markdown behind `mainwp:<name>`, whose body is the expansion evidence. */
+const commandBodyFile = (commandName: string): string =>
+  path.join(PLUGIN_DIR, 'commands', `${commandName.split(':').pop() ?? commandName}.md`);
 
 /**
  * Ability families the reporting commands may use, split so a scenario can
@@ -2775,6 +2780,16 @@ async function main(): Promise<void> {
           `Basic ${basicCredential}`,
         ]);
         const skill = { staged: pass.arm?.skillStaged === true, ...collected.skill };
+        // Only after the run: the CLI writes its session file as it goes, and
+        // the expansion record is the last thing needed from it.
+        if (collected.command) {
+          collectSessionExpansion(
+            collected.command.evidence,
+            collected.command.name,
+            commandBodyFile(collected.command.name),
+            process.env
+          );
+        }
         const commandEvidence = collected.command
           ? { name: collected.command.name, ...collected.command.evidence }
           : undefined;
