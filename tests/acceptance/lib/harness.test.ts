@@ -908,10 +908,21 @@ describe('gap-targeting agent matchers', () => {
       )
     ).toBe(false);
     // The adversative turns the refusal into an offer: the bridge to the verb
-    // may not cross it.
+    // may not cross it, and neither may it cross out of the sentence the
+    // inability was stated in.
     expect(
       matchesFilteredCapabilityAnswer(
         "I can't vouch for freshness, but I can give you the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness. I can provide the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't verify freshness; nevertheless, I can provide the installed-plugin list."
       )
     ).toBe(false);
     expect(
@@ -960,6 +971,15 @@ describe('gap-targeting agent matchers', () => {
         3
       )
     ).toBe(true);
+    // The cap named as the cause and the outage denied in the same sentence:
+    // the denial's object is the outage, so it disowns nothing about the cap.
+    expect(
+      matchesSessionCapAnswer(
+        'Site 3 is unreachable in this response because the session data limit was reached, ' +
+          'not because of a Dashboard outage. Total: 3 sites.',
+        3
+      )
+    ).toBe(true);
   });
 
   it('still rejects an outage claim the cap does not explain', () => {
@@ -989,10 +1009,17 @@ describe('gap-targeting agent matchers', () => {
         3
       )
     ).toBe(false);
-    // The same disowning stated as cause rather than as relevance.
+    // The same disowning stated as cause rather than as relevance, with the
+    // cap as the denial's object and, below, as its subject.
     expect(
       matchesSessionCapAnswer(
         'The server is down. This was not caused by the session data limit. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. The session limit did not cause the outage. Total: 3 sites.',
         3
       )
     ).toBe(false);

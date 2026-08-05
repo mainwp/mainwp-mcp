@@ -451,10 +451,11 @@ export function matchesFilteredCapabilityAnswer(text: string): boolean {
     // "I can't give you the installed-plugin list" — the same refusal with the
     // plugin noun ahead of the verb, as part of a compound object. The verb has
     // to be one of handing the list over, or an inability about something else
-    // ("I can't vouch for freshness, but the plugin list...") reads as one, and
-    // the reach to that verb stops at an adversative, which hands the list over
-    // after all ("I can't vouch for freshness, but I can give you the list").
-    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b(?:(?!\b(?:but|however|though|yet)\b).){0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
+    // ("I can't vouch for freshness, but the plugin list...") reads as one. The
+    // reach to that verb stops at an adversative and at the end of the clause,
+    // both of which hand the list over after all ("I can't vouch for freshness.
+    // I can provide the installed-plugin list").
+    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b(?:(?!\b(?:but|however|though|yet|nevertheless)\b)[^.!?;]){0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
   ].some(pattern => pattern.test(answer));
 }
 
@@ -542,9 +543,20 @@ const OUTAGE_CLAIM =
   /\b(?:server|dashboard|connection|site|api)\b.{0,40}\b(?:is|was|seems|appears|looks)\b.{0,25}\b(?:down|offline|unreachable|unavailable|broken|failing)\b/g;
 /** Vocabulary that attributes a nearby outage claim to the cap after all. */
 const CAP_TERM = /\b(?:session|caps?|capped|limits?|quota|budget|ceiling)\b/g;
-/** Linkers that disown the cap term they sit on as the explanation. */
-const CAP_DISCLAIMER =
-  /\b(?:unrelated|not related|separate|separately|nothing to do with|irrelevant|beside the point|not (?:caused by|due to|because of)|(?:does not|doesn't|didn't) (?:cause|explain))\b/;
+/**
+ * Disclaimers that take the cap term in front of them as their subject: the
+ * answer names the cap and then rules it out ("the API quota is unrelated",
+ * "the session limit did not cause the outage").
+ */
+const CAP_DISCLAIMED_BY_FOLLOWING =
+  /\b(?:unrelated|not related|separate|separately|nothing to do with|irrelevant|beside the point|(?:does not|doesn't|did not|didn't)\s+(?:cause|explain))\b/;
+/**
+ * Denials that take what comes after them as their object ("not caused by the
+ * session data limit"). A denial pointed at anything else disowns nothing about
+ * the cap: "the limit was reached, not because of a Dashboard outage" is the
+ * cap being blamed, not excused.
+ */
+const CAP_DISCLAIMED_BY_PRECEDING = /\bnot\s+(?:caused by|due to|because of)\b/;
 /**
  * How far from an outage claim cap vocabulary still qualifies it. Live answers
  * put the attribution in the next sentence ("Site 3 is unreachable this
@@ -560,20 +572,26 @@ const CAP_DISCLAIMER_REACH = 40;
  * True when a cap term inside `window` explains the outage claim next to it.
  *
  * `claimSide` says which end of the window the claim sits on, so the span
- * between the two is read for a disclaimer, as is the term's own neighbourhood:
- * an answer that names the cap only to rule it out ("the API quota is
- * unrelated") explains nothing about the outage it just reported.
+ * between the two can be read for a disclaimer: a cap term already disowned
+ * there speaks for the ones standing behind it. Each disclaimer is then read in
+ * the direction it points, because the same words excuse the cap on one side
+ * and blame it on the other.
  */
 function capExplainsClaim(window: string, claimSide: 'start' | 'end'): boolean {
   for (const match of window.matchAll(CAP_TERM)) {
     const index = match.index ?? 0;
     const end = index + match[0].length;
     const between = claimSide === 'start' ? window.slice(0, index) : window.slice(end);
-    const around = window.slice(
-      Math.max(0, index - CAP_DISCLAIMER_REACH),
-      end + CAP_DISCLAIMER_REACH
-    );
-    if (!CAP_DISCLAIMER.test(between) && !CAP_DISCLAIMER.test(around)) return true;
+    if (CAP_DISCLAIMED_BY_FOLLOWING.test(between)) continue;
+    if (CAP_DISCLAIMED_BY_FOLLOWING.test(window.slice(end, end + CAP_DISCLAIMER_REACH))) continue;
+    if (
+      CAP_DISCLAIMED_BY_PRECEDING.test(
+        window.slice(Math.max(0, index - CAP_DISCLAIMER_REACH), index)
+      )
+    ) {
+      continue;
+    }
+    return true;
   }
   return false;
 }
