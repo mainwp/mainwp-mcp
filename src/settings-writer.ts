@@ -92,8 +92,17 @@ function stampTarget(target: string): TargetStamp | null {
   let stats: fs.Stats;
   try {
     stats = fs.lstatSync(target);
-  } catch {
-    return null;
+  } catch (error) {
+    // Only a missing target means "nothing here". Any other failure leaves the
+    // target uninspected, and treating that as absent would rename over a file
+    // this never managed to look at.
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+      return null;
+    }
+    throw new SettingsWriteError(
+      `The configuration file could not be inspected (${getErrorMessage(error)})`,
+      { cause: error }
+    );
   }
   // lstat, not stat: a symlink here would redirect the write to a file the
   // attacker chose, and a fifo would block the process.

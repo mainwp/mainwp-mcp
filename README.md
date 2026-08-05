@@ -138,7 +138,7 @@ Once configuration succeeds, the full tool list appears in the same session for 
 
 - Any connection environment variable (`MAINWP_URL`, `MAINWP_USER`, `MAINWP_APP_PASSWORD`, `MAINWP_TOKEN`) is set. Environment variables outrank the file it writes, so finish setup there.
 - A `settings.json` exists in the server's working directory. That file is loaded first and would permanently shadow the saved credentials.
-- The server is already connected. Change credentials by editing the config file or the client's `env` block.
+- The server already has credentials loaded, whether or not they are currently working. Setup will not replace existing credentials from chat. If the connection is failing, `mainwp_get_setup_status` retries with the credentials already loaded; to change them, edit the config file or the client's `env` block.
 
 It writes only those three connection fields, never security settings, and blocking `mainwp_configure` through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely while leaving the manual path documented.
 

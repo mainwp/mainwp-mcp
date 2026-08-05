@@ -223,14 +223,13 @@ function relayInstructions(chatSetupAvailable: boolean): string {
   return 'Present both options to the user neutrally, including the note about chat history, and let them choose. If they pick option 2, collect all three values and then call mainwp_configure once with dashboard_url, username, and application_password. Do not guess or reuse values the user did not give you.';
 }
 
-function degradedGuidance(reason: string, chatSetupAvailable: boolean): string {
-  const base = `The MainWP MCP server has credentials but could not reach the Dashboard at startup: ${reason}
+// The manual fix is always included. Chat setup cannot replace loaded
+// credentials, so editing the config by hand is the only way out of a wrong
+// tuple whether or not mainwp_configure is available.
+function degradedGuidance(reason: string): string {
+  return `The MainWP MCP server has credentials but could not reach the Dashboard at startup: ${reason}
 
-The credentials are still loaded. Ask me to check again once the Dashboard is reachable and I will retry with them; call ${SETUP_STATUS_TOOL} to run that retry.`;
-  if (!chatSetupAvailable) {
-    return base;
-  }
-  return `${base}
+The credentials are still loaded. Ask me to check again once the Dashboard is reachable and I will retry with them; call ${SETUP_STATUS_TOOL} to run that retry.
 
 If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client.`;
 }
@@ -384,6 +383,21 @@ function validateCredentialField(raw: unknown, field: string, maxLength: number)
   return raw;
 }
 
+/**
+ * Fire the listChanged notifications after a state swap that already happened.
+ * A client that rejects the notification has not undone the swap, so the
+ * failure is logged and the caller still reports what it actually did.
+ */
+async function notifyQuietly(notify: SetupNotifier, logger: Logger): Promise<void> {
+  try {
+    await notify();
+  } catch (error) {
+    logger.warning('Could not send the setup listChanged notifications', {
+      error: sanitizeError(getErrorMessage(error)),
+    });
+  }
+}
+
 /** Environment variables that would outrank anything configure could persist. */
 function activeConnectionEnvVars(): string[] {
   return CONNECTION_ENV_VARS.filter(name => {
@@ -413,30 +427,36 @@ async function handleSetupStatus(
           dashboardHost: hostOf(config.dashboardUrl),
           problem: reason,
           note: 'Another setup operation is already running, so the connection was not retried. Ask again once it finishes.',
-          guidance: degradedGuidance(reason, chatSetupAvailable),
+          guidance: degradedGuidance(reason),
         });
       }
       try {
-        // Credential-free recovery: the retained config may simply have hit a
-        // Dashboard that was down at startup.
-        const abilities = await validateCredentials(config, logger);
+        let abilities: Ability[];
+        try {
+          // Credential-free recovery: the retained config may simply have hit a
+          // Dashboard that was down at startup.
+          abilities = await validateCredentials(config, logger);
+        } catch (error) {
+          const reason = sanitizeError(getErrorMessage(error));
+          state.markDegraded(reason);
+          return setupResult(policy, {
+            state: 'degraded',
+            dashboardHost: hostOf(config.dashboardUrl),
+            problem: reason,
+            guidance: degradedGuidance(reason),
+          });
+        }
+        // Outside the validation catch: a rejected notification is a client
+        // problem, and folding it in would undo a connection that works and
+        // report the transport error as the Dashboard's.
         state.markReady();
-        await notify();
+        await notifyQuietly(notify, logger);
         return setupResult(policy, {
           state: 'ready',
           dashboardHost: hostOf(config.dashboardUrl),
           abilitiesCount: abilities.length,
           message: `Connected to ${hostOf(config.dashboardUrl)}. The MainWP tools are available now.`,
           clientRefreshNote: CLIENT_REFRESH_NOTE,
-        });
-      } catch (error) {
-        const reason = sanitizeError(getErrorMessage(error));
-        state.markDegraded(reason);
-        return setupResult(policy, {
-          state: 'degraded',
-          dashboardHost: hostOf(config.dashboardUrl),
-          problem: reason,
-          guidance: degradedGuidance(reason, chatSetupAvailable),
         });
       } finally {
         state.endOperation();
@@ -484,11 +504,14 @@ async function handleConfigure(
       'Another setup attempt is still running. Wait for it to finish before trying again.'
     );
   }
-  if (state.isReady) {
+  // Any loaded config, not only a working one: degraded means an operator's
+  // credentials are present and the Dashboard was unreachable. A conversation
+  // may bootstrap a connection, never replace one the operator provisioned.
+  if (state.retainedConfig !== null) {
     return refusal(
       policy,
       'ALREADY_CONFIGURED',
-      `This server is already connected to a MainWP Dashboard. To change credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
+      `This server already has MainWP credentials loaded, so setup will not replace them from chat. If the connection is not working, call ${SETUP_STATUS_TOOL} to retry with the credentials it already has. To change the credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
     );
   }
 
@@ -572,9 +595,10 @@ async function handleConfigure(
       );
     }
 
-    // Readiness is rechecked inside the mutex: another path could have
-    // promoted the server while the network call was in flight.
-    if (state.readyConfig !== null) {
+    // Rechecked inside the mutex, on the same condition as the precondition
+    // above: another path could have given the server a config while the
+    // network call was in flight.
+    if (state.retainedConfig !== null) {
       // Defense in depth: validateCredentials already filled the shared cache
       // slot from the submitted (model-supplied) origin. The slot is signature
       // guarded by dashboard URL plus auth identity, so the identity that won
@@ -584,7 +608,7 @@ async function handleConfigure(
       return refusal(
         policy,
         'ALREADY_CONFIGURED',
-        'This server was connected while the setup call was running. Nothing was saved.',
+        'This server was given credentials while the setup call was running. Nothing was saved.',
         redactSubmitted
       );
     }
@@ -625,7 +649,10 @@ async function handleConfigure(
     initRateLimiter(candidate.rateLimit);
     clearPendingPreviews();
     clearToolsCache();
-    await notify();
+    // The config is adopted and on disk by now, so a client that rejects the
+    // notification does not make this a failed setup. clientRefreshNote in the
+    // payload below already tells the user what to do if the list looks stale.
+    await notifyQuietly(notify, logger);
 
     logger.info('Setup completed; server is connected', {
       dashboardHost: hostOf(dashboardUrl),
@@ -685,7 +712,7 @@ export function notReadyResult(state: ConfigState): ToolCallResult {
   const statusToolAvailable = decidePolicy(policy, SETUP_STATUS_TOOL) === 'allow';
   const guidance =
     state.state === 'degraded'
-      ? degradedGuidance(state.degradedReason ?? 'the connection check failed', chatSetupAvailable)
+      ? degradedGuidance(state.degradedReason ?? 'the connection check failed')
       : setupGuidance(chatSetupAvailable);
   return setupResult(
     policy,

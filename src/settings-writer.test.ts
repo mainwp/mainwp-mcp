@@ -149,6 +149,28 @@ describe('writeConnectionSettings', () => {
     expect(fs.readFileSync(decoy, 'utf-8')).toBe('{}');
   });
 
+  it('refuses when the existing config file cannot be inspected', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // Only the target throws: the directory lstat in ensureDirectory has to
+    // keep working, or the test would pass on the wrong refusal.
+    const realLstatSync = fs.lstatSync;
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((target: fs.PathLike, options?: unknown) => {
+      if (target === trustedSettingsPath(home)) {
+        throw Object.assign(new Error('EACCES: permission denied, lstat'), { code: 'EACCES' });
+      }
+      return realLstatSync(target as never, options as never);
+    }) as typeof fs.lstatSync);
+
+    const attempt = () => writeConnectionSettings(CONNECTION, home);
+    expect(attempt).toThrow(SettingsWriteError);
+    expect(attempt).toThrow(/could not be inspected.*EACCES/s);
+
+    vi.restoreAllMocks();
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it('refuses when the config directory path is a file', () => {
     fs.mkdirSync(path.join(home, '.config'), { recursive: true });
     fs.writeFileSync(trustedSettingsDir(home), 'occupied');

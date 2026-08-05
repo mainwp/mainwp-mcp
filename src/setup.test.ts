@@ -187,7 +187,7 @@ describe('mainwp_configure preconditions', () => {
   });
 
   it('refuses when connection environment variables are authoritative', async () => {
-    process.env.MAINWP_URL = 'https://env.example.com';
+    setEnv('MAINWP_URL', 'https://env.example.com');
     const state = unconfiguredState();
 
     const result = await executeSetupTool(
@@ -236,6 +236,29 @@ describe('mainwp_configure preconditions', () => {
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain('ALREADY_CONFIGURED');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the server has credentials that are only unreachable', async () => {
+    // Degraded is not unconfigured: an operator's credentials are loaded and
+    // the Dashboard was down. A chat tuple must not overwrite them, and the
+    // refusal has to point at the credential-free retry.
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      CONFIGURE_ARGS,
+      makeMockLogger(),
+      noopNotify
+    );
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('ALREADY_CONFIGURED');
+    expect(resultText(result)).toContain(SETUP_STATUS_TOOL);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+    expect(state.retainedConfig).toMatchObject({ dashboardUrl: 'https://test.local' });
   });
 
   it('keeps no catalog from an identity that lost the readiness race', async () => {
@@ -405,6 +428,37 @@ describe('mainwp_configure preconditions', () => {
     expect(fs.statSync(trustedSettingsPath(home)).mode & 0o777).toBe(0o600);
   });
 
+  it('still reports success when the listChanged notification fails after the save', async () => {
+    // The config is adopted and the credentials are on disk by then, so a
+    // client that rejects the notification must not turn a completed setup
+    // into an error the user has to act on.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [sampleAbility],
+      headers: new Headers(),
+    });
+    const state = unconfiguredState();
+    const notify = vi.fn(async () => {
+      throw new Error('client transport closed');
+    });
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      CONFIGURE_ARGS,
+      makeMockLogger(),
+      notify
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(state.state).toBe('ready');
+    const payload = JSON.parse(resultText(result)) as { status: string; savedTo: string };
+    expect(payload.status).toBe('connected');
+    expect(payload.savedTo).toBe(trustedSettingsPath(home));
+    expect(resultText(result)).not.toContain('client transport closed');
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(true);
+  });
+
   it('does not run the degraded retry while a configure holds the setup mutex', async () => {
     // Both paths write readiness, so they share one guard. Otherwise a retry
     // that started first can fail after the configure adopted a new identity
@@ -417,11 +471,15 @@ describe('mainwp_configure preconditions', () => {
       await gate;
       return { ok: true, json: async () => [sampleAbility], headers: new Headers() };
     });
-    const state = ConfigState.fromConfig(makeBaseConfig());
-    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+    const state = unconfiguredState();
     const logger = makeMockLogger();
 
     const configure = executeSetupTool(state, CONFIGURE_TOOL, CONFIGURE_ARGS, logger, noopNotify);
+    // Configure is refused outright once a config is loaded, so the two paths
+    // can only overlap when the state becomes degraded while the configure's
+    // validation fetch is still in flight.
+    state.adopt(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
     const status = await executeSetupTool(state, SETUP_STATUS_TOOL, {}, logger, noopNotify);
 
     expect(resultText(status)).toContain('Another setup operation is already running');
@@ -603,6 +661,50 @@ describe('mainwp_get_setup_status', () => {
     expect(state.state).toBe('ready');
     expect(notify).toHaveBeenCalledTimes(1);
     expect(resultText(result)).toContain('Connected to');
+  });
+
+  it('stays ready when the listChanged notification fails after a successful retry', async () => {
+    // The notification is outside the validation catch: a client transport
+    // failure must not undo a connection that just worked, or be reported to
+    // the user as the Dashboard problem.
+    clearCache();
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [sampleAbility],
+      headers: new Headers(),
+    });
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+    const notify = vi.fn(async () => {
+      throw new Error('client transport closed');
+    });
+
+    const result = await executeSetupTool(state, SETUP_STATUS_TOOL, {}, makeMockLogger(), notify);
+
+    expect(state.state).toBe('ready');
+    expect(resultText(result)).toContain('Connected to');
+    expect(resultText(result)).not.toContain('client transport closed');
+  });
+
+  it('gives the manual fix for wrong credentials even when chat setup is blocked', async () => {
+    // Blocked configure is exactly when the user has no other way out of a
+    // wrong tuple, so the manual instructions cannot be conditional on it.
+    clearCache();
+    mockFetch.mockReset();
+    mockFetch.mockRejectedValue(new Error('getaddrinfo ENOTFOUND test.local'));
+    const state = ConfigState.fromConfig(makeBaseConfig({ blockedTools: [CONFIGURE_TOOL] }));
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+
+    const result = await executeSetupTool(
+      state,
+      SETUP_STATUS_TOOL,
+      {},
+      makeMockLogger(),
+      noopNotify
+    );
+
+    expect(resultText(result)).toContain('If the credentials themselves are wrong');
   });
 
   it('stays degraded and reports the reason when the retry fails', async () => {
