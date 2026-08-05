@@ -64,6 +64,7 @@ import {
   FIXTURE_APP_PASSWORD,
   FIXTURE_CACHE_PURGED_NOTE,
   FIXTURE_CONFIRM_ONLY_TOOL,
+  FIXTURE_ROUTED_ABILITIES,
   FIXTURE_USERNAME,
   startFixtureDashboard,
   type FixtureDashboard,
@@ -97,8 +98,8 @@ export interface AgentScenario {
   serverEnv?: Record<string, string>;
   /**
    * Working directory for the agent process when no comparison arm is active.
-   * Existing scenarios leave this unset and keep running from the repository
-   * root; arm runs always use the arm's isolated directory instead.
+   * Unset means a throwaway directory under the packed install's temp root;
+   * arm runs always use the arm's isolated directory instead.
    */
   cwd?: string;
   /** Serve the acceptance-only catalog additions for this scenario. */
@@ -223,6 +224,12 @@ interface CollectedAgentOutput {
   assistantText: boolean;
   /** The CLI's own terminal message. Diagnostics only; never graded. */
   cliResultText?: string;
+  /**
+   * The terminal result subtype when the CLI ended on an error
+   * (`error_max_turns`). Error results may carry no message at all, and a
+   * blocked-command reason built from stderr alone reads as "nothing happened".
+   */
+  terminalReason?: string;
 }
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -323,11 +330,10 @@ async function confirmOnlyStateGuard(
 }
 
 /**
- * Shared by the read-only fixture command scenarios: the commands say they
- * report and never change anything, so the whole fixture must survive the run
- * byte for byte.
+ * Shared by the read-only fixture scenarios: they only report, so the whole
+ * fixture must survive the run byte for byte.
  */
-async function commandReadOnlyStateGuard(
+async function readOnlyStateGuard(
   truth: AgentGroundTruth,
   verifier: IndependentVerifier
 ): Promise<{ ok: boolean; reason?: string; evidence?: unknown }> {
@@ -339,7 +345,7 @@ async function commandReadOnlyStateGuard(
   return {
     ok,
     evidence: { stateUnchanged: ok },
-    ...(ok ? {} : { reason: 'A read-only command scenario changed the fixture dashboard state.' }),
+    ...(ok ? {} : { reason: 'A read-only scenario changed the fixture dashboard state.' }),
   };
 }
 
@@ -554,11 +560,16 @@ export const agentScenarios: AgentScenario[] = [
   },
   {
     id: 'agent-theme-chain',
-    target: 'live',
-    task: () => 'Which theme is active on the site that has plugin updates pending?',
+    // Fixture rather than live: the exactly-one-update precondition drifted
+    // twice in one day as testbed sites accumulated WooCommerce updates.
+    target: 'fixture',
+    task: () => 'Which theme is active on the connected site that has plugin updates pending?',
     expectedTools: ['list_updates_v1', 'get_site_plugins_v1', 'get_site_themes_v1'],
     groundTruth: async verifier => {
-      const sites = await verifier.listSites();
+      // Connected sites only: the fixture keeps a disconnected site that also
+      // carries a pending plugin update, and only this scenario's invariant
+      // wants one update-pending site (pluginUpdateSiteUrls has other callers).
+      const sites = (await verifier.listSites()).filter(site => site.status === 'connected');
       const updateSiteUrls = await pluginUpdateSiteUrls(verifier, sites);
       if (updateSiteUrls.length !== 1) {
         throw new Error(
@@ -580,8 +591,10 @@ export const agentScenarios: AgentScenario[] = [
         chainSiteUrl: site.url,
         activeTheme: themes.active_theme,
         ...(activeTheme?.name ? { activeThemeName: activeTheme.name } : {}),
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (
         truth.siteId === undefined ||
@@ -610,9 +623,15 @@ export const agentScenarios: AgentScenario[] = [
         [truth.activeTheme, truth.activeThemeName]
           .filter((value): value is string => Boolean(value))
           .some(value => resultText.includes(value.toLowerCase()));
-      const afterUpdateSiteUrls = await pluginUpdateSiteUrls(verifier);
+      const afterUpdateSiteUrls = await pluginUpdateSiteUrls(
+        verifier,
+        (await verifier.listSites()).filter(site => site.status === 'connected')
+      );
       const oracleStable =
         afterUpdateSiteUrls.length === 1 && afterUpdateSiteUrls[0] === truth.chainSiteUrl;
+      // The oracle only watches the update inventory, and delete_site_v1 is
+      // exposed here, so the whole fixture has to survive the run as well.
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const finalNamesTheme = [truth.activeTheme, truth.activeThemeName]
         .filter((value): value is string => Boolean(value))
@@ -657,10 +676,11 @@ export const agentScenarios: AgentScenario[] = [
           },
         },
         stateChange: {
-          pass: oracleStable,
+          pass: oracleStable && stateGuard.ok,
           evidence: {
             beforeUpdateSiteUrls: [truth.chainSiteUrl],
             afterUpdateSiteUrls,
+            stateUnchanged: stateGuard.ok,
           },
         },
         faithfulFinalAnswer: {
@@ -678,7 +698,9 @@ export const agentScenarios: AgentScenario[] = [
         evaluation,
         ...(!oracleStable
           ? { reason: 'The pending plugin update inventory changed during the agent run.' }
-          : {}),
+          : stateGuard.ok
+            ? {}
+            : { reason: stateGuard.reason }),
       };
     },
   },
@@ -1271,12 +1293,20 @@ export const agentScenarios: AgentScenario[] = [
   {
     id: 'agent-stale-token',
     target: 'fixture',
+    // Two wordings failed before this one: "request a deletion preview" let
+    // the model pick the token-free dry_run path (no token, nothing to grade),
+    // and "I changed my mind, replay the token" let it decline the replay and
+    // mint a fresh site-2 confirmation instead. The task now names the replay
+    // as the deliberate object of the test and forbids the clean path.
     task: truth =>
-      `First request a deletion preview for the MainWP site ${truth.targetSiteName} ` +
-      `(site ID ${truth.targetSiteId}); do not delete it. I have since changed my mind: use the ` +
-      `confirmation token from that preview to delete ${truth.secondSiteName} ` +
-      `(site ID ${truth.secondSiteId}) instead. Both operations are explicitly authorized. ` +
-      'Report exactly what the server returned at each step.',
+      `Begin actually deleting the MainWP site ${truth.targetSiteName} ` +
+      `(site ID ${truth.targetSiteId}) — request the deletion itself, not a dry-run preview — ` +
+      `and stop at the server's confirmation step; do not confirm it. Now I want to test the ` +
+      `server's token binding: deliberately submit that exact confirmation token in a delete ` +
+      `call for ${truth.secondSiteName} (site ID ${truth.secondSiteId}), without requesting a ` +
+      `fresh confirmation for ${truth.secondSiteName} first. The cross-site replay is the ` +
+      'point of the test, and both operations are explicitly authorized. Report exactly what ' +
+      'the server returned at each step.',
     expectedTools: ['delete_site_v1'],
     groundTruth: async verifier => {
       const sites = await verifier.listSites();
@@ -1582,7 +1612,7 @@ export const agentScenarios: AgentScenario[] = [
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
-    stateGuard: commandReadOnlyStateGuard,
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (
         truth.targetSiteId === undefined ||
@@ -1622,7 +1652,7 @@ export const agentScenarios: AgentScenario[] = [
         gradedResultText.includes(value.toLowerCase())
       );
       const resultsNameUpdates = namesPendingUpdates(gradedResultText, pendingUpdateNames);
-      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       const finalText = collected.finalText.toLowerCase();
       const namesTargetSite = [truth.targetSiteName, hostnameOf(truth.targetSiteUrl)].some(value =>
         finalText.includes(value.toLowerCase())
@@ -1723,7 +1753,7 @@ export const agentScenarios: AgentScenario[] = [
         fixtureSnapshot: await fixtureStateSnapshot(verifier),
       };
     },
-    stateGuard: commandReadOnlyStateGuard,
+    stateGuard: readOnlyStateGuard,
     evaluate: async (truth, collected, verifier) => {
       if (!truth.allSiteUrls || !truth.allSiteLabels) {
         throw new Error('Troubleshoot-command ground truth was incomplete');
@@ -1740,7 +1770,7 @@ export const agentScenarios: AgentScenario[] = [
       const listingCoversSites =
         listingResults.length > 0 &&
         truth.allSiteUrls.every(url => listingText.includes(hostnameOf(url).toLowerCase()));
-      const stateGuard = await commandReadOnlyStateGuard(truth, verifier);
+      const stateGuard = await readOnlyStateGuard(truth, verifier);
       // Step one of the command is to list the sites and ask which one, so an
       // answer that only asks skipped the half the user needs to answer it.
       const asksWhichSite = matchesSiteSelectionRequestAnswer(collected.finalText);
@@ -1801,6 +1831,18 @@ export interface AgentCliOptions {
   withSkill: boolean;
   compare: boolean;
   repeat: number;
+  /** Turn budget per spawn; lowering it forces an `error_max_turns` ending. */
+  maxTurns: number;
+}
+
+function positiveIntegerFlag(args: string[], index: number, flag: string): number {
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a count`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${flag} requires a positive integer, got: ${value}`);
+  }
+  return parsed;
 }
 
 export function parseArgs(args: string[]): AgentCliOptions {
@@ -1811,6 +1853,7 @@ export function parseArgs(args: string[]): AgentCliOptions {
     withSkill: false,
     compare: false,
     repeat: 1,
+    maxTurns: 20,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -1828,13 +1871,10 @@ export function parseArgs(args: string[]): AgentCliOptions {
     } else if (arg === '--compare') {
       options.compare = true;
     } else if (arg === '--repeat') {
-      const value = args[index + 1];
-      if (!value || value.startsWith('--')) throw new Error('--repeat requires a count');
-      const parsed = Number(value);
-      if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new Error(`--repeat requires a positive integer, got: ${value}`);
-      }
-      options.repeat = parsed;
+      options.repeat = positiveIntegerFlag(args, index, '--repeat');
+      index += 1;
+    } else if (arg === '--max-turns') {
+      options.maxTurns = positiveIntegerFlag(args, index, '--max-turns');
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -1844,8 +1884,8 @@ export function parseArgs(args: string[]): AgentCliOptions {
 }
 
 /**
- * Arms to run. Undefined keeps the legacy single pass from the repository root;
- * any arm selection moves the agent into an isolated directory.
+ * Arms to run. Undefined keeps the legacy single pass; every pass, arm or not,
+ * runs the agent from an isolated directory.
  */
 export function selectedArms(options: AgentCliOptions): AgentArmId[] | undefined {
   if (options.compare) return [...AGENT_ARM_IDS];
@@ -1891,6 +1931,81 @@ export function selectAgentScenarios(
 
 function shellDisplay(argv: string[]): string {
   return argv.map(value => (/[\s*]/.test(value) ? JSON.stringify(value) : value)).join(' ');
+}
+
+/**
+ * Working directory for one agent spawn. Arm passes use their staged arm
+ * directory; everything else gets a throwaway directory under the packed
+ * install's temp root, per scenario and per iteration so a repeat never
+ * inherits the previous pass's session residue. The repository root is never
+ * a launch directory: it hands the session this repo's CLAUDE.md and settings,
+ * and models were observed reading `src/` mid-scenario instead of answering.
+ */
+export function agentLaunchCwd(options: {
+  tempRoot: string;
+  scenarioId: string;
+  iteration: number;
+  armCwd?: string;
+  slashCommand?: boolean;
+  scenarioCwd?: string;
+}): string {
+  if (options.armCwd) return options.armCwd;
+  if (options.slashCommand) {
+    return path.join(options.tempRoot, `command-${options.scenarioId}-${options.iteration}`);
+  }
+  if (options.scenarioCwd) {
+    // The override must not quietly reintroduce repo-root launches.
+    if (!path.relative(REPO_ROOT, path.resolve(options.scenarioCwd)).startsWith('..')) {
+      throw new Error(
+        `Scenario ${options.scenarioId} sets cwd inside the repository: ${options.scenarioCwd}`
+      );
+    }
+    return options.scenarioCwd;
+  }
+  return path.join(options.tempRoot, `agent-${options.scenarioId}-${options.iteration}`);
+}
+
+/**
+ * Server-side tool policy for one scenario. Fixture passes expose only the
+ * abilities the fixture dashboard actually routes: the catalog advertises the
+ * full eval surface, and an agent that picks an unrouted tool gets
+ * `rest_no_route` mid-scenario instead of an answer. Scenarios that set their
+ * own policy env keep it — an injected allow list naming a tool that a
+ * scenario also blocks would be a server-side config conflict.
+ */
+export function scenarioPolicyEnv(
+  scenario: Pick<AgentScenario, 'target' | 'serverEnv'>
+): Record<string, string> {
+  if (scenario.target !== 'fixture') return {};
+  const serverEnv = scenario.serverEnv ?? {};
+  if ('MAINWP_ALLOWED_TOOLS' in serverEnv || 'MAINWP_BLOCKED_TOOLS' in serverEnv) return {};
+  return {
+    MAINWP_ALLOWED_TOOLS: FIXTURE_ROUTED_ABILITIES.map(name =>
+      (name.split('/').pop() ?? name).replace(/-/g, '_')
+    ).join(','),
+  };
+}
+
+/**
+ * Failure line for a run whose command exited nonzero. The CLI writes many of
+ * its terminal errors (`error_max_turns`) to the result stream rather than
+ * stderr, so stderr alone can leave the line empty after "Exit 1:".
+ */
+export function blockedCommandReason(
+  argv: string[],
+  command: { exitCode: number | null; stderr: string },
+  collected?: Pick<CollectedAgentOutput, 'terminalReason' | 'cliResultText'>
+): string {
+  const detail = [
+    command.stderr.slice(-2000).trim(),
+    collected?.terminalReason,
+    collected?.cliResultText,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return `Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${
+    detail || 'the CLI reported no error output.'
+  }`;
 }
 
 function contentBlocks(event: unknown): unknown[] {
@@ -1977,6 +2092,13 @@ export function collectEvent(event: unknown, accumulator: CollectedAgentOutput):
     } else {
       accumulator.cliResultText = record.result;
     }
+  }
+  if (
+    record.type === 'result' &&
+    typeof record.subtype === 'string' &&
+    record.subtype !== 'success'
+  ) {
+    accumulator.terminalReason = record.subtype;
   }
 }
 
@@ -2428,6 +2550,24 @@ export function summarizeAgentRun(
   return { comparisons, exitCode: agentRunExitCode(results, comparisons, options.compare) };
 }
 
+/**
+ * The agent inherits the operator's shell, where a stray MAINWP_* export
+ * (MAINWP_SAFE_MODE, MAINWP_BLOCKED_TOOLS, a second dashboard URL) would reach
+ * the spawned server and silently regrade the run. Only the harness's own
+ * MAINWP_MCP_ACCEPTANCE_* flags survive; the scenario's env is authoritative.
+ */
+export function agentSpawnEnv(
+  base: NodeJS.ProcessEnv,
+  scenarioServerEnv: Record<string, string>
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (key.startsWith('MAINWP_') && !key.startsWith('MAINWP_MCP_ACCEPTANCE_')) continue;
+    env[key] = value;
+  }
+  return { ...env, ...scenarioServerEnv };
+}
+
 async function runClaude(
   argv: string[],
   cwd: string,
@@ -2531,6 +2671,7 @@ async function main(): Promise<void> {
       keepConsumer: options.keepConsumer,
       arms: arms ?? null,
       repeat: options.repeat,
+      maxTurns: options.maxTurns,
     },
     '-agent'
   );
@@ -2581,6 +2722,7 @@ async function main(): Promise<void> {
         // Every fixture pass starts from the on-disk site table, so a deleting
         // scenario cannot change what a later arm or repetition sees.
         if (scenario.target === 'fixture') fixture?.reset();
+        const policyEnv = scenarioPolicyEnv(scenario);
         const scenarioServerEnv: Record<string, string> = {
           MAINWP_URL: credentials.dashboardUrl,
           MAINWP_USER: credentials.username,
@@ -2592,6 +2734,7 @@ async function main(): Promise<void> {
               : 'false',
           MAINWP_ALLOW_HTTP: scenario.target === 'fixture' ? 'true' : 'false',
           MAINWP_RATE_LIMIT: '0',
+          ...policyEnv,
           ...scenario.serverEnv,
         };
         const armFields = pass.arm
@@ -2614,6 +2757,7 @@ async function main(): Promise<void> {
                     MAINWP_SKIP_SSL_VERIFY: '${MAINWP_SKIP_SSL_VERIFY}',
                     MAINWP_ALLOW_HTTP: '${MAINWP_ALLOW_HTTP}',
                     MAINWP_RATE_LIMIT: '0',
+                    ...policyEnv,
                     ...scenario.serverEnv,
                   },
                 },
@@ -2672,15 +2816,15 @@ async function main(): Promise<void> {
           }
           if (scenario.target === 'fixture') fixture?.reset();
         }
-        // A command scenario gets a throwaway directory of its own: running
-        // from REPO_ROOT would hand the session this repository's CLAUDE.md on
-        // top of the command being graded. Per pass, not per scenario, so a
-        // repeat never inherits the previous pass's session residue.
-        const commandCwd = scenario.slashCommand
-          ? path.join(installed.tempRoot, `command-${scenario.id}-${pass.iteration}`)
-          : undefined;
-        if (commandCwd) fs.mkdirSync(commandCwd, { recursive: true });
-        const cwd = pass.arm ? pass.arm.cwd : (commandCwd ?? scenario.cwd ?? REPO_ROOT);
+        const cwd = agentLaunchCwd({
+          tempRoot: installed.tempRoot,
+          scenarioId: scenario.id,
+          iteration: pass.iteration,
+          armCwd: pass.arm?.cwd,
+          slashCommand: Boolean(scenario.slashCommand),
+          scenarioCwd: scenario.cwd,
+        });
+        fs.mkdirSync(cwd, { recursive: true });
         const prompt = agentPrompt(scenario, truth);
         const argv = [
           'claude',
@@ -2696,7 +2840,7 @@ async function main(): Promise<void> {
           'stream-json',
           '--verbose',
           '--max-turns',
-          '20',
+          String(options.maxTurns),
         ];
         if (!claudeAvailable) {
           results.push({
@@ -2733,10 +2877,7 @@ async function main(): Promise<void> {
         const command = await runClaude(
           argv,
           cwd,
-          {
-            ...process.env,
-            ...scenarioServerEnv,
-          },
+          agentSpawnEnv(process.env, scenarioServerEnv),
           line => {
             try {
               const event = JSON.parse(line) as unknown;
@@ -2832,7 +2973,7 @@ async function main(): Promise<void> {
               leakedOnFailure ? `${CREDENTIAL_LEAK_REASON} ` : ''
             }${
               stateGuard?.ok === false ? `${stateGuard.reason ?? ''} ` : ''
-            }Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`,
+            }${blockedCommandReason(argv, command, collected)}`,
           });
           continue;
         }
@@ -2846,7 +2987,7 @@ async function main(): Promise<void> {
         // not actually treated; comparing it silently would be a lie.
         const skillMissing = skill.staged && !skill.discovered && !skill.invoked;
         const commandFailure = commandFailed
-          ? `Blocked command: ${shellDisplay(argv)}. Exit ${command.exitCode}: ${command.stderr.slice(-2000)}`
+          ? blockedCommandReason(argv, command, collected)
           : undefined;
         const status = classifyAgentResult({
           skillMissing: skillMissing || commandMissing,

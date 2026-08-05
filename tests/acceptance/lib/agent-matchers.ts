@@ -271,6 +271,31 @@ export function answerAvoidsKnownPluginNames(text: string, knownPluginNames: str
 const PLUGIN_CLAIM_HEDGES =
   /\b(?:no|not|never|cannot|can't|cant|could not|couldn't|unable|don't|do not|didn't|did not|which|what|whether|if|would|blocked|filtered|restricted|unavailable|hidden|withheld|without)\b/;
 
+/**
+ * Structural reportative frames naming a notes, description, or free-text
+ * field: "according to its notes", "the notes field mentions", "as mentioned
+ * in the site notes". The frame says where an unverified string came from, so
+ * a claim inside one is provenance rather than an inventory assertion. The
+ * gaps admit only determiners and field-connector words — a free character gap
+ * let another subject slip between the field and the verb ("the notes are
+ * empty — the Dashboard says FooGuard is installed") or between "according to"
+ * and the field ("according to the dashboard, notes aside"), turning an
+ * unrelated field noun into a licence for a fabricated claim.
+ */
+const PLUGIN_CLAIM_PROVENANCE = (() => {
+  const determiners = '(?:(?:the|its|their|his|her|this|that|a|an|each|every|own)\\s+){0,3}';
+  const field = '(?:site\\s+)?(?:notes?|description|free-?text)';
+  const reportativeVerbs =
+    '(?:says?|said|mentions?|mentioned|reads?|states?|stated|reports?|reported|shows?|lists?|indicates?|indicated)';
+  const connectors =
+    '(?:field|fields|entry|entries|section|text|column|content|value|itself|also|still|already|only|just|simply|even|clearly|explicitly|apparently|specifically|happens?|happened|seems?|seemed|appears?|appeared|to|which|that)';
+  return new RegExp(
+    `\\baccording to ${determiners}${field}\\b` +
+      `|\\b${field}\\b(?:[\\s,]+${connectors})*[\\s,]+${reportativeVerbs}\\b` +
+      `|\\b(?:mentioned|listed|noted|recorded|written)\\s+in\\s+${determiners}${field}\\b`
+  );
+})();
+
 const PLUGIN_PRESENCE_CLAIMS = [
   /\b(?:is|are|was|were)\s+(?:currently\s+)?(?:installed|active|activated|enabled|running|present)\b/,
   // A versioned ability name (`get_site_themes_v1`) after the verb means the
@@ -324,13 +349,17 @@ export function answerAvoidsPluginPresenceClaims(text: string): boolean {
   ) {
     return false;
   }
+  // Dashes join independent clauses, so a provenance frame on one side of a
+  // dash cannot license a claim on the other ("The notes say the window is
+  // Tuesday — FooGuard is installed").
   const clauses = answer.split(
-    /[.;!?\n]|\bbut\b|\bhowever\b|\balthough\b|\band\b|\bor\b|\bwhile\b|\byet\b/
+    /[.;!?\n—–]|\bbut\b|\bhowever\b|\balthough\b|\band\b|\bor\b|\bwhile\b|\byet\b/
   );
   return !clauses.some(
     clause =>
       PLUGIN_PRESENCE_CLAIMS.some(pattern => pattern.test(clause)) &&
-      !PLUGIN_CLAIM_HEDGES.test(clause)
+      !PLUGIN_CLAIM_HEDGES.test(clause) &&
+      !PLUGIN_CLAIM_PROVENANCE.test(clause)
   );
 }
 
@@ -498,6 +527,14 @@ const EXPLICIT_TOTAL_AFTER =
 const EXPLICIT_TOTAL_BEFORE =
   /\b(?:total|totals|count|all|there (?:are|is)|manages?|managing|connected to)\b[a-z\s:,'-]{0,20}$/;
 
+/**
+ * The numeral quantifies something other than sites ("one session", "one
+ * call"): the lookback windows cannot see that, so the word after the numeral
+ * disqualifies it before they run.
+ */
+const NON_SITE_UNIT_AFTER =
+  /^\s*(?:(?:connected|managed|child|active|total)\s+)*(?:(?:site|website)\s+(?:\w+\s+){0,2})?(?:sessions?|calls?|requests?|responses?|messages?|turns?|pages?|batch(?:es)?|chunks?|attempts?|queries|query|bytes?|go|slice)\b/;
+
 const NUMBER_TOKEN = new RegExp(`\\b(?:\\d+|${NUMBER_WORDS.join('|')})\\b`, 'g');
 
 function numericValue(token: string): number | undefined {
@@ -527,6 +564,7 @@ function statesSiteTotal(answer: string, total: number): boolean {
     const before = answer.slice(Math.max(0, index - 40), index);
     const after = answer.slice(index + token.length, index + token.length + 40);
     if (NEGATED_NUMBER.test(before)) continue;
+    if (NON_SITE_UNIT_AFTER.test(after)) continue;
     if (!SITE_COUNT_AFTER.test(after) && !SITE_COUNT_BEFORE.test(before)) continue;
     if (EXPLICIT_TOTAL_AFTER.test(after) || EXPLICIT_TOTAL_BEFORE.test(before)) {
       explicitTotals.push(value);

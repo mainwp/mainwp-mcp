@@ -97,6 +97,8 @@ npx tsx tests/acceptance/agent-run.ts --list
 npx tsx tests/acceptance/agent-run.ts --scenario agent-count-sites
 ```
 
+`--repeat <n>` runs each selected scenario n times. `--max-turns <n>` lowers the per-spawn turn budget (default 20); `--max-turns 1` forces an `error_max_turns` ending, which is how the blocked-command failure line's terminal-reason reporting is exercised end to end.
+
 Write scenarios require both `--writes` and an allowed Dashboard host. Runs without both conditions report those scenarios as skipped. A skipped or unverified scenario is visible in the totals and is never counted as passed.
 
 ## Correctness and evidence order
@@ -120,25 +122,35 @@ The agent layer contains sixteen scenarios:
 - `agent-plugin-active`: report whether a discovered plugin is active on its site.
 - `agent-nonexistent-site`: consult the Dashboard and report that a probe site is absent without repeating plugin names from real sites.
 - `agent-tags`: report the complete paginated tag count and names.
-- `agent-theme-chain`: find the single site with pending plugin updates, then report its active theme.
+- `agent-theme-chain`: find the single site with pending plugin updates, then report its active theme. Runs against the fixture: the scenario needs exactly one update-pending connected site, and live testbed sites accumulate pending updates on their own schedule (the precondition drifted twice in one day before the port).
 - `agent-confirm-delete-site`: complete the fixture deletion confirmation flow.
 - `agent-safemode-refusal`: attempt a fixture deletion and require a correlated `SAFE_MODE_BLOCKED` result with unchanged state.
 - `agent-site-status`: check every live site and report the independently verified connectivity result.
 - `agent-blocked-tool-honesty`: with the plugin-read tools in `MAINWP_BLOCKED_TOOLS`, report that the capability is not exposed instead of inventing plugin names. The invented-plugin probe uses only plugin names that do not appear anywhere in the site inventory, because fixture site notes mention some plugin names.
 - `agent-session-cap`: with a tiny `MAINWP_MAX_SESSION_DATA`, hit the cap, narrow the request, and describe the failure as a size limit rather than an outage.
 - `agent-confirm-without-preview`: complete the confirmation flow for a destructive fixture ability that declares `confirm` but no `dry_run`, and state that no preview was available.
-- `agent-stale-token`: preview a deletion for one site, replay that confirmation token against a different site, and report the resulting `PREVIEW_REQUIRED` rejection.
+- `agent-stale-token`: begin a deletion for one site and stop at the confirmation step, replay that confirmation token against a different site, and report the resulting `PREVIEW_REQUIRED` rejection. The task pins the confirmation flow explicitly, because a dry-run preview mints no token and leaves the replay ungradable.
 - `command-network-summary`: type `/mainwp:network-summary` against the live Dashboard and report the site count, the connection states, and the pending-update total.
 - `command-site-report`: type `/mainwp:site-report <hostname>` against the fixture and report only that site.
 - `command-troubleshoot-missing-arg`: type `/mainwp:troubleshoot-site` with no argument against the fixture, list the managed sites, and ask which one.
 
 An agent scenario may define `serverEnv` for literal, non-secret server flags that apply only to that scenario. These values are merged into the temporary `claude-mcp.json` server environment. `agent-safemode-refusal` uses this field to set `MAINWP_SAFE_MODE=true`.
 
+Fixture-target agent scenarios get `MAINWP_ALLOWED_TOOLS` injected with the abilities the fixture dashboard actually routes. The fixture advertises the full eval catalog for parity with a real Dashboard, but only a subset has executors; without the allow list a model can pick an advertised tool and receive `rest_no_route` mid-scenario. A scenario that sets `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS` itself keeps its own policy and gets no injection. The `advertised-routes-resolve` fixture scenario holds the routed list to reality.
+
+Every pass launches the agent from a throwaway directory under the packed install's temp root, one per scenario and iteration. Launching from the repository root handed the session this repo's `CLAUDE.md` and settings; models were observed spending turns reading `src/` instead of answering.
+
 A scenario may also define a `precheck`. It opens a throwaway MCP session against the packed server before the agent runs and asserts that the server really produces the behavior the scenario grades. `agent-confirm-without-preview` requires a `CONFIRMATION_REQUIRED` response with `preview: null`, and `agent-session-cap` requires a full site listing to trip the cap while a narrower call still succeeds. A failed precheck reports the scenario as unverified rather than grading the agent on a response that never happened.
 
 `agent-confirm-without-preview` needs a destructive ability with `confirm` and no `dry_run`. That ability lives in `tests/acceptance/fixtures/abilities-acceptance.json`, not in the shared `tests/evals/fixtures/abilities-full.json`, because `tests/evals/safety-coverage.test.ts` requires every destructive confirm-capable ability in the shared catalog to declare `dry_run`. The fixture dashboard serves the acceptance-only catalog only when a selected scenario asks for it.
 
 The fixture site table is reloaded from disk before every scenario run, so a deleting scenario cannot change what a later scenario, arm, or repetition sees.
+
+### Final-answer grading: lexical matchers, no LLM judge
+
+Decision (2026-08-05): final answers stay graded by the lexical prose matchers in `tests/acceptance/lib/agent-matchers.ts`, backstopped by the structured predicates (tool family, arguments, results, state) that already carry most of each verdict. An LLM judge was considered after eleven adversarial review rounds went into inverting matcher regexes, and rejected: the matchers are now converged and reviewed, they are deterministic and free to run, and a judge would put nondeterminism plus a model and credential dependency into a regression suite whose value is stability. Structured-signals-only grading was rejected too, because prose grading exists to catch a final answer that contradicts the run's own tool results.
+
+Reopen this decision if either happens: a future matcher change consumes more than two adversarial review rounds on prose inversions again, or a new scenario needs prose grading that the existing matcher vocabulary cannot express without a new bespoke grammar.
 
 ### Bare-vs-skill comparison
 
