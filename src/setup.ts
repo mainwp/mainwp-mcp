@@ -15,14 +15,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { formatJson, type Config, type ConfigResolution, type PolicyConfig } from './config.js';
-import { initRateLimiter, type Ability } from './abilities.js';
+import { clearCache, initRateLimiter, type Ability } from './abilities.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { validateCredentials } from './credential-check.js';
 import { getErrorMessage, McpErrorFactory } from './errors.js';
 import type { Logger } from './logging.js';
 import { RESERVED_TOOL_NAMES } from './naming.js';
 import { decidePolicy } from './policy.js';
-import { redactKnownSecrets, registerKnownSecrets, sanitizeError } from './security.js';
+import {
+  createSecretRedactor,
+  redactKnownSecrets,
+  registerKnownSecrets,
+  sanitizeError,
+} from './security.js';
 import { clearToolsCache, type ToolCallResult } from './tools.js';
 import {
   trustedSettingsPath,
@@ -48,7 +53,7 @@ const MAX_URL_INPUT = 500;
 const MAX_USERNAME_INPUT = 200;
 const MAX_PASSWORD_INPUT = 200;
 
-export type SetupState = 'ready' | 'unconfigured' | 'degraded' | 'configuring';
+export type SetupState = 'ready' | 'unconfigured' | 'degraded';
 
 /**
  * Mutable readiness holder. Handlers keep a reference to this, not to a
@@ -60,7 +65,7 @@ export class ConfigState {
   private readonly missingSetting: 'MAINWP_URL' | 'credentials' | null;
   private policySettings: PolicyConfig;
   private failureReason: string | null = null;
-  private configureInFlight = false;
+  private operationInFlight = false;
 
   private constructor(
     config: Config | null,
@@ -82,8 +87,13 @@ export class ConfigState {
     return new ConfigState(config, null, policyOf(config));
   }
 
+  /**
+   * Readiness only. The setup mutex is deliberately not folded in here: a
+   * configure that has already adopted its config is ready, and the
+   * listChanged notifications it fires must not reach a client that would
+   * then be refused by handlers still calling the server not-ready.
+   */
   get state(): SetupState {
-    if (this.configureInFlight) return 'configuring';
     if (this.currentConfig === null) return 'unconfigured';
     return this.failureReason === null ? 'ready' : 'degraded';
   }
@@ -122,15 +132,25 @@ export class ConfigState {
     this.failureReason = null;
   }
 
-  /** Claim the configure mutex. False means another call already holds it. */
-  beginConfigure(): boolean {
-    if (this.configureInFlight) return false;
-    this.configureInFlight = true;
+  /** True while a configure or a degraded-connection retry holds the mutex. */
+  get isOperationInFlight(): boolean {
+    return this.operationInFlight;
+  }
+
+  /**
+   * Claim the setup mutex. False means another call already holds it.
+   * Configure and the degraded status retry share it, so a retry that started
+   * earlier can never finish after a configure adopted a new identity and
+   * stamp its stale failure onto it.
+   */
+  beginOperation(): boolean {
+    if (this.operationInFlight) return false;
+    this.operationInFlight = true;
     return true;
   }
 
-  endConfigure(): void {
-    this.configureInFlight = false;
+  endOperation(): void {
+    this.operationInFlight = false;
   }
 
   /** Adopt a validated config. Callers own the rest of the swap sequence. */
@@ -215,20 +235,32 @@ The credentials are still loaded. Ask me to check again once the Dashboard is re
 If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client.`;
 }
 
-/** JSON tool result. Every string is scrubbed of registered secrets first. */
+/**
+ * JSON tool result. Every string is scrubbed of registered secrets, plus any
+ * request-scoped values the caller supplies (the configure path passes the
+ * submitted password, which is not in the global registry).
+ */
 function setupResult(
   policy: PolicyConfig,
   data: Record<string, unknown>,
-  isError = false
+  isError = false,
+  redactSubmitted?: (message: string) => string
 ): ToolCallResult {
+  const serialized = formatJson(policy, data);
+  const scoped = redactSubmitted ? redactSubmitted(serialized) : serialized;
   return {
-    content: [{ type: 'text', text: redactKnownSecrets(formatJson(policy, data)) }],
+    content: [{ type: 'text', text: redactKnownSecrets(scoped) }],
     ...(isError ? { isError: true } : {}),
   };
 }
 
-function refusal(policy: PolicyConfig, code: string, message: string): ToolCallResult {
-  return setupResult(policy, { status: 'refused', code, message }, true);
+function refusal(
+  policy: PolicyConfig,
+  code: string,
+  message: string,
+  redactSubmitted?: (message: string) => string
+): ToolCallResult {
+  return setupResult(policy, { status: 'refused', code, message }, true, redactSubmitted);
 }
 
 /**
@@ -371,6 +403,19 @@ async function handleSetupStatus(
   if (state.state === 'degraded') {
     const config = state.retainedConfig;
     if (config) {
+      // The retry shares configure's mutex. Without it a retry could still be
+      // in flight when a configure adopts a new identity, and its failure
+      // would be recorded against credentials it never tested.
+      if (!state.beginOperation()) {
+        const reason = state.degradedReason ?? 'the connection check failed';
+        return setupResult(policy, {
+          state: 'degraded',
+          dashboardHost: hostOf(config.dashboardUrl),
+          problem: reason,
+          note: 'Another setup operation is already running, so the connection was not retried. Ask again once it finishes.',
+          guidance: degradedGuidance(reason, chatSetupAvailable),
+        });
+      }
       try {
         // Credential-free recovery: the retained config may simply have hit a
         // Dashboard that was down at startup.
@@ -393,6 +438,8 @@ async function handleSetupStatus(
           problem: reason,
           guidance: degradedGuidance(reason, chatSetupAvailable),
         });
+      } finally {
+        state.endOperation();
       }
     }
   }
@@ -426,20 +473,11 @@ async function handleConfigure(
 ): Promise<ToolCallResult> {
   const policy = state.policy;
 
-  // Registered before any other work so every later error string, log line,
-  // and result is scrubbed by value even if a code path forgets.
-  const submittedPassword = args.application_password;
-  const submittedUser = args.username;
-  if (typeof submittedPassword === 'string') {
-    registerKnownSecrets([
-      submittedPassword,
-      typeof submittedUser === 'string'
-        ? Buffer.from(`${submittedUser}:${submittedPassword}`).toString('base64')
-        : undefined,
-    ]);
-  }
-
-  if (state.state === 'configuring') {
+  // Nothing between here and the input validation below can echo a submitted
+  // value: every message is a fixed string. So the password is not touched,
+  // encoded, or registered until a call has earned it — registration is
+  // process-lifetime state, and a refused call must not be able to grow it.
+  if (state.isOperationInFlight) {
     return refusal(
       policy,
       'CONFIGURE_IN_PROGRESS',
@@ -491,11 +529,20 @@ async function handleConfigure(
     return refusal(policy, 'INVALID_INPUT', sanitizeError(getErrorMessage(error)));
   }
 
-  if (!state.beginConfigure()) {
+  // Request-scoped: exact by value, no length floor, and never added to the
+  // global registry. A password this call refuses is scrubbed from this call's
+  // output and then forgotten, which the global registry cannot do — it keeps
+  // every value it is given for the life of the process, and it ignores values
+  // under its length floor.
+  const basicBlob = Buffer.from(`${username}:${appPassword}`).toString('base64');
+  const redactSubmitted = createSecretRedactor([appPassword, basicBlob]);
+
+  if (!state.beginOperation()) {
     return refusal(
       policy,
       'CONFIGURE_IN_PROGRESS',
-      'Another setup attempt is still running. Wait for it to finish before trying again.'
+      'Another setup attempt is still running. Wait for it to finish before trying again.',
+      redactSubmitted
     );
   }
 
@@ -515,10 +562,13 @@ async function handleConfigure(
     try {
       abilities = await validateCredentials(candidate, logger);
     } catch (error) {
+      // Scrub before sanitizeError, not after: sanitizeError truncates, and a
+      // reflected password straddling that cut must be removed whole.
       return refusal(
         policy,
         'CONNECTION_FAILED',
-        `${sanitizeError(getErrorMessage(error))} Nothing was saved. Check the values and try again, or set them up manually.`
+        `${sanitizeError(redactSubmitted(getErrorMessage(error)))} Nothing was saved. Check the values and try again, or set them up manually.`,
+        redactSubmitted
       );
     }
 
@@ -528,7 +578,8 @@ async function handleConfigure(
       return refusal(
         policy,
         'ALREADY_CONFIGURED',
-        'This server was connected while the setup call was running. Nothing was saved.'
+        'This server was connected while the setup call was running. Nothing was saved.',
+        redactSubmitted
       );
     }
 
@@ -536,22 +587,34 @@ async function handleConfigure(
     try {
       savedPath = writeConnectionSettings({ dashboardUrl, username, appPassword });
     } catch (error) {
-      const detail =
-        error instanceof SettingsWriteError
-          ? sanitizeError(error.message)
-          : sanitizeError(getErrorMessage(error));
+      const detail = sanitizeError(
+        redactSubmitted(
+          error instanceof SettingsWriteError ? error.message : getErrorMessage(error)
+        )
+      );
       return refusal(
         policy,
         'SAVE_FAILED',
-        `${detail} The connection itself worked, so adding the same values to the "env" block of this server's entry in your MCP client config will get you running.`
+        `${detail} The connection itself worked, so adding the same values to the "env" block of this server's entry in your MCP client config will get you running.`,
+        redactSubmitted
       );
     }
 
+    // The tuple is now this server's own identity, so it joins the registry
+    // that startup credentials use and every later output is scrubbed by
+    // value. Only a call that persisted gets to grow that registry.
+    registerKnownSecrets([appPassword, basicBlob]);
+    // The validation fetch normalized the catalog before that registration, so
+    // a Dashboard that reflected the password back in an ability label still
+    // has it sitting in the cache. Drop it and let the next call refetch under
+    // redaction; one extra fetch is cheaper than a leaked credential.
+    clearCache();
+
     // One ordered swap: adopt the config, re-arm the rate limiter for its
     // settings, drop confirmation state and derived tools belonging to the old
-    // identity, then tell the client every surface changed. The ability cache
-    // is left alone on purpose: validateCredentials already populated it under
-    // the new identity, and clearing it here would force an immediate refetch.
+    // identity, then tell the client every surface changed. Readiness is
+    // visible from adopt() onward, so a client that re-lists as soon as the
+    // notification lands sees the real tools.
     state.adopt(candidate);
     initRateLimiter(candidate.rateLimit);
     clearPendingPreviews();
@@ -563,18 +626,23 @@ async function handleConfigure(
       abilitiesCount: abilities.length,
     });
 
-    return setupResult(policy, {
-      status: 'connected',
-      dashboardHost: hostOf(dashboardUrl),
-      abilitiesCount: abilities.length,
-      message: `Connected to ${hostOf(dashboardUrl)}. ${abilities.length} MainWP tools are available now.`,
-      savedTo: savedPath,
-      storageNote:
-        'The credentials were saved on this machine with owner-only permissions. Edit that file to change them later.',
-      clientRefreshNote: CLIENT_REFRESH_NOTE,
-    });
+    return setupResult(
+      policy,
+      {
+        status: 'connected',
+        dashboardHost: hostOf(dashboardUrl),
+        abilitiesCount: abilities.length,
+        message: `Connected to ${hostOf(dashboardUrl)}. ${abilities.length} MainWP tools are available now.`,
+        savedTo: savedPath,
+        storageNote:
+          'The credentials were saved on this machine with owner-only permissions. Edit that file to change them later.',
+        clientRefreshNote: CLIENT_REFRESH_NOTE,
+      },
+      false,
+      redactSubmitted
+    );
   } finally {
-    state.endConfigure();
+    state.endOperation();
   }
 }
 

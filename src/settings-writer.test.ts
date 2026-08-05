@@ -5,7 +5,7 @@
  * permission, atomicity, and refusal contracts get direct coverage.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,10 +30,53 @@ describe('writeConnectionSettings', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     // Restore any permissions a test tightened so cleanup can remove the tree.
     const dir = trustedSettingsDir(home);
     if (fs.existsSync(dir)) fs.chmodSync(dir, 0o700);
     fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  /**
+   * Run the write with another process landing its own settings.json while our
+   * temp file is being written — the window the per-process setup mutex cannot
+   * cover.
+   */
+  function writeWithCompetingWriter(competing: string): void {
+    const realWriteFileSync = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((file, data, options) => {
+      realWriteFileSync(file as never, data as never, options as never);
+      realWriteFileSync(trustedSettingsPath(home), competing);
+    });
+    writeConnectionSettings(CONNECTION, home);
+  }
+
+  it('refuses when another process creates the config file mid-write', () => {
+    const competing = JSON.stringify({ dashboardUrl: 'https://other.example.com' });
+
+    expect(() => writeWithCompetingWriter(competing)).toThrow(/created the configuration file/);
+
+    vi.restoreAllMocks();
+    expect(fs.readFileSync(trustedSettingsPath(home), 'utf-8')).toBe(competing);
+    expect(fs.readdirSync(trustedSettingsDir(home))).toEqual(['settings.json']);
+  });
+
+  it('refuses when the config file it read is replaced mid-write', () => {
+    const dir = trustedSettingsDir(home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(trustedSettingsPath(home), JSON.stringify({ safeMode: true }));
+    const competing = JSON.stringify({
+      dashboardUrl: 'https://other.example.com',
+      safeMode: false,
+    });
+
+    expect(() => writeWithCompetingWriter(competing)).toThrow(
+      /changed while this setup was running/
+    );
+
+    vi.restoreAllMocks();
+    expect(fs.readFileSync(trustedSettingsPath(home), 'utf-8')).toBe(competing);
+    expect(fs.readdirSync(dir)).toEqual(['settings.json']);
   });
 
   it('creates the config file 0600 inside a 0700 directory', () => {

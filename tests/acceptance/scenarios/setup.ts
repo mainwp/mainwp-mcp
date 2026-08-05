@@ -76,8 +76,10 @@ export const setupConfigureRefusals: ScenarioDefinition = {
       omitCredentialEnv: true,
       // A URL with no credentials leaves the server unconfigured while making
       // the environment authoritative, and the settings file exists without
-      // configuring anything, so it can only shadow.
-      env: { MAINWP_URL: ctx.credentials.dashboardUrl },
+      // configuring anything, so it can only shadow. A configured URL is
+      // validated even when credentials are missing, and the fixture Dashboard
+      // is plain HTTP, so the operator-level opt-in has to be present.
+      env: { MAINWP_URL: ctx.credentials.dashboardUrl, MAINWP_ALLOW_HTTP: 'true' },
       settings: { safeMode: false },
     },
   }),

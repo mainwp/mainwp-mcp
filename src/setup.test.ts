@@ -11,7 +11,7 @@ import path from 'node:path';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 import type { PolicyConfig } from './config.js';
 import { clearCache } from './abilities.js';
-import { clearKnownSecrets } from './security.js';
+import { clearKnownSecrets, sanitizeError } from './security.js';
 import { trustedSettingsPath } from './settings-writer.js';
 import {
   ConfigState,
@@ -341,6 +341,106 @@ describe('mainwp_configure preconditions', () => {
       appPassword: APP_PASSWORD,
     });
     expect(fs.statSync(trustedSettingsPath(home)).mode & 0o777).toBe(0o600);
+  });
+
+  it('does not run the degraded retry while a configure holds the setup mutex', async () => {
+    // Both paths write readiness, so they share one guard. Otherwise a retry
+    // that started first can fail after the configure adopted a new identity
+    // and mark that identity degraded over a connection it never tested.
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    mockFetch.mockImplementation(async () => {
+      await gate;
+      return { ok: true, json: async () => [sampleAbility], headers: new Headers() };
+    });
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+    const logger = makeMockLogger();
+
+    const configure = executeSetupTool(state, CONFIGURE_TOOL, CONFIGURE_ARGS, logger, noopNotify);
+    const status = await executeSetupTool(state, SETUP_STATUS_TOOL, {}, logger, noopNotify);
+
+    expect(resultText(status)).toContain('Another setup operation is already running');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    release();
+    await configure;
+  });
+
+  it('does not register a refused password as a process-wide secret', async () => {
+    // Registration is permanent and every entry is scanned by every later
+    // redaction, so a call that never reaches the persist path must leave the
+    // registry exactly as it found it.
+    const refused = 'refused zzzz yyyy xxxx wwww vvvv';
+    const state = ConfigState.fromConfig(makeBaseConfig());
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      { ...CONFIGURE_ARGS, application_password: refused },
+      makeMockLogger(),
+      noopNotify
+    );
+
+    expect(resultText(result)).toContain('ALREADY_CONFIGURED');
+    expect(sanitizeError(`upstream echoed ${refused}`)).toContain(refused);
+  });
+
+  it.each([
+    ['a password under the global registration floor', 'abc'],
+    ['a password containing a JSON-escaped character', 'abcdefgh"ijkl'],
+  ])('scrubs %s reflected in a Dashboard error body', async (_label, password) => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => JSON.stringify({ error: password }),
+      headers: new Headers(),
+    });
+    const state = unconfiguredState();
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      { ...CONFIGURE_ARGS, application_password: password },
+      makeMockLogger(),
+      noopNotify
+    );
+
+    // Parsed, not raw: the raw result is itself JSON, so a JSON-escaped
+    // password inside it is escaped twice and a check on the raw text would
+    // pass without the value ever being removed.
+    const payload = JSON.parse(resultText(result)) as { code: string; message: string };
+    expect(payload.code).toBe('CONNECTION_FAILED');
+    expect(payload.message).not.toContain(password);
+    expect(payload.message).not.toContain(JSON.stringify(password));
+  });
+
+  it('is already ready when the listChanged notification fires', async () => {
+    // A client that re-lists the moment the notification lands must see the
+    // real tools; if readiness were still gated on the configure mutex it
+    // would get the setup tools and never be told again.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [sampleAbility],
+      headers: new Headers(),
+    });
+    const state = unconfiguredState();
+    const observed: Array<{ state: string; hasConfig: boolean }> = [];
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      CONFIGURE_ARGS,
+      makeMockLogger(),
+      async () => {
+        observed.push({ state: state.state, hasConfig: state.readyConfig !== null });
+      }
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(observed).toEqual([{ state: 'ready', hasConfig: true }]);
   });
 
   it('never echoes the submitted password, in any encoding, on success or failure', async () => {

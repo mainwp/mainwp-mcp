@@ -224,6 +224,15 @@ describe('loadConfig', () => {
     expect(() => resolveConfig()).toThrow(/Invalid dashboardUrl/);
   });
 
+  it('throws for a malformed URL even when credentials are missing too', () => {
+    // Setup mode cannot fix this: the env var outranks anything the configure
+    // tool writes, so entering it would dead-end the user instead of showing
+    // the error.
+    process.env = { MAINWP_URL: 'not-a-url' };
+
+    expect(() => resolveConfig()).toThrow(/Invalid dashboardUrl/);
+  });
+
   it('should load config with basic auth', () => {
     process.env.MAINWP_URL = 'https://test.com';
     process.env.MAINWP_USER = 'admin';

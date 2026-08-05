@@ -8,6 +8,7 @@ import {
   sanitizeError,
   registerKnownSecrets,
   clearKnownSecrets,
+  createSecretRedactor,
   RateLimiter,
   isValidId,
 } from './security.js';
@@ -472,6 +473,45 @@ describe('registered known secrets', () => {
   it('should ignore registered values too short to redact safely', () => {
     registerKnownSecrets(['abc']);
     expect(sanitizeError('abc def')).toBe('abc def');
+  });
+
+  it('should stop growing once the registry is full', () => {
+    // The registry lives for the whole process and every entry is scanned by
+    // every redaction, so a caller that registers per request must not be able
+    // to grow it without limit.
+    // Fixed-width names so no value is a prefix of another.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 500; i++) {
+      registerKnownSecrets([name(i)]);
+    }
+
+    expect(sanitizeError(`echo ${name(0)}`)).not.toContain(name(0));
+    expect(sanitizeError(`echo ${name(499)}`)).toContain(name(499));
+  });
+});
+
+describe('createSecretRedactor', () => {
+  afterEach(() => {
+    clearKnownSecrets();
+  });
+
+  it('redacts a value the global registry refuses, without registering it', () => {
+    const redact = createSecretRedactor(['abc']);
+
+    expect(redact('the dashboard echoed abc back')).toBe('the dashboard echoed [redacted] back');
+    // Nothing joined the process-wide registry.
+    expect(sanitizeError('the dashboard echoed abc back')).toContain('abc');
+  });
+
+  it('redacts the JSON-escaped form of a value', () => {
+    const secret = 'abcdefgh"ijkl';
+    const redact = createSecretRedactor([secret]);
+
+    expect(redact(JSON.stringify({ error: secret }))).not.toContain('ijkl');
+  });
+
+  it('is a no-op when there is nothing to redact', () => {
+    expect(createSecretRedactor([undefined, ''])('untouched text')).toBe('untouched text');
   });
 });
 

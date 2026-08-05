@@ -77,12 +77,23 @@ function ensureDirectory(dir: string): void {
   }
 }
 
-function readExistingSettings(target: string): Record<string, unknown> {
+/**
+ * Identity of the target as observed at one moment, or null when it does not
+ * exist. Compared again just before the rename so a file another process
+ * created or replaced in between is not silently clobbered.
+ */
+interface TargetStamp {
+  ino: number;
+  mtimeMs: number;
+  size: number;
+}
+
+function stampTarget(target: string): TargetStamp | null {
   let stats: fs.Stats;
   try {
     stats = fs.lstatSync(target);
   } catch {
-    return {};
+    return null;
   }
   // lstat, not stat: a symlink here would redirect the write to a file the
   // attacker chose, and a fifo would block the process.
@@ -91,7 +102,17 @@ function readExistingSettings(target: string): Record<string, unknown> {
       'The configuration file path is not a regular file (symlink, directory, or device). Remove it and try again.'
     );
   }
+  return { ino: stats.ino, mtimeMs: stats.mtimeMs, size: stats.size };
+}
 
+function sameTarget(before: TargetStamp | null, now: TargetStamp | null): boolean {
+  if (before === null || now === null) {
+    return before === now;
+  }
+  return before.ino === now.ino && before.mtimeMs === now.mtimeMs && before.size === now.size;
+}
+
+function readExistingSettings(target: string): Record<string, unknown> {
   let content: string;
   try {
     content = fs.readFileSync(target, 'utf-8');
@@ -140,7 +161,8 @@ export function writeConnectionSettings(
   const target = trustedSettingsPath(homeDir);
 
   ensureDirectory(dir);
-  const existing = readExistingSettings(target);
+  const before = stampTarget(target);
+  const existing = before === null ? {} : readExistingSettings(target);
 
   const merged = {
     ...existing,
@@ -157,6 +179,20 @@ export function writeConnectionSettings(
     fs.writeFileSync(handle, `${JSON.stringify(merged, null, 2)}\n`, { encoding: 'utf8' });
     fs.closeSync(handle);
     handle = undefined;
+    // The mutex around setup is per-process, so a second first-run server can
+    // validate its own tuple and land here at the same time. Rename is atomic
+    // but last-writer-wins, and each process would report success for a file
+    // only one of them owns. Compare the target against what the merge was
+    // built from and refuse rather than clobber. This closes the realistic
+    // window (two servers started by the same user), not every interleaving:
+    // a rename in the microseconds after this check still wins silently.
+    if (!sameTarget(before, stampTarget(target))) {
+      throw new SettingsWriteError(
+        before === null
+          ? 'Another process created the configuration file while this setup was running, so nothing was written. Check the file and try again if it does not already hold the right settings.'
+          : 'The configuration file changed while this setup was running, so nothing was written. Check the file and try again if it does not already hold the right settings.'
+      );
+    }
     fs.renameSync(tempPath, target);
   } catch (error) {
     if (handle !== undefined) {
@@ -170,6 +206,11 @@ export function writeConnectionSettings(
       fs.unlinkSync(tempPath);
     } catch {
       // The temp file may never have been created.
+    }
+    // A refusal raised above already carries a user-facing message; only real
+    // filesystem failures need wrapping.
+    if (error instanceof SettingsWriteError) {
+      throw error;
     }
     throw new SettingsWriteError(
       `The configuration file could not be saved (${getErrorMessage(error)})`,

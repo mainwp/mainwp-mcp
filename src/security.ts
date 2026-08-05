@@ -119,7 +119,56 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
 // process never strips the first one's protection (tests reset with
 // clearKnownSecrets).
 const MIN_KNOWN_SECRET_LENGTH = 8;
+/**
+ * Ceiling on the process-lifetime registry. Registration is additive and every
+ * entry is scanned by every redaction call, so a caller that registers per
+ * request (first-run setup accepts a password as a tool argument) would
+ * otherwise grow memory and slow sanitizeError without bound. Startup
+ * registers at most three secrets and a successful setup two more, so a real
+ * server stays far below this.
+ */
+const MAX_KNOWN_SECRET_VARIANTS = 64;
 let knownSecretVariants: string[] = [];
+
+/**
+ * The serialization shapes one secret can take while still appearing as a
+ * single literal byte sequence. Literal-occurrence redaction is closed under
+ * any encoding that preserves the byte sequence; these are the ones that do
+ * not.
+ */
+function secretVariants(secret: string): string[] {
+  return [
+    secret,
+    // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
+    // percent-escape them.
+    secret.split(' ').join('+'),
+    encodeURIComponent(secret),
+    encodeURI(secret),
+    // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
+    // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
+    new URLSearchParams([['x', secret]]).toString().slice(2),
+    // JSON string escaping. Remote error bodies are commonly JSON, so a
+    // password containing a quote, a backslash, or a control character arrives
+    // as `ab\"cd` and no match on the raw value can see it.
+    JSON.stringify(secret).slice(1, -1),
+  ];
+}
+
+function replaceVariants(text: string, variants: string[]): string {
+  let working = text;
+  for (const variant of variants) {
+    if (working.includes(variant)) {
+      working = working.split(variant).join('[redacted]');
+    }
+  }
+  return working;
+}
+
+/** Longest-first, so a secret that another secret prefixes is replaced before
+ * the prefix can break its match. */
+function orderVariants(variants: Set<string>): string[] {
+  return [...variants].sort((a, b) => b.length - a.length);
+}
 
 export function clearKnownSecrets(): void {
   knownSecretVariants = [];
@@ -131,21 +180,38 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
     // A short value would redact ordinary prose; real app passwords, tokens,
     // and base64 Basic blobs are all far longer.
     if (!secret || secret.length < MIN_KNOWN_SECRET_LENGTH) continue;
-    variants.add(secret);
-    // Encodings that keep the value recognizable as one literal string:
-    // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
-    // percent-escape them. JSON.stringify at any nesting depth leaves
-    // alphanumeric-plus-space values untouched, so `secret` itself covers it.
-    variants.add(secret.split(' ').join('+'));
-    variants.add(encodeURIComponent(secret));
-    variants.add(encodeURI(secret));
-    // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
-    // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
-    variants.add(new URLSearchParams([['x', secret]]).toString().slice(2));
+    if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) break;
+    for (const variant of secretVariants(secret)) {
+      variants.add(variant);
+    }
   }
-  // Longest-first, so a secret that another secret prefixes is replaced
-  // before the prefix can break its match.
-  knownSecretVariants = [...variants].sort((a, b) => b.length - a.length);
+  knownSecretVariants = orderVariants(variants);
+}
+
+/**
+ * Build a redactor for values that belong to a single request and must never
+ * join the process-wide registry. First-run setup takes a password as a tool
+ * argument, and a value from a refused call would otherwise be scanned by
+ * every later redaction for the life of the process.
+ *
+ * Exact by value with no length floor, unlike registerKnownSecrets: the floor
+ * there stops a short registered value from erasing ordinary prose forever,
+ * while the only text a request-scoped redactor ever touches is that request's
+ * own output.
+ */
+export function createSecretRedactor(secrets: (string | undefined)[]): (message: string) => string {
+  const variants = new Set<string>();
+  for (const secret of secrets) {
+    if (!secret) continue;
+    for (const variant of secretVariants(secret)) {
+      variants.add(variant);
+    }
+  }
+  if (variants.size === 0) {
+    return message => message;
+  }
+  const ordered = orderVariants(variants);
+  return message => replaceVariants(message, ordered);
 }
 
 /**
@@ -158,13 +224,16 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
  * by-value scrub is exactly what a credential-carrying path needs.
  */
 export function redactKnownSecrets(message: string): string {
-  let working = message;
-  for (const variant of knownSecretVariants) {
-    if (working.includes(variant)) {
-      working = working.split(variant).join('[redacted]');
-    }
-  }
-  return working;
+  return replaceVariants(message, knownSecretVariants);
+}
+
+/**
+ * True when a registered secret occurs literally in the value. Used at the
+ * ability-fetch boundary for fields whose meaning redaction would change
+ * (an ability name, a schema key): those are dropped, not rewritten.
+ */
+export function containsKnownSecret(value: string): boolean {
+  return knownSecretVariants.some(variant => value.includes(variant));
 }
 
 /**

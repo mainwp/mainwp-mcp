@@ -838,26 +838,10 @@ export function resolveConfig(): ConfigResolution {
     };
   }
 
-  const hasBasicAuth = username && appPassword;
-  const hasBearerAuth = apiToken;
-
-  if (!hasBasicAuth && !hasBearerAuth) {
-    return {
-      status: 'unconfigured',
-      missing: 'credentials',
-      message:
-        'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)',
-      policy,
-    };
-  }
-
-  if (hasBearerAuth && !hasBasicAuth) {
-    console.error(
-      'WARNING: MAINWP_TOKEN bearer authentication is expected to fail against the WordPress Abilities API. ' +
-        'Configure both MAINWP_USER and MAINWP_APP_PASSWORD with a WordPress Application Password.'
-    );
-  }
-
+  // Runs before the credentials check: a URL that is present but malformed is
+  // something the user actively configured wrong, and setup mode cannot repair
+  // it (the env var stays authoritative over anything configure would write),
+  // so it must fail fast even when credentials are also missing.
   const normalizedUrl = dashboardUrl.replace(/\/+$/, '');
 
   // Validate URL format
@@ -878,6 +862,26 @@ export function resolveConfig(): ConfigResolution {
     }
     console.error(
       'WARNING: dashboardUrl uses HTTP - credentials will be transmitted in plain text'
+    );
+  }
+
+  const hasBasicAuth = username && appPassword;
+  const hasBearerAuth = apiToken;
+
+  if (!hasBasicAuth && !hasBearerAuth) {
+    return {
+      status: 'unconfigured',
+      missing: 'credentials',
+      message:
+        'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)',
+      policy,
+    };
+  }
+
+  if (hasBearerAuth && !hasBasicAuth) {
+    console.error(
+      'WARNING: MAINWP_TOKEN bearer authentication is expected to fail against the WordPress Abilities API. ' +
+        'Configure both MAINWP_USER and MAINWP_APP_PASSWORD with a WordPress Application Password.'
     );
   }
 

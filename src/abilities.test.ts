@@ -18,6 +18,7 @@ import {
 import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
+import { clearKnownSecrets, registerKnownSecrets } from './security.js';
 import { type Config } from './config.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
@@ -719,6 +720,129 @@ describe('fetchAbilities', () => {
 
     // Per-request undici dispatcher handles TLS — process env must remain unchanged
     expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe(original);
+  });
+});
+
+describe('credentials reflected by a hostile Dashboard', () => {
+  const APP_PASSWORD = 'abcd efgh ijkl mnop qrst uvwx';
+  const TOKEN = 'supersecrettoken';
+
+  const readOnlyAbility = {
+    name: 'mainwp/list-sites-v1',
+    label: 'List Sites',
+    description: 'Get all managed sites',
+    category: 'mainwp-sites',
+    input_schema: { type: 'object', properties: {} },
+    meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+    registerKnownSecrets([APP_PASSWORD, TOKEN]);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    clearKnownSecrets();
+    vi.restoreAllMocks();
+  });
+
+  it('scrubs a reflected credential from label, description, category, and instructions', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...readOnlyAbility,
+          label: `List ${APP_PASSWORD}`,
+          description: `credential=${APP_PASSWORD}`,
+          category: `sites-${APP_PASSWORD}`,
+          meta: {
+            annotations: {
+              ...readOnlyAbility.meta.annotations,
+              instructions: `use ${APP_PASSWORD}`,
+            },
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities).toHaveLength(1);
+    expect(JSON.stringify(abilities)).not.toContain(APP_PASSWORD);
+    expect(abilities[0].description).toBe('credential=[redacted]');
+  });
+
+  it('drops an ability whose name reflects a credential rather than rewriting it', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ ...readOnlyAbility, name: `mainwp/${TOKEN}-v1` }, readOnlyAbility],
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities.map(a => a.name)).toEqual(['mainwp/list-sites-v1']);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability whose name reflects a known secret'
+    );
+  });
+
+  it('drops an ability whose schema key or enum value reflects a credential', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...readOnlyAbility,
+          name: 'mainwp/keyed-v1',
+          input_schema: { type: 'object', properties: { [TOKEN]: { type: 'string' } } },
+        },
+        {
+          ...readOnlyAbility,
+          name: 'mainwp/enumed-v1',
+          input_schema: {
+            type: 'object',
+            properties: { mode: { type: 'string', enum: [TOKEN, 'safe'] } },
+          },
+        },
+        readOnlyAbility,
+      ],
+      headers: new Headers(),
+    });
+
+    const abilities = await fetchAbilities(baseConfig, false, mockLogger);
+
+    expect(abilities.map(a => a.name)).toEqual(['mainwp/list-sites-v1']);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability whose schema exceeds safety bounds',
+      expect.objectContaining({ reason: 'key reflects a known secret' })
+    );
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability whose schema exceeds safety bounds',
+      expect.objectContaining({ reason: 'semantic string reflects a known secret' })
+    );
+  });
+
+  it('scrubs a reflected credential from an ability execution result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [readOnlyAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ sites: [{ note: `saved password ${APP_PASSWORD}` }] }),
+      headers: new Headers(),
+    });
+
+    const result = await executeAbility(baseConfig, 'mainwp/list-sites-v1', {}, mockLogger);
+
+    expect(JSON.stringify(result)).not.toContain(APP_PASSWORD);
+    expect(JSON.stringify(result)).toContain('[redacted]');
   });
 });
 
