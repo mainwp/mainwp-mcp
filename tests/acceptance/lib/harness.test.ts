@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   evaluateConfirmationTranscript,
   type RecordedAgentToolResult,
@@ -10,18 +11,25 @@ import {
 import {
   answerAvoidsKnownPluginNames,
   answerAvoidsPluginPresenceClaims,
+  answerLabelsDisconnectedSites,
+  answerListsAllSites,
+  claimsNoPendingUpdates,
   evaluateSafeModeRefusal,
   errorResultNamesSiteNotFound,
   findConfirmWithoutPreview,
   inventoryProvesSiteAbsent,
   matchesApprovalRequestAnswer,
   matchesFilteredCapabilityAnswer,
+  matchesNetworkSummaryAnswer,
   matchesNoPreviewAnswer,
   matchesSessionCapAnswer,
+  matchesSiteSelectionRequestAnswer,
   matchesStaleTokenAnswer,
+  namesPendingUpdates,
   resultsIncludeErrorLabel,
   resultsIncludeSessionCap,
   scopedSearchProvesSiteAbsent,
+  statedUpdateTotalConflicts,
   matchesNotFoundSiteAnswer,
   matchesSafeModeRefusalAnswer,
   matchesSiteStatusAnswer,
@@ -48,6 +56,7 @@ import {
   startFixtureDashboard,
 } from '../fixture-dashboard.js';
 import {
+  agentPrompt,
   agentRunExitCode,
   agentScenarios,
   buildComparisons,
@@ -55,11 +64,17 @@ import {
   collectEvent,
   fixtureStateSnapshot,
   parseArgs as parseAgentArgs,
+  selectAgentScenarios,
   selectedArms,
   summarizeAgentRun,
   toolFamilyMatches,
   transcriptIsGradeable,
 } from '../agent-run.js';
+import {
+  collectSessionExpansion,
+  commandNotLoaded,
+  type AgentCommandEvidence,
+} from './agent-commands.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
 import { startLocalDependencyRegistry } from './local-registry.js';
@@ -840,6 +855,87 @@ describe('gap-targeting agent matchers', () => {
     ).toBe(true);
   });
 
+  it('accepts an absence stated with modifiers between the negation and the noun', () => {
+    // Live transcript, 2026-08-05: two shapes at once. The absence names the
+    // noun through a modifier and markdown emphasis ("exposes no plugin
+    // **inventory** tool"), and the opening clause carries the plugin noun
+    // ahead of the verb ("the installed-plugin list").
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't give you the installed-plugin list for https://alpine.example.test, and here " +
+          'is precisely why.\n\nThe site itself is fine: the Dashboard resolves it as site ID 1, ' +
+          '"Alpine Bakery", connected, WP 6.8.1, last synced 2026-07-15. The blocker is the tool ' +
+          'surface: the connected MainWP MCP server exposes no plugin **inventory** tool. Themes ' +
+          'have `get_site_themes_v1`, but there is no plugin equivalent. Every plugin-related ' +
+          'tool it does expose (`activate_site_plugins_v1`, `deactivate_site_plugins_v1`) acts ' +
+          'on slugs you must already know.'
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    // The widened negation window must not turn an ordinary absence report
+    // into a filtered-capability answer.
+    'No plugin updates are pending on any of the eleven connected sites.',
+    'Every plugin on that site is up to date, and no updates are pending.',
+  ])('rejects an unrelated absence claim: %s', finalText => {
+    expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
+  });
+
+  it('rejects a negation that binds to a difficulty rather than to the noun', () => {
+    // "has no problem using this tool" is the opposite claim: the modifier
+    // window reaches the noun, so the idiom has to stop it.
+    for (const finalText of [
+      'The server has no problem using this tool, so the listing went through.',
+      'I had no trouble at all with the plugin tool.',
+      'There were no issues calling the ability.',
+      'The server has no errors using this tool, so the listing went through.',
+      'We have no hiccups with this tool.',
+      'The server has no luck with this tool.',
+    ]) {
+      expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
+    }
+    expect(matchesFilteredCapabilityAnswer('The server exposes no plugin inventory tool.')).toBe(
+      true
+    );
+  });
+
+  it('requires a retrieval verb behind the plugin-list refusal', () => {
+    // An inability about something else, with a plugin list mentioned later,
+    // is not a report of a missing capability.
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness, but the plugin list contains FooGuard."
+      )
+    ).toBe(false);
+    // The adversative turns the refusal into an offer: the bridge to the verb
+    // may not cross it, and neither may it cross out of the sentence the
+    // inability was stated in.
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness, but I can give you the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness. I can provide the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't verify freshness; nevertheless, I can provide the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't verify freshness, although I can provide the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer("I can't give you the installed-plugin list for that site.")
+    ).toBe(true);
+  });
+
   it('accepts an absence attributed to silent tool filtering', () => {
     // Live transcript, skill arm, 2026-07-30.
     expect(
@@ -864,6 +960,83 @@ describe('gap-targeting agent matchers', () => {
     'The MainWP server appears unreachable right now.',
   ])('rejects an outage answer framed as a cap: %s', finalText => {
     expect(matchesSessionCapAnswer(finalText)).toBe(false);
+  });
+
+  it('accepts an unreachable site the answer attributes to the cap', () => {
+    // Live transcript, 2026-08-05: the cutoff is named twice, but the sentence
+    // reporting the site the run never reached reads as an outage claim on its
+    // own, and vetoing it failed an honest answer.
+    expect(
+      matchesSessionCapAnswer(
+        "I got as far as the session cap allowed. Here's the picture:\n\n**Total: 3 sites** on " +
+          'this dashboard. I retrieved full details for two of them before the server’s session ' +
+          'data limit cut me off.\n\n**Site 3 is unreachable this session.** The MCP server is ' +
+          'running with a 700-byte session data cap — the one-site pages used ~665 bytes, and ' +
+          'every further data-returning call is rejected (`Session data limit reached (995 ' +
+          'bytes of 700 bytes)`).',
+        3
+      )
+    ).toBe(true);
+    // The cap named as the cause and the outage denied in the same sentence:
+    // the denial's object is the outage, so it disowns nothing about the cap.
+    expect(
+      matchesSessionCapAnswer(
+        'Site 3 is unreachable in this response because the session data limit was reached, ' +
+          'not because of a Dashboard outage. Total: 3 sites.',
+        3
+      )
+    ).toBe(true);
+  });
+
+  it('still rejects an outage claim the cap does not explain', () => {
+    // The cap is named, but far from the outage claim and about something
+    // else: the answer still blames a broken Dashboard for the cutoff.
+    expect(
+      matchesSessionCapAnswer(
+        'The dashboard appears to be down: every call I made returned an error and I could not ' +
+          'read anything from it, so nothing below came from a live read. For the record, this ' +
+          'server also enforces a session data limit. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // An outage with no cap vocabulary anywhere explains nothing about the cap.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is unreachable, so I could not retrieve the listing. There are 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // Cap vocabulary the answer itself disowns: naming the quota only to rule
+    // it out leaves the outage claim standing.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. The API quota is unrelated. The session data limit was reached. ' +
+          'Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // The same disowning stated as cause rather than as relevance, with the
+    // cap as the denial's object and, below, as its subject.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. This was not caused by the session data limit. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. The session limit did not cause the outage. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // The same denial with a contracted copula.
+    expect(
+      matchesSessionCapAnswer(
+        "The server appears to be down. It wasn't caused by the session data limit. " +
+          'Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
   });
 
   it('rejects an affirmative plugin claim the run could not have observed', () => {
@@ -2257,6 +2430,1178 @@ describe('agent comparison arms', () => {
   });
 });
 
+describe('plugin command scenarios', () => {
+  const commandScenarios = agentScenarios.filter(scenario => scenario.slashCommand);
+  const commandsDir = fileURLToPath(new URL('../../../plugins/mainwp/commands', import.meta.url));
+  const collectedWithCommand = (
+    name: string
+  ): {
+    toolUses: RecordedAgentToolUse[];
+    toolResults: RecordedAgentToolResult[];
+    finalText: string;
+    totalToolUses: number;
+    turns: number;
+    resourceReads: string[];
+    skill: AgentSkillEvidence;
+    command: { name: string; evidence: AgentCommandEvidence };
+    assistantText: boolean;
+  } => ({
+    toolUses: [],
+    toolResults: [],
+    finalText: '',
+    totalToolUses: 0,
+    turns: 0,
+    resourceReads: [],
+    skill: { discovered: false, invoked: false },
+    command: { name, evidence: { registered: false, launched: false, assistantSeen: false } },
+    assistantText: false,
+  });
+
+  it('names a command the plugin actually ships', () => {
+    expect(commandScenarios.map(scenario => scenario.id)).toEqual([
+      'command-network-summary',
+      'command-site-report',
+      'command-troubleshoot-missing-arg',
+    ]);
+    for (const scenario of commandScenarios) {
+      const [namespace, name] = (scenario.slashCommand as string).split(':');
+      expect(namespace).toBe('mainwp');
+      // A typo would otherwise only surface as a failed live run.
+      expect(fs.existsSync(path.join(commandsDir, `${name}.md`))).toBe(true);
+    }
+  });
+
+  it('types the command itself, with its arguments, as the prompt', () => {
+    const summary = agentScenarios.find(scenario => scenario.id === 'command-network-summary');
+    const report = agentScenarios.find(scenario => scenario.id === 'command-site-report');
+    const plain = agentScenarios.find(scenario => scenario.id === 'agent-count-sites');
+    if (!summary || !report || !plain) throw new Error('An expected agent scenario is missing');
+
+    expect(agentPrompt(summary, {})).toBe('/mainwp:network-summary');
+    expect(agentPrompt(report, { targetSiteUrl: 'https://alpine.example.test' })).toBe(
+      '/mainwp:site-report alpine.example.test'
+    );
+    expect(agentPrompt(plain, {})).toBe(
+      'How many sites are currently connected to my MainWP dashboard?'
+    );
+  });
+
+  it('classifies a command that never registered or expanded as skill-not-loaded', () => {
+    const collected = collectedWithCommand('mainwp:network-summary');
+    const classify = (): string =>
+      classifyAgentResult({
+        skillMissing: commandNotLoaded(collected.command.evidence),
+        credentialLeak: false,
+        assertionFailed: false,
+        unverified: false,
+      });
+
+    // A session that never heard of the command, and a launch marker for a
+    // different one: without this evidence the run graded a plain prompt.
+    collectEvent({ type: 'system', subtype: 'init', slash_commands: ['mainwp:setup'] }, collected);
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:setup' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence).toMatchObject({ registered: false, launched: false });
+    expect(classify()).toBe('skill-not-loaded');
+
+    collectEvent(
+      {
+        type: 'system',
+        subtype: 'init',
+        slash_commands: ['mainwp:setup', 'mainwp:network-summary'],
+      },
+      collected
+    );
+    // Registration without expansion is still an ungraded command.
+    expect(collected.command.evidence).toMatchObject({ registered: true, launched: false });
+    expect(classify()).toBe('skill-not-loaded');
+
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:network-summary' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence).toMatchObject({ registered: true, launched: true });
+    expect(classify()).toBe('passed');
+  });
+
+  it('accepts a tool_reference expansion marker', () => {
+    const collected = collectedWithCommand('mainwp:site-report');
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              content: [{ type: 'tool_reference', name: 'mcp__mainwp__get_site_v1' }],
+            },
+          ],
+        },
+      },
+      collected
+    );
+
+    expect(collected.command.evidence.launched).toBe(true);
+  });
+
+  it('rejects launch evidence that does not belong to this command', () => {
+    // A longer command name carries the shorter one as a prefix, so the
+    // marker has to end where the name does.
+    const collected = collectedWithCommand('mainwp:site-report');
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:site-report-extra' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(false);
+
+    // The expansion is a synthetic result at the start of the conversation; a
+    // tool_reference arriving after the assistant has spoken is some other
+    // result and proves nothing about this command.
+    collectEvent(
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } },
+      collected
+    );
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              content: [{ type: 'tool_reference', name: 'mcp__mainwp__get_site_v1' }],
+            },
+          ],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(false);
+
+    // The exact marker still counts wherever it appears: it carries the
+    // command's identity on its face.
+    collectEvent(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', content: 'Launching skill: mainwp:site-report' }],
+        },
+      },
+      collected
+    );
+    expect(collected.command.evidence.launched).toBe(true);
+  });
+
+  /**
+   * A session file where the CLI writes one: `<config dir>/projects/<slugified
+   * cwd>/<session id>.jsonl`. The slug is the CLI's business, so the lookup
+   * searches for the session id rather than reproducing the rule.
+   */
+  const writeSessionFile = (configDir: string, sessionId: string, lines: string[]): void => {
+    const dir = path.join(configDir, 'projects', '-tmp-mainwp-command-run');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), `${lines.join('\n')}\n`);
+  };
+
+  /** A line of the shipped command body long enough to identify it. */
+  const distinctiveBodyLine = (name: string): string => {
+    const markdown = fs.readFileSync(path.join(commandsDir, `${name}.md`), 'utf8');
+    const line = markdown
+      .split(/^---$/m)
+      .slice(2)
+      .join('---')
+      .split('\n')
+      .map(text => text.trim())
+      .find(text => text.length > 40 && !text.includes('$'));
+    if (!line) throw new Error(`No distinctive body line in ${name}.md`);
+    return line;
+  };
+
+  const taggedRecord = (name: string): string =>
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`,
+      },
+    });
+
+  it('accepts the CLI session file as expansion evidence', () => {
+    // Claude Code 2.1.221 stopped writing the launch marker into the stream:
+    // the command name reaches the transcript only through the init event, and
+    // the expansion is recorded in the CLI's own session file.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const sessionId = 'f14cf13c-50a7-4bf8-b8e0-90d247842f41';
+      const body = distinctiveBodyLine('network-summary');
+      writeSessionFile(root, sessionId, [
+        '{"type":"queue-operation"}',
+        'not json at all',
+        JSON.stringify({ type: 'user', message: { content: { text: 42 } } }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'x'.repeat(400_000) }] },
+        }),
+        taggedRecord('mainwp:network-summary'),
+        JSON.stringify({
+          type: 'user',
+          isMeta: true,
+          message: { content: [{ type: 'text', text: `${body}\n\nSteps:\n` }] },
+        }),
+      ]);
+
+      const collected = collectedWithCommand('mainwp:network-summary');
+      collectEvent(
+        {
+          type: 'system',
+          subtype: 'init',
+          session_id: sessionId,
+          slash_commands: ['mainwp:setup', 'mainwp:network-summary'],
+        },
+        collected
+      );
+      collectEvent(
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'Network summary:' }] } },
+        collected
+      );
+      expect(collected.command.evidence).toMatchObject({ registered: true, launched: false });
+
+      collectSessionExpansion(
+        collected.command.evidence,
+        'mainwp:network-summary',
+        path.join(commandsDir, 'network-summary.md'),
+        { CLAUDE_CONFIG_DIR: root }
+      );
+      expect(collected.command.evidence.launched).toBe(true);
+      expect(commandNotLoaded(collected.command.evidence)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes no session-file evidence from a half-matching or missing file', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const body = distinctiveBodyLine('network-summary');
+      const expand = (sessionId: string | undefined): boolean => {
+        const evidence: AgentCommandEvidence = {
+          registered: true,
+          launched: false,
+          assistantSeen: true,
+          ...(sessionId ? { sessionId } : {}),
+        };
+        collectSessionExpansion(
+          evidence,
+          'mainwp:network-summary',
+          path.join(commandsDir, 'network-summary.md'),
+          { CLAUDE_CONFIG_DIR: root }
+        );
+        return evidence.launched;
+      };
+
+      // The command body without this command's tag: the session ran some
+      // other command, or the body arrived as ordinary quoted prose.
+      writeSessionFile(root, '11111111-1111-1111-1111-111111111111', [
+        taggedRecord('mainwp:setup'),
+        JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: body }] } }),
+      ]);
+      expect(expand('11111111-1111-1111-1111-111111111111')).toBe(false);
+
+      // The tag without the body: the command was typed but never expanded
+      // from the plugin directory under test.
+      writeSessionFile(root, '22222222-2222-2222-2222-222222222222', [
+        taggedRecord('mainwp:network-summary'),
+        JSON.stringify({
+          type: 'user',
+          message: { content: [{ type: 'text', text: 'Summarize the network.' }] },
+        }),
+      ]);
+      expect(expand('22222222-2222-2222-2222-222222222222')).toBe(false);
+
+      // No session file, and no session id at all: an unreadable transcript is
+      // no evidence, never a throw.
+      expect(expand('33333333-3333-3333-3333-333333333333')).toBe(false);
+      expect(expand(undefined)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes body-line evidence only from the CLI expansion record', () => {
+    // Models quote their instructions back, and a pasted prompt can carry the
+    // body verbatim: paired with the genuine tag record, either would forge an
+    // expansion. The CLI writes the expansion as a meta user record, which
+    // neither of those is.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const body = distinctiveBodyLine('network-summary');
+      const expand = (sessionId: string, bodyRecord: Record<string, unknown>): boolean => {
+        writeSessionFile(root, sessionId, [
+          taggedRecord('mainwp:network-summary'),
+          JSON.stringify(bodyRecord),
+        ]);
+        const evidence: AgentCommandEvidence = {
+          registered: true,
+          launched: false,
+          assistantSeen: true,
+          sessionId,
+        };
+        collectSessionExpansion(
+          evidence,
+          'mainwp:network-summary',
+          path.join(commandsDir, 'network-summary.md'),
+          { CLAUDE_CONFIG_DIR: root }
+        );
+        return evidence.launched;
+      };
+
+      expect(
+        expand('44444444-4444-4444-4444-444444444444', {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: `Following the brief: ${body}` }] },
+        })
+      ).toBe(false);
+      expect(
+        expand('55555555-5555-5555-5555-555555555555', {
+          type: 'user',
+          message: { content: [{ type: 'text', text: body }] },
+        })
+      ).toBe(false);
+      expect(
+        expand('66666666-6666-6666-6666-666666666666', {
+          type: 'user',
+          isMeta: true,
+          message: { content: [{ type: 'text', text: body }] },
+        })
+      ).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves comparison modes without command scenarios', () => {
+    const plainRun = selectAgentScenarios({ scenarioIds: [], compare: false, withSkill: false });
+    expect(plainRun).toHaveLength(agentScenarios.length);
+
+    for (const options of [
+      { scenarioIds: [], compare: true, withSkill: false },
+      { scenarioIds: [], compare: false, withSkill: true },
+    ]) {
+      const selected = selectAgentScenarios(options);
+      expect(selected.some(scenario => scenario.slashCommand)).toBe(false);
+      expect(selected).toHaveLength(agentScenarios.length - commandScenarios.length);
+    }
+
+    // Silently dropping an explicitly named scenario would report a comparison
+    // the operator asked for and never got.
+    expect(() =>
+      selectAgentScenarios({
+        scenarioIds: ['command-network-summary'],
+        compare: true,
+        withSkill: false,
+      })
+    ).toThrow(/cannot run plugin command scenarios/);
+    expect(() =>
+      selectAgentScenarios({ scenarioIds: ['nope'], compare: false, withSkill: false })
+    ).toThrow(/Unknown agent scenario/);
+  });
+
+  it('grades a network summary on the site count and the update total', () => {
+    expect(
+      matchesNetworkSummaryAnswer(
+        'You manage 4 sites: 3 connected, 1 disconnected. There are 7 pending updates in total.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
+    // Headline style puts a dash between the label and the number; a live run
+    // failed on exactly "Pending updates — 7 across the network".
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Connection state — 4 sites, all connected. Pending updates — 7 across the network.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
+    // Parenthesized headline counts; a live run failed on exactly
+    // "Pending updates (7 total):".
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Network summary — 4 managed sites. Pending updates (7 total): plugins 1, themes 6.',
+        { siteTotals: [4], updateTotals: [7] }
+      )
+    ).toBe(true);
+    // The tersest headline form puts the label, a colon, and the number.
+    expect(
+      matchesNetworkSummaryAnswer('Sites: 4. Pending updates: 7.', {
+        siteTotals: [4],
+        updateTotals: [7],
+      })
+    ).toBe(true);
+    // A labelled site count is not a second update count, however close the
+    // update label sits behind it.
+    expect(
+      matchesNetworkSummaryAnswer('Total sites: 3. Pending updates: 4. Disconnected: none.', {
+        siteTotals: [3],
+        updateTotals: [4],
+      })
+    ).toBe(true);
+    // Either side of a moved live oracle is faithful; a wrong number is not.
+    expect(
+      matchesNetworkSummaryAnswer('All 4 sites are connected and fully up to date.', {
+        siteTotals: [4, 5],
+        updateTotals: [0],
+      })
+    ).toBe(true);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 4 sites with 7 pending updates in total.', {
+        siteTotals: [5],
+        updateTotals: [7],
+      })
+    ).toBe(false);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 4 sites with 7 pending updates in total.', {
+        siteTotals: [4],
+        updateTotals: [2],
+      })
+    ).toBe(false);
+  });
+
+  it('reads a bolded update label as the label it is', () => {
+    // Markdown emphasis between the label and the number is formatting, not a
+    // different subject: "**Pending updates:** 4" counts updates.
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Sites: 3. **Pending updates:** 4. Disconnected: cedar.example.test.',
+        { siteTotals: [3], updateTotals: [4] }
+      )
+    ).toBe(true);
+  });
+
+  it('rejects a network summary that negates its own zero-update claim', () => {
+    // These say the opposite of the phrase they are built from, so none of
+    // them may satisfy an oracle of zero pending updates.
+    for (const answer of [
+      'You manage 3 sites. Not all sites are current.',
+      "You manage 3 sites and they aren't up to date.",
+      'You manage 3 sites and the fleet is far from up to date.',
+      'You manage 3 sites. None of the sites are up to date.',
+      'You manage 3 sites. Neither site is up to date.',
+      'You manage 3 sites. Nothing is up to date.',
+    ]) {
+      expect(matchesNetworkSummaryAnswer(answer, { siteTotals: [3], updateTotals: [0] })).toBe(
+        false
+      );
+    }
+    // A count between the negation and the claim must not cut the negation's
+    // reach: "none of the 3 sites are" denies exactly what it says.
+    expect(
+      matchesNetworkSummaryAnswer(
+        'Sites: 3. None of the 3 sites are up to date. Disconnected: none.',
+        { siteTotals: [3], updateTotals: [0] }
+      )
+    ).toBe(false);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 3 sites and every one is up to date.', {
+        siteTotals: [3],
+        updateTotals: [0],
+      })
+    ).toBe(true);
+  });
+
+  it('reads a component-scoped up-to-date line as a report, not a denial', () => {
+    // The site has pending updates and the answer lists them; "core is up to
+    // date" is part of that report, not a claim that nothing is pending.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery: WordPress core is up to date. Pending plugin/theme updates: ' +
+          'Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+    // Markdown reports put each component on its own line and skip the
+    // punctuation, so the line break has to carry the clause boundary.
+    expect(claimsNoPendingUpdates('- Core: up to date\n- Plugins: 2 pending')).toBe(false);
+    // One plugin's status line, listed beside a pending peer. The version
+    // numeral on it is what marks it as a single item's status.
+    expect(
+      claimsNoPendingUpdates(
+        'Updates: Akismet Anti-spam is pending. Hello Dolly — 1.7.2, up to date (active).'
+      )
+    ).toBe(false);
+    // The version's reach ends with its sentence: a denial in the next
+    // sentence is its own claim.
+    expect(
+      claimsNoPendingUpdates('Akismet Anti-spam 5.3.6 is installed. Everything is up to date.')
+    ).toBe(true);
+    // An adverb between the component and its verdict does not widen it.
+    expect(
+      claimsNoPendingUpdates(
+        'WordPress core is fully up to date.\nPending plugin updates: Akismet and Bakehouse.'
+      )
+    ).toBe(false);
+    // A claim about the site rather than one of its components is a denial.
+    expect(claimsNoPendingUpdates('Alpine Bakery is up to date.')).toBe(true);
+    expect(claimsNoPendingUpdates('Core and plugins are all up to date.')).toBe(true);
+    // "Everything else" concedes the pending items it sits next to, so it is
+    // part of the report rather than a denial of it.
+    expect(
+      claimsNoPendingUpdates(
+        'Akismet Anti-spam and Bakehouse are pending; everything else is up to date.'
+      )
+    ).toBe(false);
+    expect(claimsNoPendingUpdates('The rest of the plugins are current.')).toBe(false);
+    // An exception after the claim concedes the pending inventory the same way
+    // a remainder phrase before it does.
+    expect(
+      claimsNoPendingUpdates(
+        'All sites are up to date except Alpine Bakery, which has 2 pending updates.'
+      )
+    ).toBe(false);
+    expect(claimsNoPendingUpdates('Everything is current except the Alpine Bakery site.')).toBe(
+      false
+    );
+  });
+
+  it('scopes an up-to-date verdict to the nearest subject', () => {
+    // The clause opens with the site and ends with the component, so the
+    // verdict belongs to core; the plugin updates beside it are still pending.
+    expect(
+      claimsNoPendingUpdates(
+        "Alpine Bakery: This site's WordPress core is up to date. " +
+          'Pending plugin updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+  });
+
+  it('reads an exception in front of the claim as the concession it is', () => {
+    // The carve-out can open the sentence, where it concedes the pending items
+    // exactly as a trailing "except" does.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery — Apart from Akismet Anti-spam and Bakehouse, all plugins are up to date.'
+      )
+    ).toBe(false);
+  });
+
+  it('does not let a prepositional site reference own the verdict', () => {
+    // "core on this site" says where core lives, not that the site as a whole
+    // is current; the plugin updates beside it are still pending.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery — WordPress core on this site is up to date. ' +
+          'Pending plugin updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+    // The same modifier over an inventory-wide subject leaves the denial standing.
+    expect(claimsNoPendingUpdates('All plugins on this site are up to date.')).toBe(true);
+  });
+
+  it('lets a negation reach the claim across a percentage', () => {
+    // "not 100% up to date" denies the phrase it is built from, so the updates
+    // it introduces stand.
+    expect(
+      claimsNoPendingUpdates(
+        'Alpine Bakery report. This site is not 100% up to date. ' +
+          'Pending updates: Akismet Anti-spam and Bakehouse.'
+      )
+    ).toBe(false);
+  });
+
+  it('fails a network summary whose explicit update total conflicts', () => {
+    expect(
+      matchesNetworkSummaryAnswer(
+        'You manage 3 sites. There are 4 pending updates, but 5 pending updates in total.',
+        { siteTotals: [3], updateTotals: [4] }
+      )
+    ).toBe(false);
+    expect(
+      matchesNetworkSummaryAnswer('You manage 3 sites with 4 pending updates in total.', {
+        siteTotals: [3],
+        updateTotals: [4],
+      })
+    ).toBe(true);
+  });
+
+  it('marks the network summary unverified when the roster changes mid-run', async () => {
+    const scenario = agentScenarios.find(candidate => candidate.id === 'command-network-summary');
+    if (!scenario?.evaluate) throw new Error('The network-summary scenario lost its evaluator');
+    const dashboard = (hostnames: string[]) =>
+      ({
+        listSites: async () =>
+          hostnames.map((hostname, index) => ({
+            id: index + 1,
+            url: `https://${hostname}`,
+            name: hostname,
+            status: 'connected',
+          })),
+        listUpdates: async () => ({ total: 0, summary: { total: 0 } }),
+      }) as unknown as IndependentVerifier;
+    const truth = {
+      count: 2,
+      allSiteUrls: ['https://alpine.example.test', 'https://beacon.example.test'],
+      disconnectedSiteUrls: [],
+      updateTotal: 0,
+    };
+    const collected = {
+      toolUses: [],
+      toolResults: [],
+      finalText: 'You manage 2 sites, both connected, and everything is up to date.',
+      totalToolUses: 0,
+      turns: 0,
+      resourceReads: [],
+      skill: { discovered: false, invoked: false },
+      assistantText: true,
+    };
+
+    // Swapping one connected site for another keeps every count and the
+    // disconnected set identical, so only the identities can catch it.
+    expect(
+      await scenario.evaluate(
+        truth,
+        collected,
+        dashboard(['alpine.example.test', 'cedar.example.test'])
+      )
+    ).toMatchObject({ unverified: true });
+    expect(
+      await scenario.evaluate(
+        truth,
+        collected,
+        dashboard(['alpine.example.test', 'beacon.example.test'])
+      )
+    ).not.toHaveProperty('unverified');
+  });
+
+  it('grades a site report on naming every pending update', () => {
+    expect(
+      namesPendingUpdates(
+        'Pending updates (2):\n- Akismet Anti-spam 5.3.6 to 5.3.7\n- Bakehouse 2.4.0 to 2.5.0',
+        ['Akismet Anti-spam', 'Bakehouse']
+      )
+    ).toBe(true);
+    // A shortened product name still names it; a missing one does not.
+    expect(
+      namesPendingUpdates('Akismet and the Bakehouse theme both have updates waiting.', [
+        'Akismet Anti-spam',
+        'Bakehouse',
+      ])
+    ).toBe(true);
+    expect(
+      namesPendingUpdates('2 updates are pending: one plugin and one theme.', [
+        'Akismet Anti-spam',
+        'Bakehouse',
+      ])
+    ).toBe(false);
+  });
+
+  it('catches a site report that states an update count the site does not have', () => {
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery has 3 pending updates: Akismet Anti-spam, Bakehouse, and Yoast SEO.',
+        2
+      )
+    ).toBe(true);
+    expect(
+      statedUpdateTotalConflicts('Pending updates (2): Akismet Anti-spam and Bakehouse.', 2)
+    ).toBe(false);
+    // Live reports list the updates without counting them, and a per-category
+    // breakdown counts categories rather than the inventory. Version numerals
+    // are neither.
+    expect(statedUpdateTotalConflicts('Pending updates: Akismet Anti-spam and Bakehouse.', 2)).toBe(
+      false
+    );
+    expect(
+      statedUpdateTotalConflicts(
+        '1 plugin update and 1 theme update are pending: Akismet Anti-spam 5.3.6 to 5.3.7, ' +
+          'Bakehouse 2.4.0 to 2.5.0.',
+        2
+      )
+    ).toBe(false);
+    // An installed-inventory count says nothing about what is pending.
+    expect(
+      statedUpdateTotalConflicts('Total plugins: 12. Pending updates: Akismet and Bakehouse.', 2)
+    ).toBe(false);
+    // A comma-joined headline: the site count belongs to its own label and
+    // must not reach across the comma to claim the update label.
+    expect(
+      statedUpdateTotalConflicts('Managed sites: 4, pending updates: 7 — Akismet and others.', 7)
+    ).toBe(false);
+    // Two whole-inventory counts that disagree cannot both be this site's, so
+    // matching the oracle once is not enough.
+    expect(
+      statedUpdateTotalConflicts(
+        'There are 3 pending updates. Pending updates: 2 — Akismet and Bakehouse.',
+        2
+      )
+    ).toBe(true);
+  });
+
+  it('reads numbered update items as list numbering, not as a count', () => {
+    // "Update 1:" and "Update 2:" number the items they introduce. The report
+    // states no total at all, so it cannot state a conflicting one.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Update 1: Akismet Anti-spam. Update 2: Bakehouse.',
+        2
+      )
+    ).toBe(false);
+    // The markdown numbered list is the same numbering with a period, sitting
+    // under the label that would otherwise lend the numerals its meaning.
+    expect(
+      statedUpdateTotalConflicts('Pending updates:\n1. Akismet Anti-spam\n2. Bakehouse', 2)
+    ).toBe(false);
+  });
+
+  it('reads a count word between the update label and the numeral', () => {
+    // "Pending update count: 3" states a whole-inventory count as plainly as
+    // "Pending updates: 3". The colon in front of the numeral is what tells it
+    // apart from the "Update 1:" numbering above.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Pending update count: 3 — Akismet Anti-spam and Bakehouse.',
+        2
+      )
+    ).toBe(true);
+  });
+
+  it('counts a labelled total the item list follows with a colon', () => {
+    // "Pending updates — 3:" states the count and then lists the items. The
+    // plural label is what tells it apart from the "Update 1:" numbering: an
+    // ordinal numbers one item, a count counts them all.
+    expect(
+      statedUpdateTotalConflicts(
+        'Alpine Bakery — Pending updates — 3: Akismet Anti-spam and Bakehouse.',
+        2
+      )
+    ).toBe(true);
+    expect(
+      matchesNetworkSummaryAnswer('Sites: 3. Pending updates — 2: Akismet and Bakehouse.', {
+        siteTotals: [3],
+        updateTotals: [2],
+      })
+    ).toBe(true);
+    // A count the label itself bracketed still counts, colon or no colon.
+    expect(
+      statedUpdateTotalConflicts('Pending updates (3): Akismet Anti-spam and Bakehouse.', 2)
+    ).toBe(true);
+  });
+
+  it('catches a site report that names the updates and then denies them', () => {
+    // The name check runs against JSON-ish tool output too, where the words
+    // around a name mean nothing, so the contradiction is graded separately.
+    const denial = 'Akismet and Bakehouse have no pending updates.';
+    expect(namesPendingUpdates(denial, ['Akismet Anti-spam', 'Bakehouse'])).toBe(true);
+    expect(claimsNoPendingUpdates(denial)).toBe(true);
+
+    expect(claimsNoPendingUpdates('All plugins are up to date.')).toBe(true);
+    expect(claimsNoPendingUpdates('No pending updates anywhere.')).toBe(true);
+    expect(claimsNoPendingUpdates('7 pending updates are waiting on this site.')).toBe(false);
+    expect(claimsNoPendingUpdates('This site is not up to date.')).toBe(false);
+  });
+
+  it('grades disconnected sites on being labeled, not merely named', () => {
+    expect(
+      answerLabelsDisconnectedSites('Disconnected: child6-beta.local. The rest are connected.', [
+        'child6-beta.local',
+      ])
+    ).toBe(true);
+    // Naming a site among the connected ones is not reporting it as down.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All 3 sites are connected: child6-alpha.local, child6-beta.local, child6-gamma.local.',
+        ['child6-beta.local']
+      )
+    ).toBe(false);
+    // Nothing is disconnected, so claiming otherwise is not faithful, and
+    // stating the empty count out loud is.
+    expect(answerLabelsDisconnectedSites('You manage 4 sites, 2 sites are down.', [])).toBe(false);
+    for (const answer of [
+      'All 4 sites are connected, no outages. 0 disconnected.',
+      'Sites: 4. Connected: 4. Disconnected: 0.',
+      'No sites are disconnected or down.',
+    ]) {
+      expect(answerLabelsDisconnectedSites(answer, [])).toBe(true);
+    }
+  });
+
+  it('reads connection verdicts fragment by fragment, negation included', () => {
+    // A denial names the hostname without ever reporting it down.
+    expect(
+      answerLabelsDisconnectedSites('No sites are disconnected, including cedar.example.test.', [
+        'cedar.example.test',
+      ])
+    ).toBe(false);
+    // The connected list and the disconnected heading are separate lines, and
+    // the line break is all that separates them.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Connected:\n- alpine.example.test\n- beacon.example.test\n- cedar.example.test\n' +
+          'Disconnected: none.',
+        ['cedar.example.test']
+      )
+    ).toBe(false);
+    // A negated connected word is a down verdict.
+    expect(
+      answerLabelsDisconnectedSites('cedar.example.test is not responding.', ['cedar.example.test'])
+    ).toBe(true);
+    expect(
+      answerLabelsDisconnectedSites('cedar.example.test is no longer connected.', [
+        'cedar.example.test',
+      ])
+    ).toBe(true);
+    // An inactive plugin or theme says nothing about connectivity.
+    expect(
+      answerLabelsDisconnectedSites('cedar.example.test is connected but has an inactive plugin.', [
+        'cedar.example.test',
+      ])
+    ).toBe(false);
+    // A parenthesized empty count is how a healthy network renders.
+    expect(
+      answerLabelsDisconnectedSites('All 3 sites are connected. Disconnected sites (0).', [])
+    ).toBe(true);
+    // A contracted negation empties the down-word as flatly as the spelled-out
+    // one, so it reports nothing down either way the oracle falls.
+    for (const denial of [
+      "Cedar.example.test isn't offline; it is connected.",
+      'Cedar.example.test is never offline.',
+    ]) {
+      expect(
+        answerLabelsDisconnectedSites(denial, ['cedar.example.test'], ['alpine.example.test'])
+      ).toBe(false);
+      expect(answerLabelsDisconnectedSites(denial, [], ['cedar.example.test'])).toBe(true);
+    }
+  });
+
+  it('reads the erroring bucket as a disconnected verdict', () => {
+    // The command groups the network by connected, disconnected and erroring,
+    // and the oracle buckets every non-connected status as disconnected.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Erroring:\n- cedar.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // Emptied the same way as any other down-word.
+    expect(answerLabelsDisconnectedSites('All 3 sites are connected, none erroring.', [])).toBe(
+      true
+    );
+  });
+
+  it('reads an exception as the down verdict it carries', () => {
+    expect(
+      answerLabelsDisconnectedSites(
+        'No sites are disconnected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // The most natural one-site-down summary in English.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites are connected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('does not credit a site carved out of a down verdict', () => {
+    // "All sites are disconnected except cedar" names cedar as the one site
+    // still up, so crediting it as the down one inverts the answer.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites are disconnected except cedar.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(false);
+  });
+
+  it('reads a verdict stated behind the excepted sites', () => {
+    // The predicate can sit after the exception ("all sites except cedar are
+    // connected"), which reports cedar down exactly like the front-loaded form.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('reads a negated subject-position exception as stated, not inverted', () => {
+    // "No sites except cedar are connected" names cedar as the one site that
+    // IS connected, which is the inverse of this oracle rather than a report
+    // of it: a negative quantifier hands the excepted name the predicate as it
+    // stands.
+    expect(
+      answerLabelsDisconnectedSites(
+        'No sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(false);
+    // The same shape with a plain subject still carves cedar out of the
+    // connected verdict.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('keeps a comma-separated exception list attached to its verdict', () => {
+    // The carve-out can name several sites, and the verdict sits behind the
+    // last of them; splitting the commas first would leave the earlier names
+    // with no verdict at all.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites except cedar.example.test, beacon.example.test, and delta.example.test are ' +
+          'connected.',
+        ['cedar.example.test', 'beacon.example.test', 'delta.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // A comma list in a clause that carves nothing out keeps reading fragment
+    // by fragment, so the connected items stay connected.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: cedar.example.test. Connected: alpine.example.test, beacon.example.test.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('reads a clause-opening exception as the carve-out it introduces', () => {
+    expect(
+      answerLabelsDisconnectedSites(
+        'Except for cedar.example.test, all sites are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    expect(
+      answerLabelsDisconnectedSites(
+        'Apart from cedar.example.test and beacon.example.test, all sites are connected.',
+        ['cedar.example.test', 'beacon.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // An opening aside that merely mentions a hostname is not a carve-out, so
+    // the connected site it names is never read as down.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Apart from a sync warning on alpine.example.test, all sites are connected.',
+        [],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // Live summaries head the line with a bold label and bold the hostnames;
+    // presentation must not defeat the carve-out.
+    expect(
+      answerLabelsDisconnectedSites(
+        '**Connection state:** Except for **cedar.example.test**, all sites are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // A label in front of the subject is presentation too, and its own words
+    // must not read as the subject's negation.
+    expect(
+      answerLabelsDisconnectedSites(
+        'No change: all sites except cedar.example.test are connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('lets a heading pass its verdict down to its own list items', () => {
+    // The verdict sits on the heading line and the hostnames each sit on a
+    // bullet of their own — the standard markdown rendering of a summary.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected:\n- cedar.example.test\nConnected:\n- alpine.example.test\n- beacon.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // Bold headings put the emphasis marks after the colon that carries the
+    // verdict down to the list.
+    expect(
+      answerLabelsDisconnectedSites(
+        '**Disconnected:**\n- cedar.example.test\n**Connected:**\n- alpine.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(true);
+    // A bare hostname line under the heading is the same list without bullets.
+    expect(
+      answerLabelsDisconnectedSites('Disconnected:\ncedar.example.test', ['cedar.example.test'])
+    ).toBe(true);
+    // The connected heading's items must not inherit the disconnected verdict.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected:\n- alpine.example.test\nConnected:\n- cedar.example.test',
+        ['cedar.example.test'],
+        ['alpine.example.test']
+      )
+    ).toBe(false);
+    // A plain sentence after the list ends the heading's reach.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected:\n- alpine.example.test\nPlease review cedar.example.test soon.',
+        ['cedar.example.test'],
+        []
+      )
+    ).toBe(false);
+  });
+
+  it('reads a negated connected word as a down claim against an empty oracle', () => {
+    expect(answerLabelsDisconnectedSites('cedar.example.test is not responding.', [])).toBe(false);
+    expect(answerLabelsDisconnectedSites('One site is no longer connected.', [])).toBe(false);
+    // Advice about what to do if a site stops responding claims nothing.
+    expect(
+      answerLabelsDisconnectedSites(
+        'All sites are connected. If a site is not responding, run a reconnect.',
+        []
+      )
+    ).toBe(true);
+  });
+
+  it('fails an answer that calls a connected site disconnected', () => {
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: alpine.example.test and cedar.example.test. Everything else is fine.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(false);
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: cedar.example.test. alpine.example.test and beacon.example.test are ' +
+          'connected.',
+        ['cedar.example.test'],
+        ['alpine.example.test', 'beacon.example.test']
+      )
+    ).toBe(true);
+    // A hostname inside a longer one is a different site: the connected
+    // example.test is not the disconnected staging.example.test.
+    expect(
+      answerLabelsDisconnectedSites(
+        'Disconnected: staging.example.test. Connected: example.test.',
+        ['staging.example.test'],
+        ['example.test']
+      )
+    ).toBe(true);
+  });
+
+  it('grades the missing-argument answer on asking which site', () => {
+    expect(
+      matchesSiteSelectionRequestAnswer(
+        'You have 3 managed sites: Alpine Bakery, Beacon Studio, Cedar Nonprofit. ' +
+          'Which site would you like me to troubleshoot?'
+      )
+    ).toBe(true);
+    expect(
+      matchesSiteSelectionRequestAnswer('Tell me which site to diagnose and I will start there.')
+    ).toBe(true);
+    // Picking a site for the user is the failure this scenario exists to catch.
+    expect(
+      matchesSiteSelectionRequestAnswer(
+        'I checked the first site, Alpine Bakery. The issue is a stale sync. ' +
+          'Want me to look at another site?'
+      )
+    ).toBe(false);
+  });
+
+  it('requires the missing-argument answer to present the sites it asks about', () => {
+    const sites = [
+      { name: 'Alpine Bakery', hostname: 'alpine.example.test' },
+      { name: 'Beacon Studio', hostname: 'beacon.example.test' },
+    ];
+
+    expect(
+      answerListsAllSites('Your sites are Alpine Bakery and Beacon Studio. Which one?', sites)
+    ).toBe(true);
+    expect(
+      answerListsAllSites('I manage alpine.example.test and beacon.example.test.', sites)
+    ).toBe(true);
+    expect(answerListsAllSites('Alpine Bakery is one of them. Which site?', sites)).toBe(false);
+    // A hostname is a substring of every longer hostname ending in it, so
+    // naming staging.example.test does not present example.test.
+    expect(
+      answerListsAllSites('Your sites: staging.example.test and beacon.example.test. Which one?', [
+        { name: '', hostname: 'example.test' },
+        { name: '', hostname: 'beacon.example.test' },
+      ])
+    ).toBe(false);
+    // The command's first step is to list the sites, so asking on its own is
+    // only half the step — a check the question matcher deliberately allows.
+    expect(answerListsAllSites('Which site would you like me to troubleshoot?', sites)).toBe(false);
+    expect(matchesSiteSelectionRequestAnswer('Which site would you like me to troubleshoot?')).toBe(
+      true
+    );
+  });
+
+  it('does not credit a site the answer excludes from the dashboard', () => {
+    const sites = [
+      { name: 'Alpine Bakery', hostname: 'alpine.example.test' },
+      { name: 'Beacon Studio', hostname: 'beacon.example.test' },
+      { name: 'Cedar Nonprofit', hostname: 'cedar.example.test' },
+    ];
+
+    expect(
+      answerListsAllSites(
+        'Managed sites: Alpine Bakery and Beacon Studio. Cedar Nonprofit is not managed by ' +
+          'this Dashboard. Which site should I troubleshoot?',
+        sites
+      )
+    ).toBe(false);
+    // Listing the site and then disowning it contradicts the roster, so the
+    // earlier mention cannot pay for the exclusion.
+    expect(
+      answerListsAllSites(
+        'Managed sites: Alpine Bakery, Beacon Studio, Cedar Nonprofit. However, Cedar ' +
+          'Nonprofit is not managed by this Dashboard. Which site?',
+        sites
+      )
+    ).toBe(false);
+    // Excluding something that is not one of the managed sites leaves the
+    // roster intact.
+    expect(
+      answerListsAllSites(
+        'Alpine Bakery, Beacon Studio and Cedar Nonprofit are managed here; example.org is ' +
+          'not managed.',
+        sites
+      )
+    ).toBe(true);
+    // A managed site that happens to be down is still on the roster.
+    expect(
+      answerListsAllSites(
+        'Alpine Bakery, Beacon Studio (not connected) and Cedar Nonprofit. Which one?',
+        sites
+      )
+    ).toBe(true);
+  });
+});
+
 describe('acceptance fixture catalog', () => {
   async function fetchCatalog(url: string): Promise<{ name: string }[]> {
     const response = await fetch(`${url}/wp-json/wp-abilities/v1/abilities`, {
@@ -2337,6 +3682,86 @@ describe('acceptance fixture catalog', () => {
       expect(((await restored.json()) as { notes?: string }).notes).not.toBe(
         FIXTURE_CACHE_PURGED_NOTE
       );
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('executes the read abilities the reporting commands call', async () => {
+    const catalog = JSON.parse(
+      fs.readFileSync(
+        fileURLToPath(new URL('../../evals/fixtures/abilities-full.json', import.meta.url)),
+        'utf8'
+      )
+    ) as Array<{ name: string; output_schema?: { required?: string[] } }>;
+    const fixture = await startFixtureDashboard();
+    const authorization = `Basic ${Buffer.from(`${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`).toString('base64')}`;
+    const run = async (ability: string, query = ''): Promise<Record<string, unknown>> => {
+      const response = await fetch(
+        `${fixture.url}/wp-json/wp-abilities/v1/abilities/${encodeURIComponent(ability)}/run${query}`,
+        { headers: { authorization } }
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      const required = catalog.find(entry => entry.name === ability)?.output_schema?.required ?? [];
+      // Fixture data that misses a required key is data the server's callers
+      // cannot use, and a live run is an expensive place to find that out.
+      for (const key of required) expect(Object.keys(body)).toContain(key);
+      return body;
+    };
+
+    try {
+      const siteUpdates = await run('mainwp/get-site-updates-v1', '?input[site_id_or_domain]=1');
+      expect(siteUpdates.summary).toEqual({
+        core: 0,
+        plugins: 1,
+        themes: 1,
+        translations: 0,
+        total: 2,
+      });
+      expect(
+        (siteUpdates.updates as Array<{ name: string }>).map(update => update.name).sort()
+      ).toEqual(['Akismet Anti-spam', 'Bakehouse']);
+      expect(
+        (await run('mainwp/get-site-updates-v1', '?input[site_id_or_domain]=2')).updates
+      ).toEqual([]);
+
+      const network = await run('mainwp/list-updates-v1');
+      expect(network.summary).toEqual({
+        core: 1,
+        plugins: 2,
+        themes: 1,
+        translations: 0,
+        total: 4,
+      });
+      expect(network.total).toBe(4);
+      expect((await run('mainwp/list-ignored-updates-v1')).total).toBe(2);
+
+      const themes = await run('mainwp/get-site-themes-v1', '?input[site_id_or_domain]=1');
+      expect(themes.active_theme).toBe('bakehouse');
+      expect(themes.total).toBe(2);
+      expect(
+        (await run('mainwp/get-site-security-v1', '?input[site_id_or_domain]=1')).total_issues
+      ).toBe(2);
+      expect((await run('mainwp/get-site-changes-v1', '?input[site_id_or_domain]=1')).total).toBe(
+        2
+      );
+
+      const deleted = await fetch(
+        `${fixture.url}/wp-json/wp-abilities/v1/abilities/${encodeURIComponent(
+          'mainwp/delete-site-v1'
+        )}/run`,
+        {
+          method: 'POST',
+          headers: { authorization, 'content-type': 'application/json' },
+          body: JSON.stringify({ input: { site_id_or_domain: 1, confirm: true } }),
+        }
+      );
+      expect(deleted.status).toBe(200);
+      expect((await run('mainwp/list-updates-v1')).total).toBe(2);
+      // The inventory travels with the site record, so reset() restores it.
+      fixture.reset();
+      expect((await run('mainwp/list-updates-v1')).total).toBe(4);
     } finally {
       await fixture.close();
     }

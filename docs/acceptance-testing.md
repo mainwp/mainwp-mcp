@@ -113,7 +113,7 @@ For example, `list-sites-cross-check` compares both the site count and the compl
 
 Agent verdicts are also deterministic. Generic scenarios must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. Custom evaluators enforce the expected error, multi-tool chain, or full-site coverage when the generic path is insufficient. The model does not grade itself.
 
-The agent layer contains thirteen scenarios:
+The agent layer contains sixteen scenarios:
 
 - `agent-count-sites`: count all connected sites.
 - `agent-updates`: identify sites with pending plugin updates.
@@ -128,6 +128,9 @@ The agent layer contains thirteen scenarios:
 - `agent-session-cap`: with a tiny `MAINWP_MAX_SESSION_DATA`, hit the cap, narrow the request, and describe the failure as a size limit rather than an outage.
 - `agent-confirm-without-preview`: complete the confirmation flow for a destructive fixture ability that declares `confirm` but no `dry_run`, and state that no preview was available.
 - `agent-stale-token`: preview a deletion for one site, replay that confirmation token against a different site, and report the resulting `PREVIEW_REQUIRED` rejection.
+- `command-network-summary`: type `/mainwp:network-summary` against the live Dashboard and report the site count, the connection states, and the pending-update total.
+- `command-site-report`: type `/mainwp:site-report <hostname>` against the fixture and report only that site.
+- `command-troubleshoot-missing-arg`: type `/mainwp:troubleshoot-site` with no argument against the fixture, list the managed sites, and ask which one.
 
 An agent scenario may define `serverEnv` for literal, non-secret server flags that apply only to that scenario. These values are merged into the temporary `claude-mcp.json` server environment. `agent-safemode-refusal` uses this field to set `MAINWP_SAFE_MODE=true`.
 
@@ -155,6 +158,42 @@ An arm counts as treated only with transcript evidence: the skill name in the se
 
 Every agent run also checks its own output for the application password. The check runs against the raw stream, since the harness redactor scrubs transcripts before they reach disk, and separately flags any `<redacted:app-password>` token in the redacted view. Either signal fails the scenario.
 
+Command scenarios cannot take part in either mode. `--plugin-dir` loads the plugin's own copy of the MainWP skill into whichever arm is running, so there would be no untreated control arm. `--compare` and `--with-skill` drop them from a full run, and naming one on the command line together with either flag is an argument error.
+
+### Plugin command scenarios
+
+A command scenario types a plugin slash command as the prompt instead of a natural-language task, so the shipped `/mainwp:*` commands are executed rather than only validated structurally by `tests/plugin/manifest.test.ts` and `scripts/check-plugin.ts`.
+
+```bash
+npm run test:acceptance:agent -- --scenario command-network-summary
+npm run test:acceptance:agent -- --scenario command-site-report --repeat 3
+```
+
+The launch adds `--plugin-dir <repo>/plugins/mainwp` to the same spawn every other agent scenario uses:
+
+```text
+claude -p "/mainwp:site-report alpine.example.test" \
+  --plugin-dir <repo>/plugins/mainwp \
+  --mcp-config <temporary config> --strict-mcp-config \
+  --allowedTools 'mcp__mainwp__*' \
+  --output-format stream-json --verbose --max-turns 20
+```
+
+`--strict-mcp-config` removes every user, project, and plugin MCP server, including the one the plugin's own `.mcp.json` declares, while `--plugin-dir` still registers the commands. The server under test is therefore supplied exactly as it is for every other agent scenario: the packed install, launched from the temporary `--mcp-config` with `${VAR}` placeholders. Tool names stay `mcp__mainwp__*`, so the existing collectors and matchers apply unchanged. Each command scenario also runs from a throwaway directory under the packed-install temporary root rather than the repository root, so the session does not inherit this repository's `CLAUDE.md`.
+
+A command run is graded only once the run proves the command was both registered and expanded. Registration is the session's `slash_commands` list containing `mainwp:<name>`. Expansion evidence is accepted from either of two places, because the CLI moved where it records it:
+
+- The stream (observed on Claude Code 2.1.220): a synthetic tool result at the start of the conversation carries the literal `Launching skill: mainwp:<name>`, or `tool_reference` blocks for a command whose body names tools.
+- The CLI's own session file (observed on 2.1.221, whose stream carries no marker): a user record containing `<command-name>/mainwp:<name></command-name>` plus a meta user record replaying a distinctive line of the plugin's command body. The harness finds the file by session id under `projects/` in `CLAUDE_CONFIG_DIR`, or `~/.claude` when unset, and reads it after the run. A missing, oversized, or malformed session file counts the same as a missing stream marker.
+
+Missing evidence from both sources reports the scenario as `skill-not-loaded`, which is fatal. Without that check a misspelled or unregistered command would be graded as an ordinary prompt. When diagnosing a `skill-not-loaded` verdict, check both places before concluding the command never expanded.
+
+Known limitations:
+
+- The plugin's shipped `.mcp.json` server (`npx -y @mainwp/mcp`) is deliberately not exercised, because `--strict-mcp-config` excludes it. What remains for it is the semantic static validation in `check-plugin`, which parses and compares the configuration but never launches the server. Runtime bootstrap through npx, credential inheritance, and the production `mcp__plugin_mainwp_mainwp__*` tool namespace stay a manual gap, evidenced by the recorded manual install probes in `docs/plugin.md`.
+- The user's other plugins, skills, and hooks still load, because the run reuses the developer's OAuth login and a fresh `CLAUDE_CONFIG_DIR` would lose it. The throwaway working directory and the `--allowedTools` fence are the mitigation, and the exposure is the same as for every other agent scenario.
+- `--plugin-dir` behavior depends on the CLI version, so the manifest records `claude --version` alongside the Node and npm versions.
+
 The `agent-confirm-delete-site` scenario is the state-changing write exception in the agent layer. It points the packed MCP server at a newly started local fixture, asks in natural language for an explicitly authorized site deletion without naming a tool, and grades the transcript and state independently. The transcript must contain a `delete_site_v1` result with `CONFIRMATION_REQUIRED` and a token, followed by a confirmed `delete_site_v1` call using that token. A direct fixture read must then show exactly one fewer site and the target site absent. Refusing or stopping before confirmation is a failed scenario with the transcript reason preserved.
 
 ## Completion and transport-limit coverage
@@ -175,7 +214,7 @@ test-results/acceptance/<UTC timestamp>-<short SHA>[-dirty][-agent]/
 
 The directory contains:
 
-- `manifest.json`: git branch, commit, dirty state, diff hash, package and runtime versions, flags, timing, and tarball integrity
+- `manifest.json`: git branch, commit, dirty state, diff hash, package and runtime versions, the `claude` CLI version on agent runs, flags, timing, and tarball integrity
 - `events.jsonl`: redacted MCP messages in both directions with scenario, ISO timestamp, and monotonic milliseconds
 - `commands.jsonl`: command argv, working directory, exit code, duration, and redacted output tails
 - `results.json`: scenario statuses and every named assertion with expected, actual, and pass fields
@@ -242,8 +281,10 @@ npx tsx tests/acceptance/run.ts \
 
 The deterministic runner chooses each MCP operation itself and verifies structured values. It is suitable for CI and produces the same fixture result on every run.
 
-The agent runner gives Claude Code a natural-language task without naming a tool. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, `${MAINWP_SKIP_SSL_VERIFY}`, and `${MAINWP_ALLOW_HTTP}` placeholders plus any literal scenario `serverEnv` flags. Real credential values exist only in the spawned process environment. Live scenarios use resolved Dashboard credentials. The confirmation and safe-mode scenarios use only local fixture credentials, and selecting either by itself does not require live credentials. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
+The agent runner gives Claude Code a natural-language task without naming a tool, except for the command scenarios, whose prompt is a literal `/mainwp:*` plugin command. Its temporary MCP config contains literal `${MAINWP_URL}`, `${MAINWP_USER}`, `${MAINWP_APP_PASSWORD}`, `${MAINWP_SKIP_SSL_VERIFY}`, and `${MAINWP_ALLOW_HTTP}` placeholders plus any literal scenario `serverEnv` flags. Real credential values exist only in the spawned process environment. Live scenarios use resolved Dashboard credentials. The confirmation and safe-mode scenarios use only local fixture credentials, and selecting either by itself does not require live credentials. If the CLI or model is unavailable, the scenario is `unverified` and records the exact blocked command.
 
 Live Dashboard data can change between an MCP call and the independent read. Site sync can complete asynchronously. Installed plugins and available updates vary by site. Agent tool choice and wording can vary by model. These are known sources of nondeterminism. Fixture scenarios avoid them; live and agent artifacts preserve enough ordered evidence to explain them.
+
+The harness authors every scenario prompt and slash command in English, so the final-answer graders match English phrasing. An answer that comes back in another language fails its scenario loudly, with the transcript preserved, rather than passing unexamined.
 
 One model-specific variance is known: claude-fable-5 (observed 2026-08-01) answers `agent-site-status` from the uptime-monitor abilities plus a disconnected-sites filter instead of running `check_site_v1`/`check_sites_v1`, so the scenario fails its capability graders while giving a factually correct answer. The steering that would fix this lives in the Dashboard's check-site ability descriptions, not in this server. Treat an `agent-site-status` failure with that tool pattern as this known variance, not a regression. The exemption is exactly that: that model and that complete tool pattern. A site-status failure on another model, or with a partial or different tool pattern, is a regression to investigate, and the independent factual and state graders apply either way.
