@@ -1839,7 +1839,7 @@ function positiveIntegerFlag(args: string[], index: number, flag: string): numbe
   const value = args[index + 1];
   if (!value || value.startsWith('--')) throw new Error(`${flag} requires a count`);
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
     throw new Error(`${flag} requires a positive integer, got: ${value}`);
   }
   return parsed;

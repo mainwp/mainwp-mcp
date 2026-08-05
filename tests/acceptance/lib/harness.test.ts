@@ -4071,6 +4071,7 @@ describe('agent launch isolation and failure reasons', () => {
     expect(parseAgentArgs(['--max-turns', '1']).maxTurns).toBe(1);
     expect(() => parseAgentArgs(['--max-turns', 'zero'])).toThrow('--max-turns');
     expect(() => parseAgentArgs(['--max-turns', '0'])).toThrow('--max-turns');
+    expect(() => parseAgentArgs(['--repeat', '9007199254740993'])).toThrow('--repeat');
   });
 });
 
