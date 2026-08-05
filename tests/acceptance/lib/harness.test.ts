@@ -1128,6 +1128,21 @@ describe('gap-targeting agent matchers', () => {
     expect(
       answerAvoidsPluginPresenceClaims('Hello Dolly is active, as mentioned in the site notes.')
     ).toBe(true);
+    expect(
+      answerAvoidsPluginPresenceClaims('The site notes indicate that Hello Dolly is active.')
+    ).toBe(true);
+    // The frame's gap must not smuggle in another subject: a field noun in
+    // front of a dashboard-sourced verb sources nothing.
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'The notes are empty — the Dashboard says FooGuard is installed.'
+      )
+    ).toBe(false);
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'According to the dashboard, notes aside, FooGuard is installed.'
+      )
+    ).toBe(false);
   });
 
   it('reads the total as a claim, not as any matching numeral', () => {
