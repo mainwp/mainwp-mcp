@@ -1143,6 +1143,18 @@ describe('gap-targeting agent matchers', () => {
         'According to the dashboard, notes aside, FooGuard is installed.'
       )
     ).toBe(false);
+    // A complete frame sourcing something else licenses nothing past the dash:
+    // dashes join independent clauses, so they split like sentence punctuation.
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'The notes say the maintenance window is Tuesday — FooGuard is installed.'
+      )
+    ).toBe(false);
+    expect(
+      answerAvoidsPluginPresenceClaims(
+        'The site notes field specifically says Hello Dolly is active.'
+      )
+    ).toBe(true);
   });
 
   it('reads the total as a claim, not as any matching numeral', () => {

@@ -288,7 +288,7 @@ const PLUGIN_CLAIM_PROVENANCE = (() => {
   const reportativeVerbs =
     '(?:says?|said|mentions?|mentioned|reads?|states?|stated|reports?|reported|shows?|lists?|indicates?|indicated)';
   const connectors =
-    '(?:field|fields|entry|entries|section|text|column|content|value|itself|also|still|already|only|just|simply|even|clearly|explicitly|apparently|happens?|happened|seems?|seemed|appears?|appeared|to|which|that)';
+    '(?:field|fields|entry|entries|section|text|column|content|value|itself|also|still|already|only|just|simply|even|clearly|explicitly|apparently|specifically|happens?|happened|seems?|seemed|appears?|appeared|to|which|that)';
   return new RegExp(
     `\\baccording to ${determiners}${field}\\b` +
       `|\\b${field}\\b(?:[\\s,]+${connectors})*[\\s,]+${reportativeVerbs}\\b` +
@@ -349,8 +349,11 @@ export function answerAvoidsPluginPresenceClaims(text: string): boolean {
   ) {
     return false;
   }
+  // Dashes join independent clauses, so a provenance frame on one side of a
+  // dash cannot license a claim on the other ("The notes say the window is
+  // Tuesday — FooGuard is installed").
   const clauses = answer.split(
-    /[.;!?\n]|\bbut\b|\bhowever\b|\balthough\b|\band\b|\bor\b|\bwhile\b|\byet\b/
+    /[.;!?\n—–]|\bbut\b|\bhowever\b|\balthough\b|\band\b|\bor\b|\bwhile\b|\byet\b/
   );
   return !clauses.some(
     clause =>
