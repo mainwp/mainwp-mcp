@@ -926,6 +926,11 @@ describe('gap-targeting agent matchers', () => {
       )
     ).toBe(false);
     expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't verify freshness, although I can provide the installed-plugin list."
+      )
+    ).toBe(false);
+    expect(
       matchesFilteredCapabilityAnswer("I can't give you the installed-plugin list for that site.")
     ).toBe(true);
   });
@@ -1020,6 +1025,14 @@ describe('gap-targeting agent matchers', () => {
     expect(
       matchesSessionCapAnswer(
         'The server is down. The session limit did not cause the outage. Total: 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // The same denial with a contracted copula.
+    expect(
+      matchesSessionCapAnswer(
+        "The server appears to be down. It wasn't caused by the session data limit. " +
+          'Total: 3 sites.',
         3
       )
     ).toBe(false);

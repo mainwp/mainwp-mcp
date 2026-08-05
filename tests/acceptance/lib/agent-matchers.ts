@@ -455,7 +455,7 @@ export function matchesFilteredCapabilityAnswer(text: string): boolean {
     // reach to that verb stops at an adversative and at the end of the clause,
     // both of which hand the list over after all ("I can't vouch for freshness.
     // I can provide the installed-plugin list").
-    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b(?:(?!\b(?:but|however|though|yet|nevertheless)\b)[^.!?;]){0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
+    /\b(?:could not|couldn't|cannot|can't|unable to|no way to)\b(?:(?!\b(?:but|however|though|although|yet|nevertheless)\b)[^.!?;]){0,40}\b(?:give|hand|provide|show|list|retrieve|fetch|get|pull|return|produce)\b.{0,40}\bplugins?[\s-](?:list|listing|inventory|catalog|catalogue)\b/,
   ].some(pattern => pattern.test(answer));
 }
 
@@ -556,7 +556,8 @@ const CAP_DISCLAIMED_BY_FOLLOWING =
  * the cap: "the limit was reached, not because of a Dashboard outage" is the
  * cap being blamed, not excused.
  */
-const CAP_DISCLAIMED_BY_PRECEDING = /\bnot\s+(?:caused by|due to|because of)\b/;
+const CAP_DISCLAIMED_BY_PRECEDING =
+  /\b(?:not|wasn't|was not|isn't|is not|weren't|were not|aren't|are not)\s+(?:caused by|due to|because of)\b/;
 /**
  * How far from an outage claim cap vocabulary still qualifies it. Live answers
  * put the attribution in the next sentence ("Site 3 is unreachable this
