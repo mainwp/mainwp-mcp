@@ -223,14 +223,17 @@ export function collectSessionExpansion(
       continue;
     }
     if (!record || typeof record !== 'object') continue;
-    const texts = sessionRecordTexts(record as Record<string, unknown>);
+    const item = record as Record<string, unknown>;
+    const texts = sessionRecordTexts(item);
     if (texts.length === 0) continue;
-    if (!named && (record as Record<string, unknown>).type === 'user') {
-      named = texts.some(text => text.includes(tag));
+    if (!named && item.type === 'user') named = texts.some(text => text.includes(tag));
+    // The CLI replays the expanded body as a meta user record of its own.
+    // Accepting the body from any record would let an assistant quoting its
+    // instructions, or a prompt that pasted the command text, forge the
+    // expansion on the back of a genuine tag record.
+    if (!expanded && item.type === 'user' && item.isMeta === true) {
+      expanded = texts.some(text => bodyLines.some(body => text.includes(body)));
     }
-    // Which record carries the body is CLI detail the evidence does not need to
-    // pin down; the tag above is what ties the expansion to this command.
-    if (!expanded) expanded = texts.some(text => bodyLines.some(body => text.includes(body)));
     if (named && expanded) {
       evidence.launched = true;
       return;

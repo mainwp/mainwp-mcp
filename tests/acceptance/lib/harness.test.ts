@@ -881,6 +881,34 @@ describe('gap-targeting agent matchers', () => {
     expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
   });
 
+  it('rejects a negation that binds to a difficulty rather than to the noun', () => {
+    // "has no problem using this tool" is the opposite claim: the modifier
+    // window reaches the noun, so the idiom has to stop it.
+    for (const finalText of [
+      'The server has no problem using this tool, so the listing went through.',
+      'I had no trouble at all with the plugin tool.',
+      'There were no issues calling the ability.',
+    ]) {
+      expect(matchesFilteredCapabilityAnswer(finalText)).toBe(false);
+    }
+    expect(matchesFilteredCapabilityAnswer('The server exposes no plugin inventory tool.')).toBe(
+      true
+    );
+  });
+
+  it('requires a retrieval verb behind the plugin-list refusal', () => {
+    // An inability about something else, with a plugin list mentioned later,
+    // is not a report of a missing capability.
+    expect(
+      matchesFilteredCapabilityAnswer(
+        "I can't vouch for freshness, but the plugin list contains FooGuard."
+      )
+    ).toBe(false);
+    expect(
+      matchesFilteredCapabilityAnswer("I can't give you the installed-plugin list for that site.")
+    ).toBe(true);
+  });
+
   it('accepts an absence attributed to silent tool filtering', () => {
     // Live transcript, skill arm, 2026-07-30.
     expect(
@@ -939,6 +967,15 @@ describe('gap-targeting agent matchers', () => {
     expect(
       matchesSessionCapAnswer(
         'The server is unreachable, so I could not retrieve the listing. There are 3 sites.',
+        3
+      )
+    ).toBe(false);
+    // Cap vocabulary the answer itself disowns: naming the quota only to rule
+    // it out leaves the outage claim standing.
+    expect(
+      matchesSessionCapAnswer(
+        'The server is down. The API quota is unrelated. The session data limit was reached. ' +
+          'Total: 3 sites.',
         3
       )
     ).toBe(false);
@@ -2642,6 +2679,58 @@ describe('plugin command scenarios', () => {
       // no evidence, never a throw.
       expect(expand('33333333-3333-3333-3333-333333333333')).toBe(false);
       expect(expand(undefined)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes body-line evidence only from the CLI expansion record', () => {
+    // Models quote their instructions back, and a pasted prompt can carry the
+    // body verbatim: paired with the genuine tag record, either would forge an
+    // expansion. The CLI writes the expansion as a meta user record, which
+    // neither of those is.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-session-test-'));
+    try {
+      const body = distinctiveBodyLine('network-summary');
+      const expand = (sessionId: string, bodyRecord: Record<string, unknown>): boolean => {
+        writeSessionFile(root, sessionId, [
+          taggedRecord('mainwp:network-summary'),
+          JSON.stringify(bodyRecord),
+        ]);
+        const evidence: AgentCommandEvidence = {
+          registered: true,
+          launched: false,
+          assistantSeen: true,
+          sessionId,
+        };
+        collectSessionExpansion(
+          evidence,
+          'mainwp:network-summary',
+          path.join(commandsDir, 'network-summary.md'),
+          { CLAUDE_CONFIG_DIR: root }
+        );
+        return evidence.launched;
+      };
+
+      expect(
+        expand('44444444-4444-4444-4444-444444444444', {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: `Following the brief: ${body}` }] },
+        })
+      ).toBe(false);
+      expect(
+        expand('55555555-5555-5555-5555-555555555555', {
+          type: 'user',
+          message: { content: [{ type: 'text', text: body }] },
+        })
+      ).toBe(false);
+      expect(
+        expand('66666666-6666-6666-6666-666666666666', {
+          type: 'user',
+          isMeta: true,
+          message: { content: [{ type: 'text', text: body }] },
+        })
+      ).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
