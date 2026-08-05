@@ -110,19 +110,30 @@ export const setupConfigureRoundTrip: ScenarioDefinition = {
     'Configure an unconfigured server from tool input and keep it configured across a restart.',
   kind: 'read',
   targets: ['fixture'],
-  preconditions: ctx => ({
-    launch: {
-      omitCredentialEnv: true,
-      // The fixture Dashboard is plain HTTP, so the operator-level opt-in has
-      // to be present for the URL validator to accept it.
-      env: { MAINWP_ALLOW_HTTP: 'true', MAINWP_RATE_LIMIT: '0' },
-    },
-    state: {
-      dashboardUrl: ctx.credentials.dashboardUrl,
-      username: ctx.credentials.username,
-      appPassword: ctx.credentials.appPassword,
-    },
-  }),
+  preconditions: ctx => {
+    // omitCredentialEnv means the tuple reaches the server only through the
+    // configure call, so a missing value would be submitted as undefined and
+    // the scenario would grade an input-validation refusal as a real result.
+    if (!ctx.credentials.username || !ctx.credentials.appPassword) {
+      return {
+        status: 'unverified',
+        reason: 'No username or application password was available to configure the server with.',
+      };
+    }
+    return {
+      launch: {
+        omitCredentialEnv: true,
+        // The fixture Dashboard is plain HTTP, so the operator-level opt-in has
+        // to be present for the URL validator to accept it.
+        env: { MAINWP_ALLOW_HTTP: 'true', MAINWP_RATE_LIMIT: '0' },
+      },
+      state: {
+        dashboardUrl: ctx.credentials.dashboardUrl,
+        username: ctx.credentials.username,
+        appPassword: ctx.credentials.appPassword,
+      },
+    };
+  },
   async run(ctx) {
     const before = await ctx.client.listTools();
     ctx.assert.deepEqual(

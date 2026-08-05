@@ -159,11 +159,17 @@ describe('writeConnectionSettings', () => {
   it('leaves no temp file and no target behind when the write fails', () => {
     const dir = trustedSettingsDir(home);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o500); // read+execute only: file creation fails with EACCES
+    // Mocked rather than provoked with chmod: a suite running as root ignores
+    // directory permissions, so the permission trick would not fail the write
+    // at all. The failure lands after the temp file exists, which is the state
+    // the cleanup path has to unwind.
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('EACCES: permission denied, write'), { code: 'EACCES' });
+    });
 
     expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(SettingsWriteError);
 
-    fs.chmodSync(dir, 0o700);
+    vi.restoreAllMocks();
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 });

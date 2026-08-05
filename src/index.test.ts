@@ -532,6 +532,7 @@ describe('MCP request handlers', () => {
 
 describe('setup mode handlers', () => {
   const savedEnv = new Map<string, string | undefined>();
+  let root: string;
   let home: string;
   let cwd: string;
 
@@ -579,7 +580,7 @@ describe('setup mode handlers', () => {
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('MAINWP_')) setEnv(key, undefined);
     }
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-setup-mode-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-setup-mode-'));
     home = path.join(root, 'home');
     cwd = path.join(root, 'cwd');
     fs.mkdirSync(home);
@@ -594,6 +595,10 @@ describe('setup mode handlers', () => {
       else process.env[key] = value;
     }
     vi.restoreAllMocks();
+    // The configure test writes a credential file into this tree, so it cannot
+    // be left in the OS temp directory. Removed after the env and cwd mocks are
+    // restored, so nothing still resolves paths inside it.
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
   it('lists only the setup tools while unconfigured', async () => {

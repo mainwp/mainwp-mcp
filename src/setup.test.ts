@@ -9,8 +9,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
-import type { PolicyConfig } from './config.js';
-import { clearCache } from './abilities.js';
+import type { Config, PolicyConfig } from './config.js';
+import { clearCache, fetchAbilities } from './abilities.js';
 import { clearKnownSecrets, sanitizeError } from './security.js';
 import { trustedSettingsPath } from './settings-writer.js';
 import {
@@ -144,6 +144,7 @@ describe('setup tools', () => {
 
 describe('mainwp_configure preconditions', () => {
   const savedEnv = new Map<string, string | undefined>();
+  let root: string;
   let home: string;
   let cwd: string;
 
@@ -164,7 +165,7 @@ describe('mainwp_configure preconditions', () => {
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('MAINWP_')) setEnv(key, undefined);
     }
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-setup-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-setup-'));
     home = path.join(root, 'home');
     cwd = path.join(root, 'cwd');
     fs.mkdirSync(home);
@@ -180,6 +181,9 @@ describe('mainwp_configure preconditions', () => {
       else process.env[key] = value;
     }
     vi.restoreAllMocks();
+    // A passing run still writes a real settings.json under this root; leaving
+    // it behind litters the temp dir with credential-shaped files.
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
   it('refuses when connection environment variables are authoritative', async () => {
@@ -232,6 +236,64 @@ describe('mainwp_configure preconditions', () => {
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain('ALREADY_CONFIGURED');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps no catalog from an identity that lost the readiness race', async () => {
+    // The other ALREADY_CONFIGURED path: the recheck inside the mutex. By then
+    // validateCredentials has already filled the shared cache slot from the
+    // model-supplied origin, so the refusal must not leave that catalog
+    // readable under the rejected candidate's signature.
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    mockFetch.mockImplementationOnce(async () => {
+      await gate;
+      return {
+        ok: true,
+        json: async () => [{ ...sampleAbility, label: 'Catalog from the rejected identity' }],
+        headers: new Headers(),
+      };
+    });
+    const state = unconfiguredState();
+
+    // handleConfigure runs synchronously up to the validation fetch, so the
+    // server can only be promoted here: after the early readiness check, while
+    // the candidate's own fetch is in flight.
+    const configure = executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      CONFIGURE_ARGS,
+      makeMockLogger(),
+      noopNotify
+    );
+    state.adopt(makeBaseConfig());
+    release();
+    const result = await configure;
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('ALREADY_CONFIGURED');
+
+    // Read back under the refused candidate's own identity: a retained slot
+    // would serve its catalog with no second request.
+    const candidate: Config = {
+      ...policyOf(),
+      dashboardUrl: 'https://dashboard.example.com',
+      authType: 'basic',
+      username: 'admin',
+      appPassword: APP_PASSWORD,
+      configSource: 'settings file',
+    };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [{ ...sampleAbility, name: 'mainwp/get-site-v1' }],
+      headers: new Headers(),
+    });
+
+    const served = await fetchAbilities(candidate, false, makeMockLogger());
+
+    expect(served.map(ability => ability.name)).toEqual(['mainwp/get-site-v1']);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('refuses a second call while one is in flight', async () => {

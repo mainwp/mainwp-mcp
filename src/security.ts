@@ -137,21 +137,33 @@ let knownSecretVariants: string[] = [];
  * not.
  */
 function secretVariants(secret: string): string[] {
-  return [
+  const variants = [
     secret,
     // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
     // percent-escape them.
     secret.split(' ').join('+'),
-    encodeURIComponent(secret),
-    encodeURI(secret),
     // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
     // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
+    // Lone surrogates do not throw here; they encode as the replacement
+    // character, which is itself a shape worth matching.
     new URLSearchParams([['x', secret]]).toString().slice(2),
     // JSON string escaping. Remote error bodies are commonly JSON, so a
     // password containing a quote, a backslash, or a control character arrives
     // as `ab\"cd` and no match on the raw value can see it.
     JSON.stringify(secret).slice(1, -1),
   ];
+  // Both throw URIError on a lone surrogate, and a password reaches here from
+  // chat input, so an unpaired surrogate is reachable. Guarded separately so a
+  // throw costs only that one variant, never the raw value or the redactor.
+  for (const encode of [encodeURIComponent, encodeURI]) {
+    try {
+      variants.push(encode(secret));
+    } catch {
+      // Nothing to add: this encoding cannot represent the value at all, so no
+      // diagnostic can contain the secret in it either.
+    }
+  }
+  return variants;
 }
 
 function replaceVariants(text: string, variants: string[]): string {

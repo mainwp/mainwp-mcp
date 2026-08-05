@@ -575,6 +575,12 @@ async function handleConfigure(
     // Readiness is rechecked inside the mutex: another path could have
     // promoted the server while the network call was in flight.
     if (state.readyConfig !== null) {
+      // Defense in depth: validateCredentials already filled the shared cache
+      // slot from the submitted (model-supplied) origin. The slot is signature
+      // guarded by dashboard URL plus auth identity, so the identity that won
+      // the race would miss and refetch anyway; drop it so data fetched under a
+      // rejected identity does not sit in a process-global slot.
+      clearCache();
       return refusal(
         policy,
         'ALREADY_CONFIGURED',
