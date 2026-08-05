@@ -181,7 +181,12 @@ claude -p "/mainwp:site-report alpine.example.test" \
 
 `--strict-mcp-config` removes every user, project, and plugin MCP server, including the one the plugin's own `.mcp.json` declares, while `--plugin-dir` still registers the commands. The server under test is therefore supplied exactly as it is for every other agent scenario: the packed install, launched from the temporary `--mcp-config` with `${VAR}` placeholders. Tool names stay `mcp__mainwp__*`, so the existing collectors and matchers apply unchanged. Each command scenario also runs from a throwaway directory under the packed-install temporary root rather than the repository root, so the session does not inherit this repository's `CLAUDE.md`.
 
-A command run is graded only once the transcript proves the command was both registered and expanded: the session's `slash_commands` list contains `mainwp:<name>`, and a synthetic tool result at the start of the conversation carries the expansion marker (the literal `Launching skill: mainwp:<name>`, or `tool_reference` blocks for a command whose body names tools). Missing evidence reports the scenario as `skill-not-loaded`, which is fatal. Without that check a misspelled or unregistered command would be graded as an ordinary prompt.
+A command run is graded only once the run proves the command was both registered and expanded. Registration is the session's `slash_commands` list containing `mainwp:<name>`. Expansion evidence is accepted from either of two places, because the CLI moved where it records it:
+
+- The stream (observed on Claude Code 2.1.220): a synthetic tool result at the start of the conversation carries the literal `Launching skill: mainwp:<name>`, or `tool_reference` blocks for a command whose body names tools.
+- The CLI's own session file (observed on 2.1.221, whose stream carries no marker): a user record containing `<command-name>/mainwp:<name></command-name>` plus a meta user record replaying a distinctive line of the plugin's command body. The harness finds the file by session id under `projects/` in `CLAUDE_CONFIG_DIR`, or `~/.claude` when unset, and reads it after the run. A missing, oversized, or malformed session file counts the same as a missing stream marker.
+
+Missing evidence from both sources reports the scenario as `skill-not-loaded`, which is fatal. Without that check a misspelled or unregistered command would be graded as an ordinary prompt. When diagnosing a `skill-not-loaded` verdict, check both places before concluding the command never expanded.
 
 Known limitations:
 
