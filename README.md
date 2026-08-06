@@ -142,6 +142,16 @@ Once configuration succeeds, the full tool list appears in the same session for 
 
 It writes only those three connection fields, never security settings, and blocking `mainwp_configure` through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely while leaving the manual path documented.
 
+### Why setup will not replace credentials you already have
+
+Chat-based setup can get you connected the first time, but it can never overwrite a connection you set up yourself. That line is deliberate, and it is worth knowing where it costs you something.
+
+The reason is that an assistant acts on text, and text can come from places you did not intend. A page it read, a site name, or an ability description returned by a server could carry instructions aimed at the assistant rather than at you. If setup could overwrite a working configuration, that kind of injected instruction could quietly repoint your server at someone else's Dashboard, and every command you ran afterwards would go there. Restricting setup to the case where there is nothing to overwrite removes that possibility, because a server that has no credentials has nothing worth stealing.
+
+A tempting middle ground is to allow it when the stored credentials are provably wrong, since the Dashboard rejected them with an authentication error. We do not do that, because it would let the remote side decide when your local configuration may be replaced: a Dashboard that had been compromised, or a connection someone was tampering with, could reject a valid login on purpose to unlock the replacement path, without ever knowing your password.
+
+The cost is real, and it lands in one place. If you rotate the Application Password in WordPress, or the stored one is wrong for any other reason, retrying will not help, because the retry reuses the same credentials the Dashboard is already refusing. You have to put the new password in `~/.config/mainwp-mcp/settings.json` or your client's `env` block yourself and restart the client. That is the same edit you would have made to set the server up manually in the first place, and it takes a minute.
+
 ## Configuration
 
 | Variable                           | Required       | Default    | Description                                                                                            |
