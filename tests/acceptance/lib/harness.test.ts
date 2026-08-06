@@ -87,9 +87,13 @@ import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { BoundedPagination } from './pagination.js';
 import { IndependentVerifier, serializeToPhpQueryString } from './verify.js';
-import { acceptanceExitCode } from '../run.js';
+import { acceptanceExitCode, runScenario } from '../run.js';
 import { scenarios } from '../scenarios/index.js';
-import { AssertionRecorder } from '../scenarios/types.js';
+import { AssertionRecorder, type ScenarioDefinition } from '../scenarios/types.js';
+import type { Artifacts } from './artifacts.js';
+import { launchServer, type ServerConnection } from './server.js';
+
+vi.mock('./server.js', () => ({ launchServer: vi.fn() }));
 
 describe('acceptance harness primitives', () => {
   it('redacts credentials, compact application passwords, authorization, and dashboard origins', () => {
@@ -316,6 +320,60 @@ MAINWP_APP_PASSWORD='abcd $HOME ijkl' # application password
   it('fails unverified totals while allowing legitimately skipped scenarios', () => {
     expect(acceptanceExitCode({ passed: 0, failed: 0, skipped: 1, unverified: 0 })).toBe(0);
     expect(acceptanceExitCode({ passed: 0, failed: 0, skipped: 0, unverified: 1 })).toBe(1);
+  });
+
+  it('reports a relaunched close failure a scenario swallowed', async () => {
+    // A server that will not shut down is a real failure, so the harness's own
+    // close of a handle the scenario already closed must surface it instead of
+    // returning as if the shutdown had worked.
+    const closeFailure = new Error('relaunched server would not shut down');
+    let relaunchedClose: Promise<void> | undefined;
+    const connectionWith = (close: () => Promise<void>): ServerConnection =>
+      ({ client: {}, cwd: '/acceptance/cwd', home: '/acceptance/home', close }) as ServerConnection;
+    vi.mocked(launchServer)
+      .mockResolvedValueOnce(connectionWith(async () => {}))
+      // Same caching the real launch does: every close returns the one promise,
+      // so a rejection is replayed rather than lost.
+      .mockResolvedValueOnce(
+        connectionWith(() => (relaunchedClose ??= Promise.reject(closeFailure)))
+      );
+    const definition: ScenarioDefinition = {
+      id: 'relaunched-close-failure-probe',
+      purpose: 'A relaunched server whose close fails after the scenario handled it.',
+      kind: 'read',
+      targets: ['fixture'],
+      run: async ctx => {
+        const handle = await ctx.relaunch();
+        await handle.close().catch(() => {});
+      },
+    };
+
+    const result = await runScenario(
+      definition,
+      {
+        mode: 'source',
+        target: 'fixture',
+        scenarioIds: [],
+        writes: false,
+        list: false,
+        keepConsumer: false,
+      },
+      {
+        dashboardUrl: 'http://127.0.0.1:9123',
+        username: 'fixture-user',
+        appPassword: 'fixture password',
+      },
+      {} as IndependentVerifier,
+      '/acceptance/entry.js',
+      '0.0.0-test',
+      null,
+      {} as Artifacts,
+      {} as CommandRunner
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('Relaunched server close failed');
+    expect(result.error).toContain(closeFailure.message);
   });
 
   it('redacts a credential split across stream chunks before flushing', () => {

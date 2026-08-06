@@ -23,6 +23,9 @@ import { withSecretRedaction, type Logger } from './logging.js';
 import { RESERVED_TOOL_NAMES } from './naming.js';
 import { decidePolicy } from './policy.js';
 import {
+  appPasswordCanonicalForm,
+  appPasswordSecret,
+  canRegisterKnownSecrets,
   createSecretRedactor,
   redactKnownSecrets,
   registerKnownSecrets,
@@ -389,13 +392,13 @@ function validateCredentialField(raw: unknown, field: string, maxLength: number)
  * A WordPress Application Password is 24 characters, so anything shorter than
  * the redaction registry's floor cannot be one. Rejected here rather than
  * lowering that floor: a saved value the registry refuses to hold is a
- * credential this server can never scrub from its own later output.
- * Surrounding whitespace stays acceptable, so the floor applies to the trimmed
- * value.
+ * credential this server can never scrub from its own later output. The floor
+ * applies to the form WordPress compares, because that form is registered too
+ * and is the shortest one the registry has to accept.
  */
 function validateApplicationPassword(raw: unknown): string {
   const value = validateCredentialField(raw, 'application_password', MAX_PASSWORD_INPUT);
-  if (value.trim().length < MIN_KNOWN_SECRET_LENGTH) {
+  if (appPasswordCanonicalForm(value).length < MIN_KNOWN_SECRET_LENGTH) {
     throw McpErrorFactory.invalidParams(
       'application_password does not look like an Application Password. WordPress shows one as six groups of four characters on your profile page. The password you use to log in to WordPress will not work here.'
     );
@@ -574,7 +577,21 @@ async function handleConfigure(
   // every value it is given for the life of the process, and it ignores values
   // under its length floor.
   const basicBlob = Buffer.from(`${username}:${appPassword}`).toString('base64');
-  const redactSubmitted = createSecretRedactor([appPassword, basicBlob]);
+  const submittedSecrets = [appPasswordSecret(appPassword), basicBlob];
+  const redactSubmitted = createSecretRedactor(submittedSecrets);
+
+  // Asked before the credential is transmitted, because registration is earned
+  // only after the save and the request cannot be recalled. A full registry
+  // means this process could never scrub the value from its own output, so it
+  // must not adopt it.
+  if (!canRegisterKnownSecrets(submittedSecrets)) {
+    return refusal(
+      policy,
+      'REDACTION_UNAVAILABLE',
+      `This server can no longer protect a new credential in its own output, so setup stopped before contacting the Dashboard. Nothing was sent and nothing was saved. Restart the MCP client and try again, or put the credentials in the "env" block of this server's entry in your MCP client config.`,
+      redactSubmitted
+    );
+  }
 
   if (!state.beginOperation()) {
     return refusal(
@@ -605,7 +622,7 @@ async function handleConfigure(
       // an ability name, a schema key, or a label writes it straight to a log
       // line and into the cached catalog, and the global registry is not
       // allowed to know the value until a call persists it.
-      abilities = await withScopedSecrets([appPassword, basicBlob], () =>
+      abilities = await withScopedSecrets(submittedSecrets, () =>
         validateCredentials(candidate, withSecretRedaction(logger, redactSubmitted))
       );
     } catch (error) {
@@ -657,7 +674,15 @@ async function handleConfigure(
     // The tuple is now this server's own identity, so it joins the registry
     // that startup credentials use and every later output is scrubbed by
     // value. Only a call that persisted gets to grow that registry.
-    registerKnownSecrets([appPassword, basicBlob]);
+    if (!registerKnownSecrets(submittedSecrets)) {
+      // The capacity check before the fetch passed, so the registry filled
+      // while this call was in flight. The credentials are already saved and
+      // working; the operator needs to know this process can no longer scrub
+      // all of them from its output.
+      logger.warning(
+        "The secret-redaction registry is full, so the saved credentials are only partly protected in this server's output. Restart the MCP client."
+      );
+    }
     // The validation fetch normalized the catalog before that registration, so
     // a Dashboard that reflected the password back in an ability label still
     // has it sitting in the cache. Drop it and let the next call refetch under

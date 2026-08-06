@@ -11,7 +11,7 @@ import path from 'node:path';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 import type { Config, PolicyConfig } from './config.js';
 import { clearCache, fetchAbilities } from './abilities.js';
-import { clearKnownSecrets, sanitizeError } from './security.js';
+import { clearKnownSecrets, registerKnownSecrets, sanitizeError } from './security.js';
 import { trustedSettingsPath } from './settings-writer.js';
 import {
   ConfigState,
@@ -560,32 +560,66 @@ describe('mainwp_configure preconditions', () => {
     expect(state.state).toBe('unconfigured');
   });
 
-  it('still accepts an Application Password pasted with surrounding whitespace', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => [sampleAbility],
-      headers: new Headers(),
-    });
+  it.each([
+    ['space-separated', APP_PASSWORD],
+    // WordPress removes every non-alphanumeric before comparing, not just
+    // spaces, so a password pasted with the hyphens a user copied
+    // authenticates and its compact form is the same credential.
+    ['hyphen-separated', 'abcd-efgh-ijkl-mnop-qrst-uvwx'],
+  ])(
+    'still accepts a %s Application Password pasted with surrounding whitespace',
+    async (_label, password) => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => [sampleAbility],
+        headers: new Headers(),
+      });
+      const state = unconfiguredState();
+
+      const result = await executeSetupTool(
+        state,
+        CONFIGURE_TOOL,
+        { ...CONFIGURE_ARGS, application_password: ` ${password} ` },
+        makeMockLogger(),
+        noopNotify
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(state.readyConfig).toMatchObject({ appPassword: ` ${password} ` });
+      // The padded value is stored and sent exactly as submitted, but a
+      // Dashboard echoing the form WordPress compared is echoing the
+      // credential. Quoted rather than spaced: a spaced echo would match the
+      // padded raw variant and pass without the compact form ever being
+      // registered.
+      const compact = password.replace(/[^A-Za-z0-9]/g, '');
+      expect(sanitizeError(JSON.stringify({ echo: password }))).not.toContain(password);
+      expect(sanitizeError(JSON.stringify({ echo: compact }))).not.toContain(compact);
+    }
+  );
+
+  it('refuses before contacting the Dashboard when the redaction registry is full', async () => {
+    // The registry is process-global and additive. Once it is full, a submitted
+    // credential could never be scrubbed from this server's output, so setup
+    // must not send it to the Dashboard or save it.
+    for (let i = 0; i < 80; i++) {
+      registerKnownSecrets([`registry-filler-value-${String(i).padStart(4, '0')}`]);
+    }
     const state = unconfiguredState();
 
     const result = await executeSetupTool(
       state,
       CONFIGURE_TOOL,
-      { ...CONFIGURE_ARGS, application_password: ` ${APP_PASSWORD} ` },
+      CONFIGURE_ARGS,
       makeMockLogger(),
       noopNotify
     );
 
-    expect(result.isError).toBeUndefined();
-    expect(state.readyConfig).toMatchObject({ appPassword: ` ${APP_PASSWORD} ` });
-    // The padded value is stored and sent exactly as submitted, but WordPress
-    // compares it with the whitespace gone, so the trimmed and space-free forms
-    // are the same credential and a Dashboard echoing either one is echoing it.
-    // Quoted rather than spaced: a spaced echo would match the padded raw
-    // variant and pass without the trimmed form ever being registered.
-    const compact = APP_PASSWORD.replace(/ /g, '');
-    expect(sanitizeError(JSON.stringify({ echo: APP_PASSWORD }))).not.toContain(APP_PASSWORD);
-    expect(sanitizeError(JSON.stringify({ echo: compact }))).not.toContain(compact);
+    const payload = JSON.parse(resultText(result)) as { code: string };
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('REDACTION_UNAVAILABLE');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+    expect(state.state).toBe('unconfigured');
   });
 
   it('never logs the submitted password reflected in a successful catalog', async () => {

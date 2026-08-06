@@ -132,45 +132,80 @@ const MAX_KNOWN_SECRET_VARIANTS = 64;
 let knownSecretVariants: string[] = [];
 
 /**
+ * A credential to protect. A plain string is matched only in the shapes that
+ * preserve its bytes; wrapping a value with appPasswordSecret also matches the
+ * form WordPress compares, which is a different string. Nothing else may be
+ * canonicalized that way: an API token or a Basic blob with its punctuation
+ * stripped is not the credential, and the stripped string can collide with
+ * ordinary text.
+ */
+export type KnownSecret = string | { readonly applicationPassword: string };
+
+/** Tag a value as a WordPress Application Password for the redactors. */
+export function appPasswordSecret(value: string | undefined): KnownSecret | undefined {
+  return value === undefined ? undefined : { applicationPassword: value };
+}
+
+function secretText(secret: KnownSecret): string {
+  return typeof secret === 'string' ? secret : secret.applicationPassword;
+}
+
+/**
+ * The form wp_authenticate_application_password compares: every
+ * non-alphanumeric removed. A password pasted with the hyphens or spaces a
+ * user copied still authenticates, so this form is the same credential.
+ */
+export function appPasswordCanonicalForm(value: string): string {
+  return value.replace(/[^a-z\d]/gi, '');
+}
+
+/**
  * The serialization shapes one secret can take while still appearing as a
  * single literal byte sequence. Literal-occurrence redaction is closed under
  * any encoding that preserves the byte sequence; these are the ones that do
  * not.
  */
-function secretVariants(secret: string): string[] {
+function secretVariants(secret: KnownSecret): string[] {
+  const value = secretText(secret);
   const variants = [
-    secret,
+    value,
     // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
     // percent-escape them.
-    secret.split(' ').join('+'),
+    value.split(' ').join('+'),
     // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
     // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
     // Lone surrogates do not throw here; they encode as the replacement
     // character, which is itself a shape worth matching.
-    new URLSearchParams([['x', secret]]).toString().slice(2),
+    new URLSearchParams([['x', value]]).toString().slice(2),
     // JSON string escaping. Remote error bodies are commonly JSON, so a
     // password containing a quote, a backslash, or a control character arrives
     // as `ab\"cd` and no match on the raw value can see it.
-    JSON.stringify(secret).slice(1, -1),
+    JSON.stringify(value).slice(1, -1),
   ];
   // Both throw URIError on a lone surrogate, and a password reaches here from
   // chat input, so an unpaired surrogate is reachable. Guarded separately so a
   // throw costs only that one variant, never the raw value or the redactor.
   for (const encode of [encodeURIComponent, encodeURI]) {
     try {
-      variants.push(encode(secret));
+      variants.push(encode(value));
     } catch {
       // Nothing to add: this encoding cannot represent the value at all, so no
       // diagnostic can contain the secret in it either.
     }
   }
-  // WordPress strips non-alphanumerics from an Application Password before
-  // comparing it, so a value pasted with surrounding whitespace authenticates
-  // and so do its trimmed and space-free forms. All three are the same
-  // credential, and a Dashboard that reflects any of them is reflecting the
-  // secret.
-  for (const form of [secret.trim(), secret.split(' ').join('')]) {
+  // A credential is stored and sent exactly as it was pasted, whitespace and
+  // all, while the far side may ignore that whitespace. The trimmed and
+  // space-free forms are matched for every secret because a diagnostic quoting
+  // either one is quoting the value the server sent.
+  for (const form of [value.trim(), value.split(' ').join('')]) {
     if (form && !variants.includes(form)) variants.push(form);
+  }
+  if (typeof secret !== 'string') {
+    // Application Passwords only: WordPress removes every non-alphanumeric
+    // before comparing, so the compact form authenticates and a Dashboard can
+    // echo it back.
+    const canonical = appPasswordCanonicalForm(value);
+    if (canonical && !variants.includes(canonical)) variants.push(canonical);
   }
   return variants;
 }
@@ -195,23 +230,54 @@ export function clearKnownSecrets(): void {
   knownSecretVariants = [];
 }
 
-export function registerKnownSecrets(secrets: (string | undefined)[]): void {
+/**
+ * Add secrets to the process-lifetime registry.
+ *
+ * Returns false when the ceiling kept a variant out: the caller is then holding
+ * a credential this process cannot scrub from its own output, which no caller
+ * may discover only by watching a secret appear in a diagnostic.
+ */
+export function registerKnownSecrets(secrets: (KnownSecret | undefined)[]): boolean {
+  return addKnownSecrets(secrets, true);
+}
+
+/**
+ * Whether the registry still has room for every variant of these secrets,
+ * without registering anything. A path that is about to transmit a submitted
+ * credential asks first: registration is earned only after the credential is
+ * validated and saved, and by then the transmission cannot be taken back.
+ */
+export function canRegisterKnownSecrets(secrets: (KnownSecret | undefined)[]): boolean {
+  return addKnownSecrets(secrets, false);
+}
+
+function addKnownSecrets(secrets: (KnownSecret | undefined)[], apply: boolean): boolean {
   const variants = new Set<string>(knownSecretVariants);
+  let complete = true;
   for (const secret of secrets) {
+    if (secret === undefined) continue;
     // A short value would redact ordinary prose; real app passwords, tokens,
     // and base64 Basic blobs are all far longer.
-    if (!secret || secret.length < MIN_KNOWN_SECRET_LENGTH) continue;
-    if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) break;
+    if (secretText(secret).length < MIN_KNOWN_SECRET_LENGTH) continue;
     for (const variant of secretVariants(secret)) {
       // A derived form can be shorter than the value that cleared the floor:
       // removing the spaces from "ab cd ef g" leaves seven characters, and a
       // short entry in a process-lifetime registry erases ordinary prose for
       // the rest of the run.
       if (variant.length < MIN_KNOWN_SECRET_LENGTH) continue;
+      if (variants.has(variant)) continue;
+      // Checked per variant, not once per secret: the ceiling has to hold while
+      // a secret is being added, and a secret only half in the registry is one
+      // the redactors can still miss.
+      if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) {
+        complete = false;
+        continue;
+      }
       variants.add(variant);
     }
   }
-  knownSecretVariants = orderVariants(variants);
+  if (apply) knownSecretVariants = orderVariants(variants);
+  return complete;
 }
 
 /**
@@ -225,7 +291,9 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
  * while the only text a request-scoped redactor ever touches is that request's
  * own output.
  */
-export function createSecretRedactor(secrets: (string | undefined)[]): (message: string) => string {
+export function createSecretRedactor(
+  secrets: (KnownSecret | undefined)[]
+): (message: string) => string {
   const ordered = buildVariants(secrets);
   if (ordered.length === 0) {
     return message => message;
@@ -233,10 +301,10 @@ export function createSecretRedactor(secrets: (string | undefined)[]): (message:
   return message => replaceVariants(message, ordered);
 }
 
-function buildVariants(secrets: (string | undefined)[]): string[] {
+function buildVariants(secrets: (KnownSecret | undefined)[]): string[] {
   const variants = new Set<string>();
   for (const secret of secrets) {
-    if (!secret) continue;
+    if (secret === undefined || secretText(secret) === '') continue;
     for (const variant of secretVariants(secret)) {
       variants.add(variant);
     }
@@ -260,7 +328,7 @@ function buildVariants(secrets: (string | undefined)[]): string[] {
 const scopedSecrets = new AsyncLocalStorage<string[]>();
 
 export function withScopedSecrets<T>(
-  secrets: (string | undefined)[],
+  secrets: (KnownSecret | undefined)[],
   fn: () => Promise<T>
 ): Promise<T> {
   const variants = buildVariants(secrets);

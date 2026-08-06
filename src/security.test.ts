@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   validateInput,
   sanitizeError,
+  appPasswordSecret,
+  canRegisterKnownSecrets,
   registerKnownSecrets,
   clearKnownSecrets,
   createSecretRedactor,
@@ -480,6 +482,43 @@ describe('registered known secrets', () => {
     // the registry keeps what it is given for the life of the process.
     registerKnownSecrets(['ab cd ef g']);
     expect(sanitizeError('abcdefg is a word here')).toContain('abcdefg');
+  });
+
+  it('should redact the compact form of an Application Password only', () => {
+    // WordPress compares an Application Password with every non-alphanumeric
+    // removed, so the compact form of a hyphen-separated password is the same
+    // credential. A token is not: stripping its punctuation yields a string
+    // that never authenticated and could match ordinary text.
+    registerKnownSecrets([appPasswordSecret('abcd-efgh-ijkl-mnop-qrst-uvwx')]);
+    registerKnownSecrets(['api-token-abcdefghijkl']);
+
+    expect(sanitizeError('echo abcdefghijklmnopqrstuvwx')).not.toContain('abcdefghijkl');
+    expect(sanitizeError('echo apitokenabcdefghijkl')).toContain('apitokenabcdefghijkl');
+  });
+
+  it('should report saturation instead of dropping a secret silently', () => {
+    // The caller has to learn that a credential it is about to use will never
+    // be scrubbed; discovering it in a leaked diagnostic is too late.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 64; i++) {
+      expect(registerKnownSecrets([name(i)])).toBe(true);
+    }
+
+    expect(canRegisterKnownSecrets([name(64)])).toBe(false);
+    expect(registerKnownSecrets([name(64)])).toBe(false);
+    expect(sanitizeError(`echo ${name(64)}`)).toContain(name(64));
+  });
+
+  it('should keep the ceiling while one secret is being added', () => {
+    // The old check ran once per secret, so a secret that started under the
+    // ceiling added every variant it had and left the registry over it.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 63; i++) {
+      registerKnownSecrets([name(i)]);
+    }
+    // Two variants: the raw value and its space-free form. Only one fits.
+    expect(registerKnownSecrets(['multi variant secret value'])).toBe(false);
+    expect(sanitizeError('echo multivariantsecretvalue')).toContain('multivariantsecretvalue');
   });
 
   it('should stop growing once the registry is full', () => {

@@ -166,7 +166,7 @@ function summaryMarkdown(run: RunResults): string {
   return `${lines.join('\n')}\n`;
 }
 
-async function runScenario(
+export async function runScenario(
   definition: (typeof scenarios)[number],
   options: CliOptions,
   credentials: ResolvedAcceptanceCredentials,
@@ -261,14 +261,12 @@ async function runScenario(
           ...(overrides.env ? { env: overrides.env } : {}),
           home: launchedHome,
         });
-        let closed = false;
+        // Delegates straight to the launch's own close, which caches its
+        // promise: a second close replays the first outcome instead of
+        // reporting success over a shutdown that failed.
         const handle: RelaunchedServer = {
           client: restarted.client,
-          close: async () => {
-            if (closed) return;
-            closed = true;
-            await restarted.close();
-          },
+          close: () => restarted.close(),
         };
         // Registered before the scenario gets the handle: a scenario that
         // throws before its own try/finally would otherwise leave this server
@@ -305,7 +303,8 @@ async function runScenario(
     }
     // Relaunched servers borrow the original launch's home directory, and
     // closing the original removes it, so they go first. Closing one a scenario
-    // already closed is a no-op.
+    // already closed replays that close's outcome, so a failed shutdown is
+    // still reported here.
     for (const handle of relaunched.reverse()) {
       try {
         await handle.close();

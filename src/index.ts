@@ -44,7 +44,7 @@ import { validateCredentials } from './credential-check.js';
 import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { sanitizeError, registerKnownSecrets, isValidId } from './security.js';
+import { appPasswordSecret, sanitizeError, registerKnownSecrets, isValidId } from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
 import {
@@ -131,8 +131,8 @@ export async function createServer(
   // Every sanitizeError call site benefits, whatever path an error takes to a
   // client-visible string: the server's own credentials are scrubbed by value,
   // in the encodings a serialized error body preserves.
-  registerKnownSecrets([
-    startupConfig?.appPassword,
+  const secretsRegistered = registerKnownSecrets([
+    appPasswordSecret(startupConfig?.appPassword),
     startupConfig?.apiToken,
     startupConfig?.username && startupConfig.appPassword
       ? Buffer.from(`${startupConfig.username}:${startupConfig.appPassword}`).toString('base64')
@@ -156,6 +156,11 @@ export async function createServer(
 
   // Create structured logger
   const logger = createLogger(server);
+  if (!secretsRegistered) {
+    logger.warning(
+      "The secret-redaction registry is full, so some of this server's own credentials will not be scrubbed from its output."
+    );
+  }
 
   // Fired after a readiness change so clients re-read the surfaces setup mode
   // suppressed. Order matters only in that tools carry the visible change.
@@ -467,13 +472,19 @@ async function main(): Promise<void> {
 
     // Register before any remote call: the startup credential check runs ahead
     // of createServer(), and its error path must already redact by value.
-    registerKnownSecrets([
-      config?.appPassword,
-      config?.apiToken,
-      config?.username && config.appPassword
-        ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
-        : undefined,
-    ]);
+    if (
+      !registerKnownSecrets([
+        appPasswordSecret(config?.appPassword),
+        config?.apiToken,
+        config?.username && config.appPassword
+          ? Buffer.from(`${config.username}:${config.appPassword}`).toString('base64')
+          : undefined,
+      ])
+    ) {
+      startupLogger.warning(
+        "The secret-redaction registry is full, so some of this server's own credentials will not be scrubbed from its output."
+      );
+    }
 
     // Initialize rate limiter
     initRateLimiter(state.policy.rateLimit);

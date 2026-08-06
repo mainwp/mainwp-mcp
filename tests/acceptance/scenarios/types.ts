@@ -93,8 +93,8 @@ export interface ScenarioPreconditionResult {
 export interface RelaunchedServer {
   client: AcceptanceClient;
   /** Idempotent: the harness closes every relaunched server too, so a scenario
-   * that closes its own handle is not closed twice and the second call is a
-   * no-op. */
+   * that closes its own handle does not shut it down twice. Repeat calls replay
+   * the first close's outcome, including its failure. */
   close(): Promise<void>;
 }
 
