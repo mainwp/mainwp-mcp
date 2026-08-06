@@ -253,8 +253,12 @@ async function runScenario(
     const launchedHome = connection.home;
     scenarioContext = {
       client: connection.client,
-      relaunch: async () => {
-        const restarted = await launchServer({ ...launchOptions, home: launchedHome });
+      relaunch: async (overrides = {}) => {
+        const restarted = await launchServer({
+          ...launchOptions,
+          ...(overrides.env ? { env: overrides.env } : {}),
+          home: launchedHome,
+        });
         return { client: restarted.client, close: restarted.close };
       },
       verifier,

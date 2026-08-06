@@ -15,6 +15,22 @@ interface RefusalPayload {
   message?: string;
 }
 
+// Valid enough to pass input validation, so a refusal can only come from a
+// precondition.
+const SUBMITTED_PASSWORD = 'aaaa bbbb cccc dddd eeee ffff';
+
+// WordPress strips the spaces out of an Application Password, so the compact
+// form is the same credential and either one showing up is a leak. Comparing a
+// prefix catches a partial echo as well.
+const SUBMITTED_PASSWORD_FORMS = [SUBMITTED_PASSWORD, SUBMITTED_PASSWORD.replace(/ /g, '')].map(
+  form => form.slice(0, 9)
+);
+
+function echoesSubmittedPassword(data: unknown): boolean {
+  const serialized = JSON.stringify(data);
+  return SUBMITTED_PASSWORD_FORMS.some(form => serialized.includes(form));
+}
+
 export const setupModeUnconfigured: ScenarioDefinition = {
   id: 'setup-mode-unconfigured',
   purpose: 'Start with no credentials at all and expose only the two setup tools.',
@@ -87,7 +103,7 @@ export const setupConfigureRefusals: ScenarioDefinition = {
     const { result, data } = await ctx.client.callToolJson('mainwp_configure', {
       dashboard_url: 'https://dashboard.invalid',
       username: 'admin',
-      application_password: 'aaaa bbbb cccc dddd eeee ffff',
+      application_password: SUBMITTED_PASSWORD,
     });
     const payload = data as RefusalPayload;
 
@@ -99,8 +115,35 @@ export const setupConfigureRefusals: ScenarioDefinition = {
     );
     ctx.assert.truthy(
       'refusal never echoes the submitted password',
-      !JSON.stringify(data).includes('aaaa bbbb')
+      !echoesSubmittedPassword(data)
     );
+
+    // The environment precondition is checked first, so the working-directory
+    // file can only refuse on its own in a launch with no connection variables.
+    // The home directory carries over from the launch above, which saved
+    // nothing because it was refused.
+    const shadowed = await ctx.relaunch({ env: {} });
+    try {
+      const second = await shadowed.client.callToolJson('mainwp_configure', {
+        dashboard_url: 'https://dashboard.invalid',
+        username: 'admin',
+        application_password: SUBMITTED_PASSWORD,
+      });
+      const secondPayload = second.data as RefusalPayload;
+
+      ctx.assert.equal('working-directory refusal is an error result', second.result.isError, true);
+      ctx.assert.equal(
+        'a working-directory settings.json refuses the save on its own',
+        secondPayload.code,
+        'SHADOWED_BY_WORKING_DIRECTORY_FILE'
+      );
+      ctx.assert.truthy(
+        'working-directory refusal never echoes the submitted password',
+        !echoesSubmittedPassword(second.data)
+      );
+    } finally {
+      await shadowed.close();
+    }
   },
 };
 

@@ -95,14 +95,24 @@ export interface RelaunchedServer {
   close(): Promise<void>;
 }
 
+export interface ScenarioRelaunchOptions {
+  /**
+   * Replace the scenario's launch environment. A second server that has to
+   * reach a precondition the first launch outranks needs a different
+   * environment, not a repeat of the first one.
+   */
+  env?: Record<string, string>;
+}
+
 export interface ScenarioContext {
   client: AcceptanceClient;
   /**
    * Start a second server process against the same home directory, for
    * scenarios that must prove something survived a restart. The caller closes
-   * it; the harness closes the original.
+   * it; the harness closes the original. Each launch gets its own working
+   * directory, so a scenario that declares settings gets the file written again.
    */
-  relaunch(): Promise<RelaunchedServer>;
+  relaunch(options?: ScenarioRelaunchOptions): Promise<RelaunchedServer>;
   verifier: IndependentVerifier;
   config: {
     target: AcceptanceTarget;

@@ -728,6 +728,14 @@ describe('setup mode handlers', () => {
       'mainwp_get_setup_status',
       'mainwp_configure',
     ]);
+
+    // Degraded keeps the operator's config retained, so the execution boundary
+    // has to hold on its own rather than on the config being absent.
+    const denied = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+
+    expect(denied.isError).toBe(true);
+    expect((denied.content as Array<{ text: string }>)[0].text).toContain('not_configured');
+    expect(mockFetch).not.toHaveBeenCalled();
     await client.close();
     await server.close();
   });
