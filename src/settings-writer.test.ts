@@ -171,11 +171,20 @@ describe('writeConnectionSettings', () => {
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
-  it('refuses when the config directory path is a file', () => {
+  it('refuses when the config directory path is a symlink', () => {
+    // A plain file there fails in mkdirSync instead, which is a different
+    // refusal. mkdir -p is happy with a symlink that resolves to a directory,
+    // so the lstat check is the only thing standing between a planted link and
+    // a credential file written wherever it points.
     fs.mkdirSync(path.join(home, '.config'), { recursive: true });
-    fs.writeFileSync(trustedSettingsDir(home), 'occupied');
+    const elsewhere = path.join(home, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+    fs.symlinkSync(elsewhere, trustedSettingsDir(home));
 
-    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(SettingsWriteError);
+    expect(() => writeConnectionSettings(CONNECTION, home)).toThrow(
+      /exists but is not a directory/
+    );
+    expect(fs.readdirSync(elsewhere)).toEqual([]);
   });
 
   it('leaves no temp file and no target behind when the write fails', () => {

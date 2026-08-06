@@ -19,16 +19,17 @@ interface RefusalPayload {
 // precondition.
 const SUBMITTED_PASSWORD = 'aaaa bbbb cccc dddd eeee ffff';
 
-// WordPress strips the spaces out of an Application Password, so the compact
-// form is the same credential and either one showing up is a leak. Comparing a
-// prefix catches a partial echo as well.
-const SUBMITTED_PASSWORD_FORMS = [SUBMITTED_PASSWORD, SUBMITTED_PASSWORD.replace(/ /g, '')].map(
-  form => form.slice(0, 9)
-);
-
-function echoesSubmittedPassword(data: unknown): boolean {
+/**
+ * Whole strings, never a prefix: a prefix comparison only catches an echo that
+ * starts at the first character, so a reflected middle run passes it. The
+ * compact form is checked too because WordPress removes every non-alphanumeric
+ * before comparing, which makes it the same credential.
+ */
+function echoesPassword(data: unknown, password: string): boolean {
   const serialized = JSON.stringify(data);
-  return SUBMITTED_PASSWORD_FORMS.some(form => serialized.includes(form));
+  return [password, password.replace(/[^a-z\d]/gi, '')].some(
+    form => form !== '' && serialized.includes(form)
+  );
 }
 
 export const setupModeUnconfigured: ScenarioDefinition = {
@@ -108,14 +109,13 @@ export const setupConfigureRefusals: ScenarioDefinition = {
     const payload = data as RefusalPayload;
 
     ctx.assert.equal('configure refusal is an error result', result.isError, true);
-    ctx.assert.includes(
-      'refusal names an environment or shadowing precondition',
-      ['ENV_CONFIGURED', 'SHADOWED_BY_WORKING_DIRECTORY_FILE'],
-      payload.code
-    );
+    // Exactly ENV_CONFIGURED: the environment precondition is checked before
+    // the shadowing one, so accepting either code would let a regression in it
+    // pass as long as the shadowing refusal still fires.
+    ctx.assert.equal('the environment precondition refuses first', payload.code, 'ENV_CONFIGURED');
     ctx.assert.truthy(
       'refusal never echoes the submitted password',
-      !echoesSubmittedPassword(data)
+      !echoesPassword(data, SUBMITTED_PASSWORD)
     );
 
     // The environment precondition is checked first, so the working-directory
@@ -139,7 +139,7 @@ export const setupConfigureRefusals: ScenarioDefinition = {
       );
       ctx.assert.truthy(
         'working-directory refusal never echoes the submitted password',
-        !echoesSubmittedPassword(second.data)
+        !echoesPassword(second.data, SUBMITTED_PASSWORD)
       );
     } finally {
       await shadowed.close();
@@ -199,7 +199,7 @@ export const setupConfigureRoundTrip: ScenarioDefinition = {
     );
     ctx.assert.truthy(
       'configure never echoes the password',
-      !JSON.stringify(data).includes(String(ctx.state.appPassword))
+      !echoesPassword(data, String(ctx.state.appPassword))
     );
 
     const after = await ctx.client.listTools();

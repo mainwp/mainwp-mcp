@@ -178,6 +178,8 @@ The cost is real, and it lands in one place. If you rotate the Application Passw
 | `MAINWP_RETRY_MAX_DELAY`           | No             | `2000`     | Maximum delay between retries in milliseconds                                                          |
 | `MAINWP_ABILITY_NAMESPACES`        | No             | `mainwp`   | Comma-separated ability namespace allowlist                                                            |
 
+"Required" means required to connect to a Dashboard, not required to start. With no URL and no credentials the server still launches in setup mode and you can supply all three values from the conversation instead. See [First-run setup](#first-run-setup).
+
 > **⚠️ Security Warning: SSL Verification**
 >
 > Setting `MAINWP_SKIP_SSL_VERIFY=true` disables SSL certificate verification, making your connection vulnerable to man-in-the-middle (MITM) attacks. Only use for local development with self-signed certificates or isolated test environments. Never use in production or on untrusted networks.

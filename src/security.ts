@@ -361,31 +361,59 @@ export function redactKnownSecrets(message: string): string {
 }
 
 /**
+ * Depth ceiling for redactStringsDeep. The values it walks are attacker
+ * controlled — a parsed execution result, a log payload — and JSON.parse
+ * accepts nesting tens of thousands deep inside a size-capped body while the
+ * walk costs one stack frame per level. Real ability results and log data nest
+ * a handful of levels, so this is generous against anything genuine and still
+ * far below the stack limit.
+ */
+const MAX_REDACT_DEPTH = 100;
+
+/**
+ * Replaces a subtree that sits past the depth cap. Dropping it is the safe
+ * direction: returning it unwalked would ship a subtree that can still hold the
+ * credential the caller asked to have removed. A marker rather than an empty
+ * container, so a consumer cannot read truncated output as real data.
+ */
+export const DEPTH_LIMIT_MARKER = '[removed: nesting depth limit exceeded]';
+
+/**
  * Apply `redact` to every string inside a parsed JSON value — string values
  * and object keys — leaving non-string scalars, types, and structure alone.
+ * Anything nested deeper than MAX_REDACT_DEPTH is replaced by DEPTH_LIMIT_MARKER.
  *
  * Redacting the raw body text instead would replace across JSON syntax: a
  * secret that is a bare numeric string, or that straddles the punctuation
  * between two fields, rewrites the document into something JSON.parse rejects.
  */
-export function redactStringsDeep(value: unknown, redact: (text: string) => string): unknown {
+export function redactStringsDeep(
+  value: unknown,
+  redact: (text: string) => string,
+  depth = 0
+): unknown {
   if (typeof value === 'string') {
     return redact(value);
   }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  // Only containers are cut: a scalar at any depth is already fully handled
+  // above, and the cap exists to stop the recursion, not to drop safe values.
+  if (depth >= MAX_REDACT_DEPTH) {
+    return DEPTH_LIMIT_MARKER;
+  }
   if (Array.isArray(value)) {
-    return value.map(item => redactStringsDeep(item, redact));
+    return value.map(item => redactStringsDeep(item, redact, depth + 1));
   }
-  if (value !== null && typeof value === 'object') {
-    // Null prototype: JSON.parse makes a "__proto__" key an own property, and
-    // plain assignment on a normal object would hand it to the prototype
-    // setter and silently drop it.
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [key, child] of Object.entries(value)) {
-      out[redact(key)] = redactStringsDeep(child, redact);
-    }
-    return out;
+  // Null prototype: JSON.parse makes a "__proto__" key an own property, and
+  // plain assignment on a normal object would hand it to the prototype
+  // setter and silently drop it.
+  const out: Record<string, unknown> = Object.create(null);
+  for (const [key, child] of Object.entries(value)) {
+    out[redact(key)] = redactStringsDeep(child, redact, depth + 1);
   }
-  return value;
+  return out;
 }
 
 /** redactStringsDeep against the active secrets, skipping the walk when there are none. */

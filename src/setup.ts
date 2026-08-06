@@ -20,7 +20,7 @@ import { clearPendingPreviews } from './confirmation.js';
 import { validateCredentials } from './credential-check.js';
 import { getErrorMessage, McpErrorFactory } from './errors.js';
 import { withSecretRedaction, type Logger } from './logging.js';
-import { RESERVED_TOOL_NAMES } from './naming.js';
+import { CONFIGURE_TOOL, RESERVED_TOOL_NAMES, SETUP_STATUS_TOOL } from './naming.js';
 import { decidePolicy } from './policy.js';
 import {
   appPasswordCanonicalForm,
@@ -40,8 +40,7 @@ import {
   SettingsWriteError,
 } from './settings-writer.js';
 
-export const SETUP_STATUS_TOOL = 'mainwp_get_setup_status';
-export const CONFIGURE_TOOL = 'mainwp_configure';
+export { CONFIGURE_TOOL, SETUP_STATUS_TOOL };
 
 const SETUP_GUIDE_URL = 'https://github.com/mainwp/mainwp-mcp#readme';
 

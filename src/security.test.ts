@@ -11,6 +11,8 @@ import {
   registerKnownSecrets,
   clearKnownSecrets,
   createSecretRedactor,
+  redactStringsDeep,
+  DEPTH_LIMIT_MARKER,
   RateLimiter,
   isValidId,
 } from './security.js';
@@ -561,6 +563,33 @@ describe('createSecretRedactor', () => {
 
   it('is a no-op when there is nothing to redact', () => {
     expect(createSecretRedactor([undefined, ''])('untouched text')).toBe('untouched text');
+  });
+});
+
+describe('redactStringsDeep', () => {
+  it('survives hostile nesting and still redacts above the cap', () => {
+    // JSON.parse takes nesting this deep without complaint, and a body that
+    // carries it fits well inside maxResponseSize, so an execution result can
+    // reach the walk in this shape. Uncapped, one stack frame per level throws
+    // RangeError long before this depth.
+    const depth = 20000;
+    const parsed: unknown = JSON.parse(
+      `{"secret":"topsecretvalue","deep":${'['.repeat(depth)}${']'.repeat(depth)}}`
+    );
+
+    const redacted = redactStringsDeep(parsed, text =>
+      text.split('topsecretvalue').join('[redacted]')
+    ) as { secret: string; deep: unknown };
+
+    expect(redacted.secret).toBe('[redacted]');
+    let node: unknown = redacted.deep;
+    let levels = 0;
+    while (Array.isArray(node)) {
+      node = node[0];
+      levels++;
+    }
+    expect(node).toBe(DEPTH_LIMIT_MARKER);
+    expect(levels).toBeLessThan(depth);
   });
 });
 

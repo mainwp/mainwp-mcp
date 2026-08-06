@@ -734,6 +734,15 @@ describe('mainwp_configure preconditions', () => {
 });
 
 describe('mainwp_get_setup_status', () => {
+  // Same resets as the configure block: the secret registry and the abilities
+  // cache live for the whole process, so state left by an earlier block can
+  // make a test here pass without exercising anything.
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearKnownSecrets();
+  });
+
   it('returns both setup paths with the chat-history caveat when unconfigured', async () => {
     const result = await executeSetupTool(
       unconfiguredState(),
@@ -765,8 +774,6 @@ describe('mainwp_get_setup_status', () => {
   });
 
   it('retries a degraded connection and promotes to ready on success', async () => {
-    clearCache();
-    mockFetch.mockReset();
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => [sampleAbility],
@@ -787,8 +794,6 @@ describe('mainwp_get_setup_status', () => {
     // The notification is outside the validation catch: a client transport
     // failure must not undo a connection that just worked, or be reported to
     // the user as the Dashboard problem.
-    clearCache();
-    mockFetch.mockReset();
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => [sampleAbility],
@@ -810,8 +815,6 @@ describe('mainwp_get_setup_status', () => {
   it('gives the manual fix for wrong credentials even when chat setup is blocked', async () => {
     // Blocked configure is exactly when the user has no other way out of a
     // wrong tuple, so the manual instructions cannot be conditional on it.
-    clearCache();
-    mockFetch.mockReset();
     mockFetch.mockRejectedValue(new Error('getaddrinfo ENOTFOUND test.local'));
     const state = ConfigState.fromConfig(makeBaseConfig({ blockedTools: [CONFIGURE_TOOL] }));
     state.markDegraded('Network error: Cannot reach MAINWP_URL.');
@@ -828,8 +831,6 @@ describe('mainwp_get_setup_status', () => {
   });
 
   it('stays degraded and reports the reason when the retry fails', async () => {
-    clearCache();
-    mockFetch.mockReset();
     mockFetch.mockRejectedValue(new Error('getaddrinfo ENOTFOUND test.local'));
     const state = ConfigState.fromConfig(makeBaseConfig());
     state.markDegraded('Network error: Cannot reach MAINWP_URL.');
