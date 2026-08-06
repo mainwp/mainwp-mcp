@@ -475,6 +475,13 @@ describe('registered known secrets', () => {
     expect(sanitizeError('abc def')).toBe('abc def');
   });
 
+  it('should ignore a derived variant that falls under the length floor', () => {
+    // The submitted value clears the floor; its space-free form does not, and
+    // the registry keeps what it is given for the life of the process.
+    registerKnownSecrets(['ab cd ef g']);
+    expect(sanitizeError('abcdefg is a word here')).toContain('abcdefg');
+  });
+
   it('should stop growing once the registry is full', () => {
     // The registry lives for the whole process and every entry is scanned by
     // every redaction, so a caller that registers per request must not be able

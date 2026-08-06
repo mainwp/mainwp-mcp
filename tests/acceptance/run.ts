@@ -25,6 +25,7 @@ import {
   AssertionRecorder,
   type AcceptanceMode,
   type AcceptanceTarget,
+  type RelaunchedServer,
   type ScenarioContext,
   type ScenarioResult,
 } from './scenarios/types.js';
@@ -240,6 +241,7 @@ async function runScenario(
   let connection;
   let scenarioContext: ScenarioContext | undefined;
   let scenarioError: string | undefined;
+  const relaunched: RelaunchedServer[] = [];
   try {
     const launchOptions = {
       scenario: definition.id,
@@ -259,7 +261,20 @@ async function runScenario(
           ...(overrides.env ? { env: overrides.env } : {}),
           home: launchedHome,
         });
-        return { client: restarted.client, close: restarted.close };
+        let closed = false;
+        const handle: RelaunchedServer = {
+          client: restarted.client,
+          close: async () => {
+            if (closed) return;
+            closed = true;
+            await restarted.close();
+          },
+        };
+        // Registered before the scenario gets the handle: a scenario that
+        // throws before its own try/finally would otherwise leave this server
+        // process and its temp directory alive for the rest of the run.
+        relaunched.push(handle);
+        return handle;
       },
       verifier,
       config: {
@@ -284,6 +299,18 @@ async function runScenario(
         await definition.cleanup(scenarioContext);
       } catch (error) {
         scenarioError = [scenarioError, `Cleanup failed: ${errorText(error)}`]
+          .filter(Boolean)
+          .join('\n');
+      }
+    }
+    // Relaunched servers borrow the original launch's home directory, and
+    // closing the original removes it, so they go first. Closing one a scenario
+    // already closed is a no-op.
+    for (const handle of relaunched.reverse()) {
+      try {
+        await handle.close();
+      } catch (error) {
+        scenarioError = [scenarioError, `Relaunched server close failed: ${errorText(error)}`]
           .filter(Boolean)
           .join('\n');
       }

@@ -578,6 +578,14 @@ describe('mainwp_configure preconditions', () => {
 
     expect(result.isError).toBeUndefined();
     expect(state.readyConfig).toMatchObject({ appPassword: ` ${APP_PASSWORD} ` });
+    // The padded value is stored and sent exactly as submitted, but WordPress
+    // compares it with the whitespace gone, so the trimmed and space-free forms
+    // are the same credential and a Dashboard echoing either one is echoing it.
+    // Quoted rather than spaced: a spaced echo would match the padded raw
+    // variant and pass without the trimmed form ever being registered.
+    const compact = APP_PASSWORD.replace(/ /g, '');
+    expect(sanitizeError(JSON.stringify({ echo: APP_PASSWORD }))).not.toContain(APP_PASSWORD);
+    expect(sanitizeError(JSON.stringify({ echo: compact }))).not.toContain(compact);
   });
 
   it('never logs the submitted password reflected in a successful catalog', async () => {

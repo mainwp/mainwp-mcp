@@ -164,6 +164,14 @@ function secretVariants(secret: string): string[] {
       // diagnostic can contain the secret in it either.
     }
   }
+  // WordPress strips non-alphanumerics from an Application Password before
+  // comparing it, so a value pasted with surrounding whitespace authenticates
+  // and so do its trimmed and space-free forms. All three are the same
+  // credential, and a Dashboard that reflects any of them is reflecting the
+  // secret.
+  for (const form of [secret.trim(), secret.split(' ').join('')]) {
+    if (form && !variants.includes(form)) variants.push(form);
+  }
   return variants;
 }
 
@@ -195,6 +203,11 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
     if (!secret || secret.length < MIN_KNOWN_SECRET_LENGTH) continue;
     if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) break;
     for (const variant of secretVariants(secret)) {
+      // A derived form can be shorter than the value that cleared the floor:
+      // removing the spaces from "ab cd ef g" leaves seven characters, and a
+      // short entry in a process-lifetime registry erases ordinary prose for
+      // the rest of the run.
+      if (variant.length < MIN_KNOWN_SECRET_LENGTH) continue;
       variants.add(variant);
     }
   }
