@@ -8,7 +8,13 @@
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, createHttpError, getErrorMessage } from './errors.js';
-import { RateLimiter, containsKnownSecret, redactKnownSecrets, sanitizeError } from './security.js';
+import {
+  RateLimiter,
+  containsKnownSecret,
+  redactKnownSecrets,
+  redactKnownSecretsDeep,
+  sanitizeError,
+} from './security.js';
 import { withRetry, type RetryContext } from './retry.js';
 import {
   createFetch,
@@ -1034,11 +1040,11 @@ export async function executeAbility(
     });
 
     // Same fetch-boundary scrub the catalog gets: a result is remote data and
-    // reaches the transcript verbatim. Redacting the raw body covers keys and
-    // values at every depth, and the placeholder carries no JSON structure
-    // characters, so a credential reflected inside a string cannot break the
-    // parse below.
-    return JSON.parse(redactKnownSecrets(responseBody));
+    // reaches the transcript verbatim. It runs over the parsed value, covering
+    // keys and string values at every depth — redacting the raw body text
+    // instead would also replace across JSON syntax and turn a well-formed
+    // response into a parse error.
+    return redactKnownSecretsDeep(JSON.parse(responseBody));
   };
 
   // Apply retry logic only for read-only operations when enabled

@@ -6,6 +6,7 @@
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { redactStringsDeep } from './security.js';
 
 // RFC 5424 log levels, minus 'alert'/'emergency' — the Logger interface
 // implements exactly these six, so the type carries no unreachable members
@@ -110,6 +111,34 @@ export function withRequestId(logger: Logger, requestId: string): Logger {
     (fn: (msg: string, data?: Record<string, unknown>) => void) =>
     (message: string, data?: Record<string, unknown>) =>
       fn(message, { ...data, requestId });
+  return {
+    debug: wrap(logger.debug.bind(logger)),
+    info: wrap(logger.info.bind(logger)),
+    notice: wrap(logger.notice.bind(logger)),
+    warning: wrap(logger.warning.bind(logger)),
+    error: wrap(logger.error.bind(logger)),
+    critical: wrap(logger.critical.bind(logger)),
+  };
+}
+
+/**
+ * Wrap a logger so a caller-supplied redactor runs over every message and
+ * every structured field before the entry reaches the real logger.
+ *
+ * For values a call knows are secret but the process-wide registry does not
+ * hold: first-run setup validates a submitted password against a
+ * model-supplied Dashboard, and the code that logs during that fetch cannot
+ * know the value. One wrapper at the logger boundary covers every log site
+ * inside the call, sanitized or not.
+ */
+export function withSecretRedaction(logger: Logger, redact: (text: string) => string): Logger {
+  const wrap =
+    (fn: (msg: string, data?: Record<string, unknown>) => void) =>
+    (message: string, data?: Record<string, unknown>) =>
+      fn(
+        redact(message),
+        data ? (redactStringsDeep(data, redact) as Record<string, unknown>) : data
+      );
   return {
     debug: wrap(logger.debug.bind(logger)),
     info: wrap(logger.info.bind(logger)),

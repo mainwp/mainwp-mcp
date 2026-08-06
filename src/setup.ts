@@ -19,7 +19,7 @@ import { clearCache, initRateLimiter, type Ability } from './abilities.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { validateCredentials } from './credential-check.js';
 import { getErrorMessage, McpErrorFactory } from './errors.js';
-import type { Logger } from './logging.js';
+import { withSecretRedaction, type Logger } from './logging.js';
 import { RESERVED_TOOL_NAMES } from './naming.js';
 import { decidePolicy } from './policy.js';
 import {
@@ -27,6 +27,8 @@ import {
   redactKnownSecrets,
   registerKnownSecrets,
   sanitizeError,
+  withScopedSecrets,
+  MIN_KNOWN_SECRET_LENGTH,
 } from './security.js';
 import { clearToolsCache, type ToolCallResult } from './tools.js';
 import {
@@ -384,6 +386,24 @@ function validateCredentialField(raw: unknown, field: string, maxLength: number)
 }
 
 /**
+ * A WordPress Application Password is 24 characters, so anything shorter than
+ * the redaction registry's floor cannot be one. Rejected here rather than
+ * lowering that floor: a saved value the registry refuses to hold is a
+ * credential this server can never scrub from its own later output.
+ * Surrounding whitespace stays acceptable, so the floor applies to the trimmed
+ * value.
+ */
+function validateApplicationPassword(raw: unknown): string {
+  const value = validateCredentialField(raw, 'application_password', MAX_PASSWORD_INPUT);
+  if (value.trim().length < MIN_KNOWN_SECRET_LENGTH) {
+    throw McpErrorFactory.invalidParams(
+      'application_password does not look like an Application Password. WordPress shows one as six groups of four characters on your profile page. The password you use to log in to WordPress will not work here.'
+    );
+  }
+  return value;
+}
+
+/**
  * Fire the listChanged notifications after a state swap that already happened.
  * A client that rejects the notification has not undone the swap, so the
  * failure is logged and the caller still reports what it actually did.
@@ -543,11 +563,7 @@ async function handleConfigure(
   try {
     dashboardUrl = validateConfigureUrl(args.dashboard_url, policy.allowHttp);
     username = validateCredentialField(args.username, 'username', MAX_USERNAME_INPUT);
-    appPassword = validateCredentialField(
-      args.application_password,
-      'application_password',
-      MAX_PASSWORD_INPUT
-    );
+    appPassword = validateApplicationPassword(args.application_password);
   } catch (error) {
     return refusal(policy, 'INVALID_INPUT', sanitizeError(getErrorMessage(error)));
   }
@@ -583,7 +599,15 @@ async function handleConfigure(
 
     let abilities: Ability[];
     try {
-      abilities = await validateCredentials(candidate, logger);
+      // The submitted tuple has not earned registration yet, so the fetch runs
+      // under a request-scoped secret context and a logger that scrubs the
+      // same values. Without both, a Dashboard that reflects the password in
+      // an ability name, a schema key, or a label writes it straight to a log
+      // line and into the cached catalog, and the global registry is not
+      // allowed to know the value until a call persists it.
+      abilities = await withScopedSecrets([appPassword, basicBlob], () =>
+        validateCredentials(candidate, withSecretRedaction(logger, redactSubmitted))
+      );
     } catch (error) {
       // Scrub before sanitizeError, not after: sanitizeError truncates, and a
       // reflected password straddling that cut must be removed whole.

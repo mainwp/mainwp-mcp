@@ -5,6 +5,7 @@
  * and rate limiting.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { McpErrorFactory } from './errors.js';
 
 // Input validation limits
@@ -118,7 +119,7 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
 // startup; registration is additive so a second server instance in the same
 // process never strips the first one's protection (tests reset with
 // clearKnownSecrets).
-const MIN_KNOWN_SECRET_LENGTH = 8;
+export const MIN_KNOWN_SECRET_LENGTH = 8;
 /**
  * Ceiling on the process-lifetime registry. Registration is additive and every
  * entry is scanned by every redaction call, so a caller that registers per
@@ -212,6 +213,14 @@ export function registerKnownSecrets(secrets: (string | undefined)[]): void {
  * own output.
  */
 export function createSecretRedactor(secrets: (string | undefined)[]): (message: string) => string {
+  const ordered = buildVariants(secrets);
+  if (ordered.length === 0) {
+    return message => message;
+  }
+  return message => replaceVariants(message, ordered);
+}
+
+function buildVariants(secrets: (string | undefined)[]): string[] {
   const variants = new Set<string>();
   for (const secret of secrets) {
     if (!secret) continue;
@@ -219,11 +228,39 @@ export function createSecretRedactor(secrets: (string | undefined)[]): (message:
       variants.add(variant);
     }
   }
-  if (variants.size === 0) {
-    return message => message;
+  return orderVariants(variants);
+}
+
+/**
+ * Secrets belonging to one in-flight call, honored by every redaction in this
+ * module for the duration of that call and never added to the registry.
+ *
+ * First-run setup has to validate a submitted password against a
+ * model-supplied Dashboard before the password has earned registration, and a
+ * hostile Dashboard can reflect it in an ability name, a schema key, or a
+ * label. Those are scrubbed and rejected deep inside the fetch boundary, far
+ * from the handler that knows the value, so the value travels as async-local
+ * context instead of as a parameter threaded through every call site. Async
+ * storage, not a module flag, so a request running outside the scope never
+ * inherits it.
+ */
+const scopedSecrets = new AsyncLocalStorage<string[]>();
+
+export function withScopedSecrets<T>(
+  secrets: (string | undefined)[],
+  fn: () => Promise<T>
+): Promise<T> {
+  const variants = buildVariants(secrets);
+  return variants.length === 0 ? fn() : scopedSecrets.run(variants, fn);
+}
+
+/** Registered secrets plus any scoped ones, ordered longest-first across both. */
+function activeVariants(): string[] {
+  const scoped = scopedSecrets.getStore();
+  if (scoped === undefined) {
+    return knownSecretVariants;
   }
-  const ordered = orderVariants(variants);
-  return message => replaceVariants(message, ordered);
+  return orderVariants(new Set([...knownSecretVariants, ...scoped]));
 }
 
 /**
@@ -236,7 +273,44 @@ export function createSecretRedactor(secrets: (string | undefined)[]): (message:
  * by-value scrub is exactly what a credential-carrying path needs.
  */
 export function redactKnownSecrets(message: string): string {
-  return replaceVariants(message, knownSecretVariants);
+  return replaceVariants(message, activeVariants());
+}
+
+/**
+ * Apply `redact` to every string inside a parsed JSON value — string values
+ * and object keys — leaving non-string scalars, types, and structure alone.
+ *
+ * Redacting the raw body text instead would replace across JSON syntax: a
+ * secret that is a bare numeric string, or that straddles the punctuation
+ * between two fields, rewrites the document into something JSON.parse rejects.
+ */
+export function redactStringsDeep(value: unknown, redact: (text: string) => string): unknown {
+  if (typeof value === 'string') {
+    return redact(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => redactStringsDeep(item, redact));
+  }
+  if (value !== null && typeof value === 'object') {
+    // Null prototype: JSON.parse makes a "__proto__" key an own property, and
+    // plain assignment on a normal object would hand it to the prototype
+    // setter and silently drop it.
+    const out: Record<string, unknown> = Object.create(null);
+    for (const [key, child] of Object.entries(value)) {
+      out[redact(key)] = redactStringsDeep(child, redact);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** redactStringsDeep against the active secrets, skipping the walk when there are none. */
+export function redactKnownSecretsDeep(value: unknown): unknown {
+  const variants = activeVariants();
+  if (variants.length === 0) {
+    return value;
+  }
+  return redactStringsDeep(value, text => replaceVariants(text, variants));
 }
 
 /**
@@ -245,7 +319,7 @@ export function redactKnownSecrets(message: string): string {
  * (an ability name, a schema key): those are dropped, not rewritten.
  */
 export function containsKnownSecret(value: string): boolean {
-  return knownSecretVariants.some(variant => value.includes(variant));
+  return activeVariants().some(variant => value.includes(variant));
 }
 
 /**

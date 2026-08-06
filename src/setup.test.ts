@@ -508,7 +508,7 @@ describe('mainwp_configure preconditions', () => {
   });
 
   it.each([
-    ['a password under the global registration floor', 'abc'],
+    ['a password the failed call never registered', 'abcdefghijkl'],
     ['a password containing a JSON-escaped character', 'abcdefgh"ijkl'],
   ])('scrubs %s reflected in a Dashboard error body', async (_label, password) => {
     mockFetch.mockResolvedValue({
@@ -535,6 +535,84 @@ describe('mainwp_configure preconditions', () => {
     expect(payload.code).toBe('CONNECTION_FAILED');
     expect(payload.message).not.toContain(password);
     expect(payload.message).not.toContain(JSON.stringify(password));
+  });
+
+  it('refuses a password too short for the redaction registry to hold', async () => {
+    // Saving a value the registry ignores would leave a credential this server
+    // can never scrub from its own later output, and no Application Password
+    // is that short.
+    const state = unconfiguredState();
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      { ...CONFIGURE_ARGS, application_password: 'abc' },
+      makeMockLogger(),
+      noopNotify
+    );
+
+    const payload = JSON.parse(resultText(result)) as { code: string; message: string };
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toContain('six groups of four characters');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+    expect(state.state).toBe('unconfigured');
+  });
+
+  it('still accepts an Application Password pasted with surrounding whitespace', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [sampleAbility],
+      headers: new Headers(),
+    });
+    const state = unconfiguredState();
+
+    const result = await executeSetupTool(
+      state,
+      CONFIGURE_TOOL,
+      { ...CONFIGURE_ARGS, application_password: ` ${APP_PASSWORD} ` },
+      makeMockLogger(),
+      noopNotify
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(state.readyConfig).toMatchObject({ appPassword: ` ${APP_PASSWORD} ` });
+  });
+
+  it('never logs the submitted password reflected in a successful catalog', async () => {
+    // The password is not a registered secret while it is being validated, so
+    // a Dashboard that reflects it in an ability name or a label is logged
+    // through a sanitizer that has never seen the value.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { ...sampleAbility, name: `mainwp/${APP_PASSWORD}` },
+        {
+          ...sampleAbility,
+          label: `Sites ${APP_PASSWORD}`,
+          description: `Managed by ${APP_PASSWORD}`,
+        },
+      ],
+      headers: new Headers(),
+    });
+    const logger = makeMockLogger();
+
+    const result = await executeSetupTool(
+      unconfiguredState(),
+      CONFIGURE_TOOL,
+      CONFIGURE_ARGS,
+      logger,
+      noopNotify
+    );
+
+    const logged = JSON.stringify(
+      Object.values(logger).flatMap(method => (method as { mock: { calls: unknown[] } }).mock.calls)
+    );
+    expect(result.isError).toBeUndefined();
+    expect(logged).not.toContain(APP_PASSWORD);
+    expect(logged).not.toContain(BASIC_BLOB);
+    expect(JSON.stringify(result)).not.toContain(APP_PASSWORD);
   });
 
   it('is already ready when the listChanged notification fires', async () => {

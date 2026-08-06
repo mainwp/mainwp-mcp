@@ -18,7 +18,12 @@ import {
 import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
 import { McpError, MCP_ERROR_CODES } from './errors.js';
-import { clearKnownSecrets, registerKnownSecrets } from './security.js';
+import {
+  clearKnownSecrets,
+  registerKnownSecrets,
+  sanitizeError,
+  withScopedSecrets,
+} from './security.js';
 import { type Config } from './config.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
@@ -843,6 +848,120 @@ describe('credentials reflected by a hostile Dashboard', () => {
 
     expect(JSON.stringify(result)).not.toContain(APP_PASSWORD);
     expect(JSON.stringify(result)).toContain('[redacted]');
+  });
+
+  it('keeps a numeric field intact when a registered secret is a bare number', async () => {
+    // Redacting the raw body replaces inside the numeric literal too, which
+    // leaves a document JSON.parse rejects — a normal result turned into an
+    // error for an already-configured server.
+    registerKnownSecrets(['12345678']);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [readOnlyAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"site_id":12345678,"note":"site 12345678"}',
+      headers: new Headers(),
+    });
+
+    const result = await executeAbility(baseConfig, 'mainwp/list-sites-v1', {}, mockLogger);
+
+    expect(result).toEqual({ site_id: 12345678, note: 'site [redacted]' });
+  });
+
+  it('keeps a result intact when a registered secret straddles JSON syntax', async () => {
+    registerKnownSecrets(['1,"note":"b']);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [readOnlyAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"site_id":1,"note":"b"}',
+      headers: new Headers(),
+    });
+
+    const result = await executeAbility(baseConfig, 'mainwp/list-sites-v1', {}, mockLogger);
+
+    expect(result).toEqual({ site_id: 1, note: 'b' });
+  });
+
+  it('redacts a reflected credential that appears as a result key', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [readOnlyAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => `{"${APP_PASSWORD}":{"nested":"${APP_PASSWORD}"}}`,
+      headers: new Headers(),
+    });
+
+    const result = await executeAbility(baseConfig, 'mainwp/list-sites-v1', {}, mockLogger);
+
+    expect(result).toEqual({ '[redacted]': { nested: '[redacted]' } });
+  });
+});
+
+describe('secrets scoped to one in-flight call', () => {
+  const SUBMITTED = 'abcd efgh ijkl mnop qrst uvwx';
+  const SUBMITTED_IN_NAME = 'abcdefghijklmnop';
+
+  const readOnlyAbility = {
+    name: 'mainwp/list-sites-v1',
+    label: 'List Sites',
+    description: 'Get all managed sites',
+    category: 'mainwp-sites',
+    input_schema: { type: 'object', properties: {} },
+    meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    clearKnownSecrets();
+    vi.restoreAllMocks();
+  });
+
+  it('applies scoped secrets at the catalog boundary without registering them', async () => {
+    // First-run setup validates a submitted password before it has earned
+    // registration, so the fetch it triggers is the one case where the
+    // boundary has to treat an unregistered value as a credential.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { ...readOnlyAbility, name: `mainwp/${SUBMITTED_IN_NAME}-v1` },
+        {
+          ...readOnlyAbility,
+          label: `List ${SUBMITTED}`,
+          description: `credential=${SUBMITTED}`,
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const abilities = await withScopedSecrets([SUBMITTED, SUBMITTED_IN_NAME], () =>
+      fetchAbilities(baseConfig, false, mockLogger)
+    );
+
+    expect(abilities.map(a => a.name)).toEqual(['mainwp/list-sites-v1']);
+    expect(abilities[0].description).toBe('credential=[redacted]');
+    expect(JSON.stringify(abilities)).not.toContain(SUBMITTED);
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Skipping ability whose name reflects a known secret'
+    );
+    // The scope ended with the call; nothing joined the process-wide registry.
+    expect(sanitizeError(`echo ${SUBMITTED}`)).toContain(SUBMITTED);
   });
 });
 
