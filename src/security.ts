@@ -266,9 +266,12 @@ function addKnownSecrets(secrets: (KnownSecret | undefined)[], apply: boolean): 
       // the rest of the run.
       if (variant.length < MIN_KNOWN_SECRET_LENGTH) continue;
       if (variants.has(variant)) continue;
-      // Checked per variant, not once per secret: the ceiling has to hold while
-      // a secret is being added, and a secret only half in the registry is one
-      // the redactors can still miss.
+      // Checked per variant, not once per secret, so the ceiling holds even
+      // mid-secret. The variants added before the ceiling is reached stay: they
+      // cover the value in the shapes they match, and dropping them would
+      // protect it less. What matters is that the caller learns the coverage is
+      // partial, which is what the false return says, because a secret only
+      // half in the registry is one the redactors can still miss.
       if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) {
         complete = false;
         continue;

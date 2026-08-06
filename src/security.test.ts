@@ -518,7 +518,8 @@ describe('registered known secrets', () => {
     }
     // Four distinct variants: the raw value, the plus-joined and
     // percent-escaped encodings of its spaces, and its space-free form. One
-    // free slot cannot hold them, so none are added.
+    // free slot takes the raw value and the ceiling stops the rest, so the
+    // call reports failure with the secret only partly covered.
     expect(registerKnownSecrets(['multi variant secret value'])).toBe(false);
     expect(sanitizeError('echo multivariantsecretvalue')).toContain('multivariantsecretvalue');
   });
