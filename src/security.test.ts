@@ -516,7 +516,9 @@ describe('registered known secrets', () => {
     for (let i = 0; i < 63; i++) {
       registerKnownSecrets([name(i)]);
     }
-    // Two variants: the raw value and its space-free form. Only one fits.
+    // Four distinct variants: the raw value, the plus-joined and
+    // percent-escaped encodings of its spaces, and its space-free form. One
+    // free slot cannot hold them, so none are added.
     expect(registerKnownSecrets(['multi variant secret value'])).toBe(false);
     expect(sanitizeError('echo multivariantsecretvalue')).toContain('multivariantsecretvalue');
   });
