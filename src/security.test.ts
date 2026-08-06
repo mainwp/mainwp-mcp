@@ -6,8 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   validateInput,
   sanitizeError,
+  appPasswordSecret,
+  canRegisterKnownSecrets,
   registerKnownSecrets,
   clearKnownSecrets,
+  createSecretRedactor,
+  redactStringsDeep,
+  DEPTH_LIMIT_MARKER,
   RateLimiter,
   isValidId,
 } from './security.js';
@@ -472,6 +477,119 @@ describe('registered known secrets', () => {
   it('should ignore registered values too short to redact safely', () => {
     registerKnownSecrets(['abc']);
     expect(sanitizeError('abc def')).toBe('abc def');
+  });
+
+  it('should ignore a derived variant that falls under the length floor', () => {
+    // The submitted value clears the floor; its space-free form does not, and
+    // the registry keeps what it is given for the life of the process.
+    registerKnownSecrets(['ab cd ef g']);
+    expect(sanitizeError('abcdefg is a word here')).toContain('abcdefg');
+  });
+
+  it('should redact the compact form of an Application Password only', () => {
+    // WordPress compares an Application Password with every non-alphanumeric
+    // removed, so the compact form of a hyphen-separated password is the same
+    // credential. A token is not: stripping its punctuation yields a string
+    // that never authenticated and could match ordinary text.
+    registerKnownSecrets([appPasswordSecret('abcd-efgh-ijkl-mnop-qrst-uvwx')]);
+    registerKnownSecrets(['api-token-abcdefghijkl']);
+
+    expect(sanitizeError('echo abcdefghijklmnopqrstuvwx')).not.toContain('abcdefghijkl');
+    expect(sanitizeError('echo apitokenabcdefghijkl')).toContain('apitokenabcdefghijkl');
+  });
+
+  it('should report saturation instead of dropping a secret silently', () => {
+    // The caller has to learn that a credential it is about to use will never
+    // be scrubbed; discovering it in a leaked diagnostic is too late.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 64; i++) {
+      expect(registerKnownSecrets([name(i)])).toBe(true);
+    }
+
+    expect(canRegisterKnownSecrets([name(64)])).toBe(false);
+    expect(registerKnownSecrets([name(64)])).toBe(false);
+    expect(sanitizeError(`echo ${name(64)}`)).toContain(name(64));
+  });
+
+  it('should keep the ceiling while one secret is being added', () => {
+    // The old check ran once per secret, so a secret that started under the
+    // ceiling added every variant it had and left the registry over it.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 63; i++) {
+      registerKnownSecrets([name(i)]);
+    }
+    // Four distinct variants: the raw value, the plus-joined and
+    // percent-escaped encodings of its spaces, and its space-free form. One
+    // free slot takes the raw value and the ceiling stops the rest, so the
+    // call reports failure with the secret only partly covered.
+    expect(registerKnownSecrets(['multi variant secret value'])).toBe(false);
+    expect(sanitizeError('echo multivariantsecretvalue')).toContain('multivariantsecretvalue');
+  });
+
+  it('should stop growing once the registry is full', () => {
+    // The registry lives for the whole process and every entry is scanned by
+    // every redaction, so a caller that registers per request must not be able
+    // to grow it without limit.
+    // Fixed-width names so no value is a prefix of another.
+    const name = (i: number) => `registered-secret-value-${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < 500; i++) {
+      registerKnownSecrets([name(i)]);
+    }
+
+    expect(sanitizeError(`echo ${name(0)}`)).not.toContain(name(0));
+    expect(sanitizeError(`echo ${name(499)}`)).toContain(name(499));
+  });
+});
+
+describe('createSecretRedactor', () => {
+  afterEach(() => {
+    clearKnownSecrets();
+  });
+
+  it('redacts a value the global registry refuses, without registering it', () => {
+    const redact = createSecretRedactor(['abc']);
+
+    expect(redact('the dashboard echoed abc back')).toBe('the dashboard echoed [redacted] back');
+    // Nothing joined the process-wide registry.
+    expect(sanitizeError('the dashboard echoed abc back')).toContain('abc');
+  });
+
+  it('redacts the JSON-escaped form of a value', () => {
+    const secret = 'abcdefgh"ijkl';
+    const redact = createSecretRedactor([secret]);
+
+    expect(redact(JSON.stringify({ error: secret }))).not.toContain('ijkl');
+  });
+
+  it('is a no-op when there is nothing to redact', () => {
+    expect(createSecretRedactor([undefined, ''])('untouched text')).toBe('untouched text');
+  });
+});
+
+describe('redactStringsDeep', () => {
+  it('survives hostile nesting and still redacts above the cap', () => {
+    // JSON.parse takes nesting this deep without complaint, and a body that
+    // carries it fits well inside maxResponseSize, so an execution result can
+    // reach the walk in this shape. Uncapped, one stack frame per level throws
+    // RangeError long before this depth.
+    const depth = 20000;
+    const parsed: unknown = JSON.parse(
+      `{"secret":"topsecretvalue","deep":${'['.repeat(depth)}${']'.repeat(depth)}}`
+    );
+
+    const redacted = redactStringsDeep(parsed, text =>
+      text.split('topsecretvalue').join('[redacted]')
+    ) as { secret: string; deep: unknown };
+
+    expect(redacted.secret).toBe('[redacted]');
+    let node: unknown = redacted.deep;
+    let levels = 0;
+    while (Array.isArray(node)) {
+      node = node[0];
+      levels++;
+    }
+    expect(node).toBe(DEPTH_LIMIT_MARKER);
+    expect(levels).toBeLessThan(depth);
   });
 });
 

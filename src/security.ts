@@ -5,6 +5,7 @@
  * and rate limiting.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { McpErrorFactory } from './errors.js';
 
 // Input validation limits
@@ -118,34 +119,319 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
 // startup; registration is additive so a second server instance in the same
 // process never strips the first one's protection (tests reset with
 // clearKnownSecrets).
-const MIN_KNOWN_SECRET_LENGTH = 8;
+export const MIN_KNOWN_SECRET_LENGTH = 8;
+/**
+ * Ceiling on the process-lifetime registry. Registration is additive and every
+ * entry is scanned by every redaction call, so a caller that registers per
+ * request (first-run setup accepts a password as a tool argument) would
+ * otherwise grow memory and slow sanitizeError without bound. Startup
+ * registers at most three secrets and a successful setup two more, so a real
+ * server stays far below this.
+ */
+const MAX_KNOWN_SECRET_VARIANTS = 64;
 let knownSecretVariants: string[] = [];
+
+/**
+ * A credential to protect. A plain string is matched only in the shapes that
+ * preserve its bytes; wrapping a value with appPasswordSecret also matches the
+ * form WordPress compares, which is a different string. Nothing else may be
+ * canonicalized that way: an API token or a Basic blob with its punctuation
+ * stripped is not the credential, and the stripped string can collide with
+ * ordinary text.
+ */
+export type KnownSecret = string | { readonly applicationPassword: string };
+
+/** Tag a value as a WordPress Application Password for the redactors. */
+export function appPasswordSecret(value: string | undefined): KnownSecret | undefined {
+  return value === undefined ? undefined : { applicationPassword: value };
+}
+
+function secretText(secret: KnownSecret): string {
+  return typeof secret === 'string' ? secret : secret.applicationPassword;
+}
+
+/**
+ * The form wp_authenticate_application_password compares: every
+ * non-alphanumeric removed. A password pasted with the hyphens or spaces a
+ * user copied still authenticates, so this form is the same credential.
+ */
+export function appPasswordCanonicalForm(value: string): string {
+  return value.replace(/[^a-z\d]/gi, '');
+}
+
+/**
+ * The serialization shapes one secret can take while still appearing as a
+ * single literal byte sequence. Literal-occurrence redaction is closed under
+ * any encoding that preserves the byte sequence; these are the ones that do
+ * not.
+ */
+function secretVariants(secret: KnownSecret): string[] {
+  const value = secretText(secret);
+  const variants = [
+    value,
+    // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
+    // percent-escape them.
+    value.split(' ').join('+'),
+    // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
+    // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
+    // Lone surrogates do not throw here; they encode as the replacement
+    // character, which is itself a shape worth matching.
+    new URLSearchParams([['x', value]]).toString().slice(2),
+    // JSON string escaping. Remote error bodies are commonly JSON, so a
+    // password containing a quote, a backslash, or a control character arrives
+    // as `ab\"cd` and no match on the raw value can see it.
+    JSON.stringify(value).slice(1, -1),
+  ];
+  // Both throw URIError on a lone surrogate, and a password reaches here from
+  // chat input, so an unpaired surrogate is reachable. Guarded separately so a
+  // throw costs only that one variant, never the raw value or the redactor.
+  for (const encode of [encodeURIComponent, encodeURI]) {
+    try {
+      variants.push(encode(value));
+    } catch {
+      // Nothing to add: this encoding cannot represent the value at all, so no
+      // diagnostic can contain the secret in it either.
+    }
+  }
+  // A credential is stored and sent exactly as it was pasted, whitespace and
+  // all, while the far side may ignore that whitespace. The trimmed and
+  // space-free forms are matched for every secret because a diagnostic quoting
+  // either one is quoting the value the server sent.
+  for (const form of [value.trim(), value.split(' ').join('')]) {
+    if (form && !variants.includes(form)) variants.push(form);
+  }
+  if (typeof secret !== 'string') {
+    // Application Passwords only: WordPress removes every non-alphanumeric
+    // before comparing, so the compact form authenticates and a Dashboard can
+    // echo it back.
+    const canonical = appPasswordCanonicalForm(value);
+    if (canonical && !variants.includes(canonical)) variants.push(canonical);
+  }
+  return variants;
+}
+
+function replaceVariants(text: string, variants: string[]): string {
+  let working = text;
+  for (const variant of variants) {
+    if (working.includes(variant)) {
+      working = working.split(variant).join('[redacted]');
+    }
+  }
+  return working;
+}
+
+/** Longest-first, so a secret that another secret prefixes is replaced before
+ * the prefix can break its match. */
+function orderVariants(variants: Set<string>): string[] {
+  return [...variants].sort((a, b) => b.length - a.length);
+}
 
 export function clearKnownSecrets(): void {
   knownSecretVariants = [];
 }
 
-export function registerKnownSecrets(secrets: (string | undefined)[]): void {
+/**
+ * Add secrets to the process-lifetime registry.
+ *
+ * Returns false when the ceiling kept a variant out: the caller is then holding
+ * a credential this process cannot scrub from its own output, which no caller
+ * may discover only by watching a secret appear in a diagnostic.
+ */
+export function registerKnownSecrets(secrets: (KnownSecret | undefined)[]): boolean {
+  return addKnownSecrets(secrets, true);
+}
+
+/**
+ * Whether the registry still has room for every variant of these secrets,
+ * without registering anything. A path that is about to transmit a submitted
+ * credential asks first: registration is earned only after the credential is
+ * validated and saved, and by then the transmission cannot be taken back.
+ */
+export function canRegisterKnownSecrets(secrets: (KnownSecret | undefined)[]): boolean {
+  return addKnownSecrets(secrets, false);
+}
+
+function addKnownSecrets(secrets: (KnownSecret | undefined)[], apply: boolean): boolean {
   const variants = new Set<string>(knownSecretVariants);
+  let complete = true;
   for (const secret of secrets) {
+    if (secret === undefined) continue;
     // A short value would redact ordinary prose; real app passwords, tokens,
     // and base64 Basic blobs are all far longer.
-    if (!secret || secret.length < MIN_KNOWN_SECRET_LENGTH) continue;
-    variants.add(secret);
-    // Encodings that keep the value recognizable as one literal string:
-    // URLSearchParams turns spaces into '+', encodeURI/encodeURIComponent
-    // percent-escape them. JSON.stringify at any nesting depth leaves
-    // alphanumeric-plus-space values untouched, so `secret` itself covers it.
-    variants.add(secret.split(' ').join('+'));
-    variants.add(encodeURIComponent(secret));
-    variants.add(encodeURI(secret));
-    // application/x-www-form-urlencoded (URLSearchParams): '+' for spaces plus
-    // %XX for punctuation like '!' and '~' that encodeURIComponent leaves raw.
-    variants.add(new URLSearchParams([['x', secret]]).toString().slice(2));
+    if (secretText(secret).length < MIN_KNOWN_SECRET_LENGTH) continue;
+    for (const variant of secretVariants(secret)) {
+      // A derived form can be shorter than the value that cleared the floor:
+      // removing the spaces from "ab cd ef g" leaves seven characters, and a
+      // short entry in a process-lifetime registry erases ordinary prose for
+      // the rest of the run.
+      if (variant.length < MIN_KNOWN_SECRET_LENGTH) continue;
+      if (variants.has(variant)) continue;
+      // Checked per variant, not once per secret, so the ceiling holds even
+      // mid-secret. The variants added before the ceiling is reached stay: they
+      // cover the value in the shapes they match, and dropping them would
+      // protect it less. What matters is that the caller learns the coverage is
+      // partial, which is what the false return says, because a secret only
+      // half in the registry is one the redactors can still miss.
+      if (variants.size >= MAX_KNOWN_SECRET_VARIANTS) {
+        complete = false;
+        continue;
+      }
+      variants.add(variant);
+    }
   }
-  // Longest-first, so a secret that another secret prefixes is replaced
-  // before the prefix can break its match.
-  knownSecretVariants = [...variants].sort((a, b) => b.length - a.length);
+  if (apply) knownSecretVariants = orderVariants(variants);
+  return complete;
+}
+
+/**
+ * Build a redactor for values that belong to a single request and must never
+ * join the process-wide registry. First-run setup takes a password as a tool
+ * argument, and a value from a refused call would otherwise be scanned by
+ * every later redaction for the life of the process.
+ *
+ * Exact by value with no length floor, unlike registerKnownSecrets: the floor
+ * there stops a short registered value from erasing ordinary prose forever,
+ * while the only text a request-scoped redactor ever touches is that request's
+ * own output.
+ */
+export function createSecretRedactor(
+  secrets: (KnownSecret | undefined)[]
+): (message: string) => string {
+  const ordered = buildVariants(secrets);
+  if (ordered.length === 0) {
+    return message => message;
+  }
+  return message => replaceVariants(message, ordered);
+}
+
+function buildVariants(secrets: (KnownSecret | undefined)[]): string[] {
+  const variants = new Set<string>();
+  for (const secret of secrets) {
+    if (secret === undefined || secretText(secret) === '') continue;
+    for (const variant of secretVariants(secret)) {
+      variants.add(variant);
+    }
+  }
+  return orderVariants(variants);
+}
+
+/**
+ * Secrets belonging to one in-flight call, honored by every redaction in this
+ * module for the duration of that call and never added to the registry.
+ *
+ * First-run setup has to validate a submitted password against a
+ * model-supplied Dashboard before the password has earned registration, and a
+ * hostile Dashboard can reflect it in an ability name, a schema key, or a
+ * label. Those are scrubbed and rejected deep inside the fetch boundary, far
+ * from the handler that knows the value, so the value travels as async-local
+ * context instead of as a parameter threaded through every call site. Async
+ * storage, not a module flag, so a request running outside the scope never
+ * inherits it.
+ */
+const scopedSecrets = new AsyncLocalStorage<string[]>();
+
+export function withScopedSecrets<T>(
+  secrets: (KnownSecret | undefined)[],
+  fn: () => Promise<T>
+): Promise<T> {
+  const variants = buildVariants(secrets);
+  return variants.length === 0 ? fn() : scopedSecrets.run(variants, fn);
+}
+
+/** Registered secrets plus any scoped ones, ordered longest-first across both. */
+function activeVariants(): string[] {
+  const scoped = scopedSecrets.getStore();
+  if (scoped === undefined) {
+    return knownSecretVariants;
+  }
+  return orderVariants(new Set([...knownSecretVariants, ...scoped]));
+}
+
+/**
+ * Replace every registered secret (in each encoding registerKnownSecrets
+ * covers) with a placeholder, leaving the rest of the text alone.
+ *
+ * Split out from sanitizeError for output that must survive intact: the
+ * first-run setup guidance is long-form prose, so the 500-character cap and
+ * the key=value patterns of the full sanitizer would mangle it, while the
+ * by-value scrub is exactly what a credential-carrying path needs.
+ */
+export function redactKnownSecrets(message: string): string {
+  return replaceVariants(message, activeVariants());
+}
+
+/**
+ * Depth ceiling for redactStringsDeep. The values it walks are attacker
+ * controlled — a parsed execution result, a log payload — and JSON.parse
+ * accepts nesting tens of thousands deep inside a size-capped body while the
+ * walk costs one stack frame per level. Real ability results and log data nest
+ * a handful of levels, so this is generous against anything genuine and still
+ * far below the stack limit.
+ */
+const MAX_REDACT_DEPTH = 100;
+
+/**
+ * Replaces a subtree that sits past the depth cap. Dropping it is the safe
+ * direction: returning it unwalked would ship a subtree that can still hold the
+ * credential the caller asked to have removed. A marker rather than an empty
+ * container, so a consumer cannot read truncated output as real data.
+ */
+export const DEPTH_LIMIT_MARKER = '[removed: nesting depth limit exceeded]';
+
+/**
+ * Apply `redact` to every string inside a parsed JSON value — string values
+ * and object keys — leaving non-string scalars, types, and structure alone.
+ * Anything nested deeper than MAX_REDACT_DEPTH is replaced by DEPTH_LIMIT_MARKER.
+ *
+ * Redacting the raw body text instead would replace across JSON syntax: a
+ * secret that is a bare numeric string, or that straddles the punctuation
+ * between two fields, rewrites the document into something JSON.parse rejects.
+ */
+export function redactStringsDeep(
+  value: unknown,
+  redact: (text: string) => string,
+  depth = 0
+): unknown {
+  if (typeof value === 'string') {
+    return redact(value);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  // Only containers are cut: a scalar at any depth is already fully handled
+  // above, and the cap exists to stop the recursion, not to drop safe values.
+  if (depth >= MAX_REDACT_DEPTH) {
+    return DEPTH_LIMIT_MARKER;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => redactStringsDeep(item, redact, depth + 1));
+  }
+  // Null prototype: JSON.parse makes a "__proto__" key an own property, and
+  // plain assignment on a normal object would hand it to the prototype
+  // setter and silently drop it.
+  const out: Record<string, unknown> = Object.create(null);
+  for (const [key, child] of Object.entries(value)) {
+    out[redact(key)] = redactStringsDeep(child, redact, depth + 1);
+  }
+  return out;
+}
+
+/** redactStringsDeep against the active secrets, skipping the walk when there are none. */
+export function redactKnownSecretsDeep(value: unknown): unknown {
+  const variants = activeVariants();
+  if (variants.length === 0) {
+    return value;
+  }
+  return redactStringsDeep(value, text => replaceVariants(text, variants));
+}
+
+/**
+ * True when a registered secret occurs literally in the value. Used at the
+ * ability-fetch boundary for fields whose meaning redaction would change
+ * (an ability name, a schema key): those are dropped, not rewritten.
+ */
+export function containsKnownSecret(value: string): boolean {
+  return activeVariants().some(variant => value.includes(variant));
 }
 
 /**
@@ -156,12 +442,7 @@ export function sanitizeError(message: string): string {
   // Known-secret pass runs on the FULL message, before the regex cap: literal
   // split/join is linear on a 64KB body, and a secret straddling the cap must
   // be removed whole, not truncated into an unrecognizable fragment.
-  let working = message;
-  for (const variant of knownSecretVariants) {
-    if (working.includes(variant)) {
-      working = working.split(variant).join('[redacted]');
-    }
-  }
+  const working = redactKnownSecrets(message);
   // Bound the working string before any regex runs. The input can be a 64KB
   // remote error body; without this cap the stack-trace pattern below (and the
   // other backtracking-capable patterns) could be driven into pathological,

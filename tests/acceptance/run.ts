@@ -25,6 +25,7 @@ import {
   AssertionRecorder,
   type AcceptanceMode,
   type AcceptanceTarget,
+  type RelaunchedServer,
   type ScenarioContext,
   type ScenarioResult,
 } from './scenarios/types.js';
@@ -165,7 +166,7 @@ function summaryMarkdown(run: RunResults): string {
   return `${lines.join('\n')}\n`;
 }
 
-async function runScenario(
+export async function runScenario(
   definition: (typeof scenarios)[number],
   options: CliOptions,
   credentials: ResolvedAcceptanceCredentials,
@@ -240,17 +241,39 @@ async function runScenario(
   let connection;
   let scenarioContext: ScenarioContext | undefined;
   let scenarioError: string | undefined;
+  const relaunched: RelaunchedServer[] = [];
   try {
-    connection = await launchServer({
+    const launchOptions = {
       scenario: definition.id,
       entry,
       env,
       artifacts,
       runner,
       settings: launch.settings,
-    });
+    };
+    connection = await launchServer(launchOptions);
+    const launchedHome = connection.home;
     scenarioContext = {
       client: connection.client,
+      relaunch: async (overrides = {}) => {
+        const restarted = await launchServer({
+          ...launchOptions,
+          ...(overrides.env ? { env: overrides.env } : {}),
+          home: launchedHome,
+        });
+        // Delegates straight to the launch's own close, which caches its
+        // promise: a second close replays the first outcome instead of
+        // reporting success over a shutdown that failed.
+        const handle: RelaunchedServer = {
+          client: restarted.client,
+          close: () => restarted.close(),
+        };
+        // Registered before the scenario gets the handle: a scenario that
+        // throws before its own try/finally would otherwise leave this server
+        // process and its temp directory alive for the rest of the run.
+        relaunched.push(handle);
+        return handle;
+      },
       verifier,
       config: {
         target: options.target,
@@ -274,6 +297,19 @@ async function runScenario(
         await definition.cleanup(scenarioContext);
       } catch (error) {
         scenarioError = [scenarioError, `Cleanup failed: ${errorText(error)}`]
+          .filter(Boolean)
+          .join('\n');
+      }
+    }
+    // Relaunched servers borrow the original launch's home directory, and
+    // closing the original removes it, so they go first. Closing one a scenario
+    // already closed replays that close's outcome, so a failed shutdown is
+    // still reported here.
+    for (const handle of relaunched.reverse()) {
+      try {
+        await handle.close();
+      } catch (error) {
+        scenarioError = [scenarioError, `Relaunched server close failed: ${errorText(error)}`]
           .filter(Boolean)
           .join('\n');
       }

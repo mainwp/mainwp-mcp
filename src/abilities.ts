@@ -8,7 +8,13 @@
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, createHttpError, getErrorMessage } from './errors.js';
-import { RateLimiter, sanitizeError } from './security.js';
+import {
+  RateLimiter,
+  containsKnownSecret,
+  redactKnownSecrets,
+  redactKnownSecretsDeep,
+  sanitizeError,
+} from './security.js';
 import { withRetry, type RetryContext } from './retry.js';
 import {
   createFetch,
@@ -18,7 +24,7 @@ import {
   MAX_URL_LENGTH,
 } from './http-client.js';
 import type { Logger } from './logging.js';
-import { abilityNameToToolName } from './naming.js';
+import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
 import { classifyDestructive } from './policy.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
@@ -122,18 +128,30 @@ const SCHEMA_DATA_KEYWORDS = new Set(['enum', 'const', 'default', 'examples', 'e
  *   outright rather than being silently altered, as do oversized keys and
  *   the total node budget. Traversal stops at the first violation.
  *
- * Returns null when rejected — the caller drops the ability with a warning.
- * Traversal is generic over unlisted keywords (items, oneOf,
- * additionalProperties, anything future): an early revision followed a
- * keyword list to a fixed depth, which left everything unlisted as a bypass.
+ * A semantic string or key that reflects one of this server's own credentials
+ * is rejected for the same reason: scrubbing it would silently rewrite the
+ * tool contract, so the ability goes instead.
+ *
+ * Returns a rejection reason instead of a schema when rejected — the caller
+ * drops the ability with a warning. Traversal is generic over unlisted
+ * keywords (items, oneOf, additionalProperties, anything future): an early
+ * revision followed a keyword list to a fixed depth, which left everything
+ * unlisted as a bypass.
  */
-function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknown> | null {
+type BoundedSchema =
+  { schema: Record<string, unknown>; reason?: undefined } | { schema: null; reason: string };
+
+function boundRemoteSchema(root: Record<string, unknown>): BoundedSchema {
   let nodes = 0;
-  let invalid = false;
+  let invalid: string | null = null;
 
   const boundedString = (value: string): string | null => {
     if (value.length > MAX_SCHEMA_SEMANTIC_LENGTH) {
-      invalid = true;
+      invalid = 'semantic string exceeds the length bound';
+      return null;
+    }
+    if (containsKnownSecret(value)) {
+      invalid = 'semantic string reflects a known secret';
       return null;
     }
     return value;
@@ -141,7 +159,7 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
 
   const budget = (): boolean => {
     if (invalid || ++nodes > MAX_SCHEMA_NODES) {
-      invalid = true;
+      invalid ??= 'node budget exceeded';
       return false;
     }
     return true;
@@ -149,7 +167,11 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
 
   const keyOk = (key: string): boolean => {
     if (key.length > MAX_SCHEMA_KEY_LENGTH) {
-      invalid = true;
+      invalid = 'key exceeds the length bound';
+      return false;
+    }
+    if (containsKnownSecret(key)) {
+      invalid = 'key reflects a known secret';
       return false;
     }
     return true;
@@ -239,16 +261,19 @@ function boundRemoteSchema(root: Record<string, unknown>): Record<string, unknow
   };
 
   const bounded = walkSchema(root);
-  return invalid ? null : (bounded as Record<string, unknown>);
+  return invalid !== null
+    ? { schema: null, reason: invalid }
+    : { schema: bounded as Record<string, unknown> };
 }
 
 /**
  * Normalize one remote text field: non-strings become '', control and format
  * characters collapse to spaces (multiline mode preserves single newlines for
- * legitimate prose), and the result is hard-capped. Runs at the fetch
- * boundary so every downstream consumer sees bounded plain text. Exported so
- * defense-in-depth call sites (tool-schema.ts) share this one implementation
- * instead of carrying a copy that can drift.
+ * legitimate prose), any of this server's own credentials reflected back are
+ * scrubbed, and the result is hard-capped. Runs at the fetch boundary so every
+ * downstream consumer sees bounded plain text. Exported so defense-in-depth
+ * call sites (tool-schema.ts) share this one implementation instead of
+ * carrying a copy that can drift.
  * @internal
  */
 export function normalizeRemoteText(
@@ -259,7 +284,7 @@ export function normalizeRemoteText(
   if (typeof raw !== 'string') {
     return '';
   }
-  const cleaned =
+  const normalized =
     mode === 'flatten'
       ? raw
           .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
@@ -270,6 +295,9 @@ export function normalizeRemoteText(
           .replace(/[^\S\n]+/g, ' ')
           .replace(/\n{3,}/g, '\n\n')
           .trim();
+  // Before the cap, so a reflected credential straddling the limit is removed
+  // whole instead of surviving as a truncated but still-usable prefix.
+  const cleaned = redactKnownSecrets(normalized);
   if (cleaned.length <= maxLength) {
     return cleaned;
   }
@@ -604,6 +632,22 @@ export async function fetchAbilities(
           logger?.warning('Skipping ability with malformed name', { name: sanitizeError(a.name) });
           return false;
         }
+        // A credential reflected in the NAME cannot be scrubbed without
+        // changing which ability the tool resolves to, so the ability is
+        // dropped instead. The name itself stays out of the log line.
+        if (containsKnownSecret(a.name)) {
+          logger?.warning('Skipping ability whose name reflects a known secret');
+          return false;
+        }
+        // Same fail-loud rule as the tool-name collision below: an ability
+        // deriving to a name the server owns is dropped, never allowed to
+        // shadow the local setup tool.
+        if (RESERVED_TOOL_NAMES.has(abilityNameToToolName(a.name, namespaces[0]))) {
+          logger?.warning('Skipping ability that collides with a reserved tool name', {
+            name: sanitizeError(a.name),
+          });
+          return false;
+        }
         return true;
       });
 
@@ -659,14 +703,15 @@ export async function fetchAbilities(
             continue;
           }
           const bounded = boundRemoteSchema(schema);
-          if (bounded === null) {
+          if (bounded.schema === null) {
             logger?.warning('Skipping ability whose schema exceeds safety bounds', {
               name: sanitizeError(ability.name),
               schema: key,
+              reason: bounded.reason,
             });
             return false;
           }
-          ability[key] = bounded;
+          ability[key] = bounded.schema;
         }
         return true;
       });
@@ -994,7 +1039,12 @@ export async function executeAbility(
       upstreamLatencyMs,
     });
 
-    return JSON.parse(responseBody);
+    // Same fetch-boundary scrub the catalog gets: a result is remote data and
+    // reaches the transcript verbatim. It runs over the parsed value, covering
+    // keys and string values at every depth — redacting the raw body text
+    // instead would also replace across JSON syntax and turn a well-formed
+    // response into a parse error.
+    return redactKnownSecretsDeep(JSON.parse(responseBody));
   };
 
   // Apply retry logic only for read-only operations when enabled

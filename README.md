@@ -119,6 +119,39 @@ npm ci
 npm run build
 ```
 
+## First-run setup
+
+If the server starts without a Dashboard URL or credentials, it does not fail to launch. It connects to your AI client in **setup mode**: the MainWP tools stay hidden and two setup tools take their place, so you can finish the configuration in the conversation instead of hunting through stderr.
+
+- `mainwp_get_setup_status` reports what is missing and returns the setup instructions for your assistant to relay. If credentials are present but the Dashboard was unreachable at startup, calling it again retries the connection with the credentials already loaded.
+- `mainwp_configure` takes a Dashboard URL, username, and Application Password, verifies them against the Dashboard, and saves them.
+
+Two ways to finish setup:
+
+**Adding the credentials yourself is the recommended path.** Put `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` in the `env` block of this server's entry in your MCP client config (see [Quick Start](#quick-start)) or in `~/.config/mainwp-mcp/settings.json`, then restart the client. The password never passes through the conversation.
+
+**Pasting them in chat is also fine.** Your assistant collects the three values and calls `mainwp_configure`. The server verifies them, writes them to `~/.config/mainwp-mcp/settings.json` with owner-only permissions (0600, in a 0700 directory), and scrubs the password from its own logs and from every response. An Application Password is separate from your WordPress login password and you can revoke it from your profile at any time. Worth knowing before you choose: the password also becomes part of your chat history, which your AI client and provider may retain. If that bothers you later, revoke the password and create a new one.
+
+Once configuration succeeds, the full tool list appears in the same session for clients that honor MCP list-changed notifications. Clients that do not refresh on their own need a reconnect or restart.
+
+`mainwp_configure` refuses rather than saving something that would be ignored or overridden:
+
+- Any connection environment variable (`MAINWP_URL`, `MAINWP_USER`, `MAINWP_APP_PASSWORD`, `MAINWP_TOKEN`) is set. Environment variables outrank the file it writes, so finish setup there.
+- A `settings.json` exists in the server's working directory. That file is loaded first and would permanently shadow the saved credentials.
+- The server already has credentials loaded, whether or not they are currently working. Setup will not replace existing credentials from chat. If the connection is failing, `mainwp_get_setup_status` retries with the credentials already loaded; to change them, edit the config file or the client's `env` block.
+
+It writes only those three connection fields, never security settings, and blocking `mainwp_configure` through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely while leaving the manual path documented.
+
+### Why setup will not replace credentials you already have
+
+Chat-based setup can get you connected the first time, but it can never overwrite a connection you set up yourself. That line is deliberate, and it is worth knowing where it costs you something.
+
+The reason is that an assistant acts on text, and text can come from places you did not intend. A page it read, a site name, or an ability description returned by a server could carry instructions aimed at the assistant rather than at you. If setup could overwrite a working configuration, that kind of injected instruction could quietly repoint your server at someone else's Dashboard, and every command you ran afterwards would go there. Restricting setup to the case where there is nothing to overwrite removes that possibility, because a server that has no credentials has nothing worth stealing.
+
+A tempting middle ground is to allow it when the stored credentials are provably wrong, since the Dashboard rejected them with an authentication error. We do not do that, because it would let the remote side decide when your local configuration may be replaced: a Dashboard that had been compromised, or a connection someone was tampering with, could reject a valid login on purpose to unlock the replacement path, without ever knowing your password.
+
+The cost is real, and it lands in one place. If you rotate the Application Password in WordPress, or the stored one is wrong for any other reason, retrying will not help, because the retry reuses the same credentials the Dashboard is already refusing. You have to put the new password in `~/.config/mainwp-mcp/settings.json` or your client's `env` block yourself and restart the client. That is the same edit you would have made to set the server up manually in the first place, and it takes a minute.
+
 ## Configuration
 
 | Variable                           | Required       | Default    | Description                                                                                            |
@@ -144,6 +177,8 @@ npm run build
 | `MAINWP_RETRY_BASE_DELAY`          | No             | `1000`     | Base delay between retries in milliseconds                                                             |
 | `MAINWP_RETRY_MAX_DELAY`           | No             | `2000`     | Maximum delay between retries in milliseconds                                                          |
 | `MAINWP_ABILITY_NAMESPACES`        | No             | `mainwp`   | Comma-separated ability namespace allowlist                                                            |
+
+"Required" means required to connect to a Dashboard, not required to start. With no URL and no credentials the server still launches in setup mode and you can supply all three values from the conversation instead. See [First-run setup](#first-run-setup).
 
 > **⚠️ Security Warning: SSL Verification**
 >

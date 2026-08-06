@@ -85,6 +85,30 @@ export interface Config {
 }
 
 /**
+ * Everything `loadConfig` validates that is not connection identity: policy,
+ * limits, transport, and formatting. Setup mode runs on this alone (tool
+ * filters have to gate the setup tools too), so the resolver can hand it back
+ * without a Dashboard URL or credentials.
+ */
+export type PolicyConfig = Omit<
+  Config,
+  'dashboardUrl' | 'authType' | 'username' | 'appPassword' | 'apiToken'
+>;
+
+/**
+ * Result of resolving configuration. `unconfigured` is first-run absence, not
+ * invalid input: every other validation failure still throws.
+ */
+export type ConfigResolution =
+  | { status: 'ready'; config: Config }
+  | {
+      status: 'unconfigured';
+      missing: 'MAINWP_URL' | 'credentials';
+      message: string;
+      policy: PolicyConfig;
+    };
+
+/**
  * Settings file interface - all fields optional for file-based configuration
  */
 export interface SettingsFile {
@@ -514,8 +538,25 @@ export class MissingConfigError extends Error {
 /**
  * Load configuration from environment variables and settings file
  * Precedence: environment variables > settings file > defaults
+ *
+ * Throws when configuration is absent; `resolveConfig` is the entry point that
+ * reports absence as a value instead.
  */
 export function loadConfig(): Config {
+  const resolution = resolveConfig();
+  if (resolution.status === 'unconfigured') {
+    throw new MissingConfigError(resolution.message, resolution.missing);
+  }
+  return resolution.config;
+}
+
+/**
+ * Resolve configuration, reporting first-run absence as a value so the server
+ * can start in setup mode with validated policy settings and no credentials.
+ * Present-but-invalid input still throws: the operator configured something
+ * wrong and a startup error is the honest answer.
+ */
+export function resolveConfig(): ConfigResolution {
   // Load settings file (returns null if not found)
   const loaded = loadSettingsFileWithSource();
   const settings = loaded?.settings ?? null;
@@ -765,30 +806,42 @@ export function loadConfig(): Config {
     }
   }
 
+  // Built before the connection checks below so setup mode still gets every
+  // validated non-credential setting.
+  const policy: PolicyConfig = {
+    skipSslVerify,
+    allowHttp,
+    rateLimit,
+    requestTimeout,
+    maxResponseSize,
+    safeMode,
+    requireUserConfirmation,
+    maxSessionData,
+    schemaVerbosity,
+    responseFormat,
+    abilityNamespaces: abilityNamespacesTuple,
+    retryEnabled,
+    maxRetries,
+    retryBaseDelay,
+    retryMaxDelay,
+    configSource,
+    ...(allowedTools.length > 0 ? { allowedTools } : {}),
+    ...(blockedTools.length > 0 ? { blockedTools } : {}),
+  };
+
   if (!dashboardUrl) {
-    throw new MissingConfigError(
-      'MAINWP_URL is required (set via environment variable or settings.json)',
-      'MAINWP_URL'
-    );
+    return {
+      status: 'unconfigured',
+      missing: 'MAINWP_URL',
+      message: 'MAINWP_URL is required (set via environment variable or settings.json)',
+      policy,
+    };
   }
 
-  const hasBasicAuth = username && appPassword;
-  const hasBearerAuth = apiToken;
-
-  if (!hasBasicAuth && !hasBearerAuth) {
-    throw new MissingConfigError(
-      'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)',
-      'credentials'
-    );
-  }
-
-  if (hasBearerAuth && !hasBasicAuth) {
-    console.error(
-      'WARNING: MAINWP_TOKEN bearer authentication is expected to fail against the WordPress Abilities API. ' +
-        'Configure both MAINWP_USER and MAINWP_APP_PASSWORD with a WordPress Application Password.'
-    );
-  }
-
+  // Runs before the credentials check: a URL that is present but malformed is
+  // something the user actively configured wrong, and setup mode cannot repair
+  // it (the env var stays authoritative over anything configure would write),
+  // so it must fail fast even when credentials are also missing.
   const normalizedUrl = dashboardUrl.replace(/\/+$/, '');
 
   // Validate URL format
@@ -812,34 +865,40 @@ export function loadConfig(): Config {
     );
   }
 
+  const hasBasicAuth = username && appPassword;
+  const hasBearerAuth = apiToken;
+
+  if (!hasBasicAuth && !hasBearerAuth) {
+    return {
+      status: 'unconfigured',
+      missing: 'credentials',
+      message:
+        'Authentication required: Set MAINWP_USER + MAINWP_APP_PASSWORD or MAINWP_TOKEN (via environment variables or settings.json)',
+      policy,
+    };
+  }
+
+  if (hasBearerAuth && !hasBasicAuth) {
+    console.error(
+      'WARNING: MAINWP_TOKEN bearer authentication is expected to fail against the WordPress Abilities API. ' +
+        'Configure both MAINWP_USER and MAINWP_APP_PASSWORD with a WordPress Application Password.'
+    );
+  }
+
   const shared = {
+    ...policy,
     dashboardUrl: normalizedUrl,
-    skipSslVerify,
-    allowHttp,
-    rateLimit,
-    requestTimeout,
-    maxResponseSize,
-    safeMode,
-    requireUserConfirmation,
-    maxSessionData,
-    schemaVerbosity,
-    responseFormat,
-    abilityNamespaces: abilityNamespacesTuple,
-    retryEnabled,
-    maxRetries,
-    retryBaseDelay,
-    retryMaxDelay,
-    configSource,
-    ...(allowedTools.length > 0 ? { allowedTools } : {}),
-    ...(blockedTools.length > 0 ? { blockedTools } : {}),
   };
 
   // Prefer basic auth (Application Password) as it works with Abilities API
   if (hasBasicAuth) {
-    return { ...shared, authType: 'basic' as const, username, appPassword };
+    return {
+      status: 'ready',
+      config: { ...shared, authType: 'basic' as const, username, appPassword },
+    };
   }
 
-  return { ...shared, authType: 'bearer' as const, apiToken };
+  return { status: 'ready', config: { ...shared, authType: 'bearer' as const, apiToken } };
 }
 
 /**

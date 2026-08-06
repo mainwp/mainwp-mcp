@@ -7,6 +7,23 @@
  */
 
 /**
+ * Tool names the server owns itself (first-run setup). They live inside the
+ * ability-derived namespace, so a Dashboard ability could derive to one of
+ * them; the catalog build treats that as a collision and drops the ability
+ * rather than letting remote metadata shadow a local tool.
+ *
+ * Defined here rather than in setup.ts so the names the handlers dispatch on
+ * and the names the catalog reserves cannot drift apart.
+ */
+export const SETUP_STATUS_TOOL = 'mainwp_get_setup_status';
+export const CONFIGURE_TOOL = 'mainwp_configure';
+
+export const RESERVED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  CONFIGURE_TOOL,
+  SETUP_STATUS_TOOL,
+]);
+
+/**
  * Convert an ability name to its MCP tool name.
  *
  * The function has two output shapes selected by `primaryNamespace`:

@@ -12,6 +12,16 @@
 import type { Config } from './config.js';
 
 /**
+ * The config fields the gate reads. Typed as a subset so setup mode, which
+ * has validated policy but no connection identity, passes through the same
+ * gate instead of carrying a second copy of the allow/block rules.
+ */
+export type PolicyGateConfig = Pick<
+  Config,
+  'allowedTools' | 'blockedTools' | 'safeMode' | 'requireUserConfirmation'
+>;
+
+/**
  * Outcome of the policy gate, in precedence order:
  * 1. `blocked-by-policy` — allow/block lists exclude the tool. Evaluated
  *    before ability resolution so a blocked tool is indistinguishable from a
@@ -35,7 +45,7 @@ export type PolicyDecision =
  * destructiveness and can observe all four decisions.
  */
 export function decidePolicy(
-  config: Config,
+  config: PolicyGateConfig,
   toolName: string,
   isDestructive = false
 ): PolicyDecision {
@@ -68,7 +78,7 @@ export function classifyDestructive(annotations: { destructive?: boolean } | und
 }
 
 /** Return whether a tool is permitted by the configured allow/block lists. */
-export function isToolAllowed(config: Config, toolName: string): boolean {
+export function isToolAllowed(config: PolicyGateConfig, toolName: string): boolean {
   return decidePolicy(config, toolName) === 'allow';
 }
 

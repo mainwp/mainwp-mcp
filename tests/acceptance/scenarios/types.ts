@@ -90,8 +90,34 @@ export interface ScenarioPreconditionResult {
   state?: Record<string, unknown>;
 }
 
+export interface RelaunchedServer {
+  client: AcceptanceClient;
+  /** Idempotent: the harness closes every relaunched server too, so a scenario
+   * that closes its own handle does not shut it down twice. Repeat calls replay
+   * the first close's outcome, including its failure. */
+  close(): Promise<void>;
+}
+
+export interface ScenarioRelaunchOptions {
+  /**
+   * Replace the scenario's launch environment. A second server that has to
+   * reach a precondition the first launch outranks needs a different
+   * environment, not a repeat of the first one.
+   */
+  env?: Record<string, string>;
+}
+
 export interface ScenarioContext {
   client: AcceptanceClient;
+  /**
+   * Start a second server process against the same home directory, for
+   * scenarios that must prove something survived a restart. Every handle is
+   * registered for harness cleanup, so a scenario that throws before it can
+   * close its own still leaves no server behind. Each launch gets its own
+   * working directory, so a scenario that declares settings gets the file
+   * written again.
+   */
+  relaunch(options?: ScenarioRelaunchOptions): Promise<RelaunchedServer>;
   verifier: IndependentVerifier;
   config: {
     target: AcceptanceTarget;
