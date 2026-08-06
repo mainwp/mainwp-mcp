@@ -109,7 +109,7 @@ export const setupConfigureRoundTrip: ScenarioDefinition = {
   purpose:
     'Configure an unconfigured server from tool input and keep it configured across a restart.',
   kind: 'read',
-  targets: ['fixture'],
+  targets: ['live', 'fixture'],
   preconditions: ctx => {
     // omitCredentialEnv means the tuple reaches the server only through the
     // configure call, so a missing value would be submitted as undefined and
@@ -124,7 +124,8 @@ export const setupConfigureRoundTrip: ScenarioDefinition = {
       launch: {
         omitCredentialEnv: true,
         // The fixture Dashboard is plain HTTP, so the operator-level opt-in has
-        // to be present for the URL validator to accept it.
+        // to be present for the URL validator to accept it. It only permits
+        // http, so an https live Dashboard is unaffected.
         env: { MAINWP_ALLOW_HTTP: 'true', MAINWP_RATE_LIMIT: '0' },
       },
       state: {
@@ -176,7 +177,7 @@ export const setupConfigureRoundTrip: ScenarioDefinition = {
       undefined
     );
     ctx.assert.equal(
-      'configured session sees the fixture sites',
+      'configured session sees the Dashboard sites',
       (listed.data as { total: number }).total,
       await ctx.verifier.countSites()
     );
