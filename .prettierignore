@@ -9,3 +9,6 @@ coverage/
 
 # Lock files
 package-lock.json
+
+# Private planning and review material (gitignored)
+.mwpdev/

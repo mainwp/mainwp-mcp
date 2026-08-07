@@ -3,6 +3,47 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-08-07
+
+### Added
+
+First-run setup. A server started with no Dashboard URL or credentials now
+launches in setup mode: the MainWP tools stay hidden and two setup tools take
+their place. `mainwp_get_setup_status` reports what is missing and returns
+setup instructions for the assistant to relay. `mainwp_configure` takes a
+Dashboard URL, username, and Application Password, verifies them against the
+Dashboard, and saves them to `~/.config/mainwp-mcp/settings.json` with
+owner-only permissions (0600, in a 0700 directory). The password is scrubbed
+from the server's logs and from every response. Once configuration succeeds,
+the full tool list appears in the same session for clients that honor MCP
+list-changed notifications; other clients need a reconnect or restart.
+
+`mainwp_configure` refuses rather than saving something that would be ignored
+or unsafe. It will not run when a connection environment variable is set
+(environment variables outrank the file it writes), when a `settings.json` in
+the server's working directory would shadow the saved file, or when the server
+already has credentials loaded. The last refusal is deliberate: chat-based
+setup can connect an unconfigured server but can never repoint a working one,
+so instructions injected into the conversation cannot swap your Dashboard for
+someone else's. To change existing credentials, edit the config file or the
+client's `env` block and restart the client. Setup writes only the three
+connection fields, never security settings, and blocking `mainwp_configure`
+through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely.
+
+A server whose credentials are present but whose Dashboard was unreachable at
+startup now stays up in a degraded state instead of exiting. Calling
+`mainwp_get_setup_status` retries the connection with the credentials already
+loaded, so a Dashboard that comes back online is picked up without a client
+restart.
+
+### Changed
+
+An unconfigured start is no longer a failed launch. Since 1.1.0 the server
+printed setup guidance to stderr and exited 1; it now stays running and
+serves the setup tools over MCP. **This is a behavior change** for anything
+that read the exit code as the missing-configuration signal. Configuration
+that is present but invalid keeps the existing fatal-error behavior.
+
 ## [1.2.0] - 2026-08-03
 
 ### Added
