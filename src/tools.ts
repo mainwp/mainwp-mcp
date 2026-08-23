@@ -185,9 +185,6 @@ export async function executeTool(
       throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
     }
 
-    // Validate input before forwarding to API
-    validateInput(args);
-
     // Resolve tool name → ability via the cache reverse index built during
     // fetchAbilities. This handles both primary-namespace (unprefixed) tools
     // and prefixed `{ns}__tool` names from non-primary namespaces.
@@ -196,6 +193,11 @@ export async function executeTool(
       throw McpErrorFactory.toolNotFound(toolName);
     }
     abilityName = ability.name;
+
+    // Validate against the resolved ability contract before confirmation or
+    // execution. Schema-declared string limits may exceed the conservative
+    // connector default, but validateInput still enforces an absolute cap.
+    validateInput(args, ability.input_schema);
 
     const ctx = { tool: toolName, ability: abilityName };
 
