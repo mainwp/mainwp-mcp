@@ -46,6 +46,15 @@ function stringLimit(schema: InputSchema | undefined): number {
   return Math.min(declared, MAX_SCHEMA_STRING_LENGTH);
 }
 
+function assertDepth(depth: number): void {
+  if (depth > MAX_OBJECT_DEPTH) {
+    throw McpErrorFactory.invalidParams(
+      `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
+      { maxDepth: MAX_OBJECT_DEPTH }
+    );
+  }
+}
+
 // Upper bound on the string sanitizeError runs its regexes over. Error bodies
 // forwarded here are untrusted and can be up to MAX_ERROR_BODY_BYTES (64KB);
 // capping the working string first keeps every replace() linear-bounded and
@@ -66,12 +75,7 @@ export function validateInput(
   schema?: InputSchema,
   depth = 0
 ): void {
-  if (depth > MAX_OBJECT_DEPTH) {
-    throw McpErrorFactory.invalidParams(
-      `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
-      { maxDepth: MAX_OBJECT_DEPTH }
-    );
-  }
+  assertDepth(depth);
 
   for (const [key, value] of Object.entries(args)) {
     const valueSchema = propertySchema(schema, key);
@@ -122,31 +126,43 @@ export function validateInput(
 
     // Array validation
     if (Array.isArray(value)) {
-      if (value.length > MAX_ARRAY_ELEMENTS) {
-        throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
-          { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
-        );
-      }
-      // Validate array elements (strings and nested objects)
-      for (const [index, item] of value.entries()) {
-        const itemSchema = arrayItemSchema(valueSchema, index);
-        const maxItemLength = stringLimit(itemSchema);
-        if (typeof item === 'string' && item.length > maxItemLength) {
-          throw McpErrorFactory.invalidParams(
-            `Element in "${key}" exceeds maximum length (${maxItemLength} characters)`,
-            { parameter: key, maxLength: maxItemLength }
-          );
-        }
-        if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
-          validateInput(item as Record<string, unknown>, itemSchema, depth + 1);
-        }
-      }
+      validateArray(key, value, valueSchema, depth);
     }
 
     // Nested object: recurse to validate contents (string lengths, ID ranges, depth)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       validateInput(value as Record<string, unknown>, valueSchema, depth + 1);
+    }
+  }
+}
+
+function validateArray(
+  key: string,
+  value: unknown[],
+  schema: InputSchema | undefined,
+  depth: number
+): void {
+  assertDepth(depth);
+  if (value.length > MAX_ARRAY_ELEMENTS) {
+    throw McpErrorFactory.invalidParams(
+      `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
+      { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
+    );
+  }
+
+  for (const [index, item] of value.entries()) {
+    const itemSchema = arrayItemSchema(schema, index);
+    const maxItemLength = stringLimit(itemSchema);
+    if (typeof item === 'string' && item.length > maxItemLength) {
+      throw McpErrorFactory.invalidParams(
+        `Element in "${key}" exceeds maximum length (${maxItemLength} characters)`,
+        { parameter: key, maxLength: maxItemLength }
+      );
+    }
+    if (Array.isArray(item)) {
+      validateArray(key, item, itemSchema, depth + 1);
+    } else if (typeof item === 'object' && item !== null) {
+      validateInput(item as Record<string, unknown>, itemSchema, depth + 1);
     }
   }
 }

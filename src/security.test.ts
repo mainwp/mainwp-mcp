@@ -88,6 +88,30 @@ describe('validateInput', () => {
     expect(() => validateInput({ nested: { payload }, payloads: [payload] }, schema)).not.toThrow();
   });
 
+  it('should apply string schemas through nested arrays', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        payloads: {
+          type: 'array',
+          items: {
+            type: 'array',
+            items: { type: 'string', maxLength: 20_000 },
+          },
+        },
+      },
+    };
+    expect(() => validateInput({ payloads: [['a'.repeat(15_000)]] }, schema)).not.toThrow();
+    expect(() => validateInput({ payloads: [['a'.repeat(20_001)]] }, schema)).toThrow(
+      /maximum length \(20000 characters\)/
+    );
+  });
+
+  it('should enforce the depth limit through nested arrays', () => {
+    const nestedArrays = [[[[[[['too deep']]]]]]];
+    expect(() => validateInput({ nested: nestedArrays })).toThrow(/maximum nesting depth/);
+  });
+
   it('should reject arrays exceeding MAX_ARRAY_ELEMENTS', () => {
     const largeArray = new Array(1001).fill('item');
     expect(() => validateInput({ items: largeArray })).toThrow(/too many elements/);
