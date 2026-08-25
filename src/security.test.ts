@@ -145,6 +145,35 @@ describe('validateInput', () => {
     expect(() => validateInput({ site_id: '123' })).not.toThrow();
   });
 
+  it('should honor a string schema for non-numeric *_id identifiers', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        rollout_id: { type: 'string', pattern: '^[A-Za-z0-9._-]+$' },
+      },
+    };
+    expect(() =>
+      validateInput({ rollout_id: 'mrnwebdesigns-canary-2026-08-23-r1' }, schema)
+    ).not.toThrow();
+  });
+
+  it('should keep numeric ID validation when the schema declares an integer', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        site_id: { type: 'integer', minimum: 1 },
+        site_ids: { type: 'array', items: { type: 'integer', minimum: 1 } },
+      },
+    };
+    expect(() => validateInput({ site_id: 85, site_ids: [85] }, schema)).not.toThrow();
+    expect(() => validateInput({ site_id: 'not-numeric' }, schema)).toThrow(
+      /must be a positive integer/
+    );
+    expect(() => validateInput({ site_ids: ['not-numeric'] }, schema)).toThrow(
+      /must be a positive integer/
+    );
+  });
+
   it('should reject non-positive IDs', () => {
     expect(() => validateInput({ site_id: 0 })).toThrow(/must be a positive integer/);
     expect(() => validateInput({ site_id: -1 })).toThrow(/must be a positive integer/);

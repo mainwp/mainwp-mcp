@@ -46,6 +46,24 @@ function stringLimit(schema: InputSchema | undefined): number {
   return Math.min(declared, MAX_SCHEMA_STRING_LENGTH);
 }
 
+function schemaType(schema: InputSchema | undefined): string | undefined {
+  return typeof schema?.type === 'string' ? schema.type : undefined;
+}
+
+function shouldValidateSingularId(key: string, schema: InputSchema | undefined): boolean {
+  const type = schemaType(schema);
+  if (type !== undefined) return type === 'integer';
+  return key.endsWith('_id');
+}
+
+function shouldValidatePluralIds(key: string, schema: InputSchema | undefined): boolean {
+  const type = schemaType(schema);
+  if (type !== undefined) {
+    return type === 'array' && schemaType(asSchema(schema?.items)) === 'integer';
+  }
+  return key.endsWith('_ids');
+}
+
 function assertDepth(depth: number): void {
   if (depth > MAX_OBJECT_DEPTH) {
     throw McpErrorFactory.invalidParams(
@@ -90,7 +108,7 @@ export function validateInput(
     }
 
     // ID fields: accept number or numeric string, must be positive integer
-    if (key.endsWith('_id')) {
+    if (shouldValidateSingularId(key, valueSchema)) {
       if (typeof value !== 'string' && typeof value !== 'number') {
         throw McpErrorFactory.invalidParams(
           `Parameter "${key}" must be a string or number, got ${typeof value}`,
@@ -105,7 +123,7 @@ export function validateInput(
     }
 
     // Plural ID fields (e.g., site_ids): must be an array of valid positive integers
-    if (key.endsWith('_ids')) {
+    if (shouldValidatePluralIds(key, valueSchema)) {
       if (!Array.isArray(value)) {
         throw McpErrorFactory.invalidParams(`"${key}" must be an array`, { parameter: key });
       }
