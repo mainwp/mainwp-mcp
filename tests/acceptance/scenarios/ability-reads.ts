@@ -398,7 +398,23 @@ export const advertisedRoutesResolve: ScenarioDefinition = {
     const failures: Array<{ name: string; error: string }> = [];
     for (const name of checkable) {
       try {
-        await ctx.verifier.execute(name, {});
+        await ctx.verifier.execute(
+          name,
+          name.includes('knowledge')
+            ? {
+                site_id: 1,
+                client_id: 101,
+                record_id: 1,
+                expected_revision: 1,
+                scope_type: 'site',
+                scope_id: 1,
+                type: 'context',
+                title: 'Route probe',
+                body: 'Route probe body',
+                dry_run: true,
+              }
+            : {}
+        );
       } catch (error) {
         const message = String(error);
         if (

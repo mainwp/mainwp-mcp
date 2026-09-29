@@ -59,6 +59,7 @@ import {
 import {
   agentLaunchCwd,
   agentPrompt,
+  answerCarriesKnowledgeNote,
   agentRunExitCode,
   agentScenarios,
   agentSpawnEnv,
@@ -6077,5 +6078,152 @@ describe('packed consumer install', () => {
       npm_config_cache: '/tmp/consumer-cache',
       npm_lifecycle_event: 'test:acceptance:fixture',
     });
+  });
+});
+
+describe('site-knowledge-first grading', () => {
+  const scenario = agentScenarios.find(candidate => candidate.id === 'agent-site-knowledge-first');
+  const note = 'Schedule changes after the bakery closes.';
+  /** Stub dashboard: one site plus a knowledge list whose revision can move. */
+  const dashboard = (knowledgeRevision: number) =>
+    ({
+      listSites: async () => [{ id: 1, url: 'https://alpine.example', name: 'Alpine Bakery' }],
+      execute: async (ability: string) =>
+        ability === 'mainwp/list-knowledge-v1'
+          ? { items: [{ id: 1, revision: knowledgeRevision }], total: 1 }
+          : { id: 1 },
+    }) as unknown as IndependentVerifier;
+  const intact = dashboard(1);
+  const knowledgeCall: RecordedAgentToolUse = {
+    id: 'knowledge',
+    name: 'mcp__mainwp__get_site_knowledge_v1',
+    input: { site_id: 1 },
+  };
+  const siteCall: RecordedAgentToolUse = {
+    id: 'site',
+    name: 'mcp__mainwp__get_site_v1',
+    input: { site_id_or_domain: 1 },
+  };
+  const knowledgeResult: RecordedAgentToolResult = {
+    toolUseId: 'knowledge',
+    content: JSON.stringify({ site_id: 1, context: [{ id: 1, body: note }] }),
+  };
+  const faithful = 'The site context says to schedule changes after the bakery closes.';
+  const grade = async (
+    toolUses: RecordedAgentToolUse[],
+    finalText: string,
+    after: IndependentVerifier = intact
+  ) => {
+    if (!scenario?.evaluate) throw new Error('The knowledge-first scenario lost its evaluator');
+    const truth = {
+      siteId: 1,
+      siteUrl: 'https://alpine.example',
+      siteName: 'Alpine Bakery',
+      fixtureSnapshot: await fixtureStateSnapshot(intact),
+    };
+    return scenario.evaluate(
+      truth,
+      {
+        toolUses,
+        toolResults: [knowledgeResult],
+        finalText,
+        totalToolUses: toolUses.length,
+        turns: toolUses.length,
+        resourceReads: [],
+        skill: { discovered: false, invoked: false },
+        assistantText: true,
+      },
+      after
+    );
+  };
+
+  it.each([
+    [note, true],
+    ['Plan any work for after closing time.', true],
+    ['Make changes once the bakery has closed.', true],
+    ['Alpine Bakery has no knowledge recorded. I looked after the site summary.', false],
+    ['The bakery closes at 5; no schedule changes are recorded.', false],
+    ['I could not verify when it closes, and the schedule may have changed.', false],
+    ['Nothing is recorded about this site.', false],
+    ['- Site note: schedule changes after the bakery closes', true],
+    ['Staff note: do maintenance after the shop closes; it is verified.', true],
+    ['- Looked after the plugin updates\n- The bakery closes at 5', false],
+    ["I'll respond after I close this ticket.", false],
+    ['There is no instruction to schedule changes after the bakery closes.', false],
+    ["Don't wait until after the bakery closes.", false],
+    ["I'll respond after closing this ticket.", false],
+    ['Avoid maintenance after the bakery closes.', false],
+    ['Refrain from work after the bakery closes.', false],
+    ['Don’t wait until after the bakery closes.', false],
+    ['No plugin issues were found, and schedule changes after the bakery closes.', true],
+    ['Schedule changes after the bakery closes, not during opening hours.', true],
+    ["I wouldn't change anything now \u2014 schedule changes after the bakery closes.", true],
+    ["Don't, under any circumstances, work after the bakery closes.", false],
+    ['Changes after the bakery closes are not allowed.', false],
+    ['Scheduling changes after the bakery closes is not required.', false],
+    ["Work after closing hours shouldn't happen.", false],
+    ['Changes after the bakery closes should be avoided.', false],
+    ['Changes after the bakery closes are generally not allowed.', false],
+    ['Changes after the bakery closes are prohibited.', false],
+    ['Skip maintenance after the bakery closes; do it during business hours instead.', false],
+    // Accepted false fails: any negative in the phrase's clause rejects it,
+    // because a regex cannot tell a benign negative from a reversal.
+    ['Schedule changes after the bakery closes so customers are not disrupted.', false],
+    [
+      'Working after the bakery closes is not disruptive to customers, so schedule changes then.',
+      false,
+    ],
+    // The note records no closing time, so "after 5 p.m." is not the note.
+    ['Make changes after 5 p.m., when the bakery closes.', false],
+    // Known residual: disowning the note in a later clause still passes. A
+    // hedge list would reopen the patch cycle, and the scenario asks what is
+    // known, not whether to follow it.
+    [
+      'The note says to schedule changes after the bakery closes, but that note is stale and should be ignored.',
+      true,
+    ],
+  ])('answer %j carries the recorded note: %s', (answer, expected) => {
+    expect(answerCarriesKnowledgeNote(answer)).toBe(expected);
+  });
+
+  it('passes a run that loads the summary first and reports the note', async () => {
+    const { evaluation } = await grade([knowledgeCall, siteCall], faithful);
+    expect(evaluation.rightCapability.pass).toBe(true);
+    expect(evaluation.rightArguments.pass).toBe(true);
+    expect(evaluation.correctMcpResult.pass).toBe(true);
+    expect(evaluation.stateChange.pass).toBe(true);
+    expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
+  });
+
+  it('fails a run whose first MainWP call is not the knowledge summary', async () => {
+    const updatesCall: RecordedAgentToolUse = {
+      id: 'updates',
+      name: 'mcp__mainwp__list_updates_v1',
+      input: {},
+    };
+    for (const first of [siteCall, updatesCall]) {
+      const { evaluation } = await grade([first, knowledgeCall], faithful);
+      expect(evaluation.rightCapability.pass, first.name).toBe(false);
+    }
+  });
+
+  it('fails a run whose first knowledge call is for another site', async () => {
+    const otherSite: RecordedAgentToolUse = {
+      ...knowledgeCall,
+      id: 'other',
+      input: { site_id: 2 },
+    };
+    const { evaluation } = await grade([otherSite, siteCall, knowledgeCall], faithful);
+    expect(evaluation.rightArguments.pass).toBe(false);
+  });
+
+  it('fails a run whose answer leaves out the note', async () => {
+    const { evaluation } = await grade([knowledgeCall], 'Alpine Bakery looks healthy.');
+    expect(evaluation.faithfulFinalAnswer.pass).toBe(false);
+  });
+
+  it('fails a read-only run that changed a knowledge record', async () => {
+    const { evaluation } = await grade([knowledgeCall], faithful, dashboard(2));
+    expect(evaluation.stateChange.pass).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { FixtureKnowledge } from './fixture-knowledge.js';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -428,6 +429,13 @@ export function getFixtureFaultMode(
  * advertised-routes-resolve scenario holds this list to what really routes.
  */
 export const FIXTURE_ROUTED_ABILITIES = [
+  'mainwp/get-knowledge-record-v1',
+  'mainwp/get-site-knowledge-v1',
+  'mainwp/get-client-knowledge-v1',
+  'mainwp/list-knowledge-v1',
+  'mainwp/create-knowledge-record-v1',
+  'mainwp/update-knowledge-record-v1',
+  'mainwp/delete-knowledge-record-v1',
   'mainwp/list-sites-v1',
   'mainwp/get-sites-basic-v1',
   'mainwp/count-sites-v1',
@@ -457,8 +465,17 @@ async function runAbility(
   sites: FixtureSite[],
   previewTokens: Map<string, string>,
   response: ServerResponse,
+  knowledge: FixtureKnowledge,
   transport?: FixtureTransport
 ): Promise<void> {
+  if (
+    abilityName.includes('knowledge') &&
+    FIXTURE_ROUTED_ABILITIES.some(name => name === abilityName)
+  ) {
+    const result = knowledge.run(abilityName, input, sites);
+    json(response, result.status, result.body);
+    return;
+  }
   const faultMode = getFixtureFaultMode(abilityName, input);
   if (faultMode === 'oversized') {
     json(response, 200, { payload: 'x'.repeat(FIXTURE_OVERSIZED_BYTES) });
@@ -898,6 +915,7 @@ export async function startFixtureDashboard(
   // request handler reads this binding at call time.
   let sites = loadSites();
   const previewTokens = new Map<string, string>();
+  let knowledge = new FixtureKnowledge();
   const expectedAuthorization = `Basic ${Buffer.from(
     `${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`
   ).toString('base64')}`;
@@ -974,6 +992,7 @@ export async function startFixtureDashboard(
           sites,
           previewTokens,
           response,
+          knowledge,
           abilityName === FIXTURE_NULLABLE_DELETE_ABILITY
             ? {
                 method: request.method ?? '',
@@ -1023,6 +1042,7 @@ export async function startFixtureDashboard(
     reset: () => {
       sites = loadSites();
       previewTokens.clear();
+      knowledge = new FixtureKnowledge();
     },
     close: () =>
       new Promise<void>((resolve, reject) => {
