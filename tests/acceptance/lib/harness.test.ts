@@ -82,7 +82,8 @@ import {
 } from './agent-commands.js';
 import { parseAcceptanceEnv } from './env.js';
 import { awaitChildWithDeadline, CommandRunner } from './commands.js';
-import { startLocalDependencyRegistry } from './local-registry.js';
+import { batchByUniqueName, startLocalDependencyRegistry } from './local-registry.js';
+import { consumerNpmEnv } from './pack.js';
 import { getWriteGuardReason, isWriteHostAllowed } from './guards.js';
 import { Redactor } from './redact.js';
 import { BoundedPagination } from './pagination.js';
@@ -4134,6 +4135,18 @@ describe('agent launch isolation and failure reasons', () => {
 });
 
 describe('local dependency registry', () => {
+  it('never packs two versions of one name in the same npm pack call', () => {
+    const batches = batchByUniqueName(
+      ['content-type', 'express', 'content-type', 'body-parser', 'content-type'],
+      name => name
+    );
+    expect(batches).toEqual([
+      ['content-type', 'express', 'body-parser'],
+      ['content-type'],
+      ['content-type'],
+    ]);
+  });
+
   it('serves every packed version when a package appears at multiple tree depths', async () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-repo-'));
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-temp-'));
@@ -4186,5 +4199,25 @@ describe('local dependency registry', () => {
       fs.rmSync(repoRoot, { recursive: true, force: true });
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('packed consumer install', () => {
+  it('does not forward the parent npm run config to the consumer npm', () => {
+    const env = consumerNpmEnv(
+      {
+        PATH: '/usr/bin',
+        npm_config_allow_scripts: '@anthropic-ai/claude-code',
+        NPM_CONFIG_REGISTRY: 'https://registry.example',
+        npm_config_cache: '/home/user/.npm',
+        npm_lifecycle_event: 'test:acceptance:fixture',
+      },
+      '/tmp/consumer-cache'
+    );
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      npm_config_cache: '/tmp/consumer-cache',
+      npm_lifecycle_event: 'test:acceptance:fixture',
+    });
   });
 });
