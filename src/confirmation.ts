@@ -529,9 +529,13 @@ export async function handleConfirmationFlow(
     logger.info('User confirmation validated', { toolName, previewAge });
 
     // Confirmation credentials belong to this server, not the upstream ability.
+    // Drop dry_run too: the preview key ignores it, so the token also binds a
+    // call carrying one, and a string "true" forwarded here would make the
+    // approved execution a preview on a Dashboard that reads it as a boolean.
     const {
       user_confirmed: _user_confirmed,
       confirmation_token: _confirmation_token,
+      dry_run: _confirmedDryRun,
       ...confirmedArgs
     } = effectiveArgs;
     delete confirmedArgs.confirm;

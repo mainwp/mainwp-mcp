@@ -1933,6 +1933,58 @@ describe('executeTool', () => {
     expect(serialized).not.toContain('"confirm"');
   });
 
+  // The preview key ignores dry_run, so a token issued for the preview also
+  // binds a confirmed call that carries one. Whatever the model sends there
+  // must not reach upstream: a string "true" would turn the execution the user
+  // approved into another preview on a Dashboard that reads it as a boolean.
+  it.each([['true'], ['false'], [false], [true], [1]])(
+    'strips a model-supplied dry_run (%j) from the confirmed execution',
+    async dryRun => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => sampleAbilities,
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ preview: true, affected: [1] }),
+        headers: new Headers(),
+      });
+      const preview = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm: true },
+        mockLogger
+      );
+      const token = JSON.parse(preview.content[0].text).confirmation_token as string;
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
+      const confirmed = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, user_confirmed: true, confirmation_token: token, dry_run: dryRun },
+        mockLogger
+      );
+
+      if (dryRun === true) {
+        // user_confirmed plus a real dry_run is refused before any upstream call
+        expect(confirmed.isError).toBe(true);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        return;
+      }
+      expect(confirmed.isError).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const [executionUrl, executionInit] = mockFetch.mock.calls[2] as [string, RequestInit];
+      const serialized = `${executionUrl} ${String(executionInit?.body ?? '')}`;
+      expect(serialized).not.toContain('dry_run');
+      expect(serialized).toMatch(/"confirm":true|confirm=true/);
+    }
+  );
+
   it('should accept confirmation_token to resolve preview', async () => {
     // Step 1: Generate preview
     mockFetch.mockResolvedValueOnce({
