@@ -3,14 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import type { CommandRunner } from './commands.js';
-
-interface PackedDependency {
-  name: string;
-  version: string;
-  filename: string;
-  shasum: string;
-  integrity: string;
-}
+import { parseNpmPackJson, type NpmPackRecord } from './npm-pack-json.js';
 
 export interface LocalRegistry {
   url: string;
@@ -33,6 +26,20 @@ function compareVersions(a: string, b: string): number {
     if (difference !== 0) return difference;
   }
   return 0;
+}
+
+// npm 12 reports one pack record per package name, so a hoisted copy and a
+// nested copy of the same name must go to separate `npm pack` calls.
+export function batchByUniqueName<T>(items: T[], nameOf: (item: T) => string): T[][] {
+  const batches: T[][] = [];
+  const seen = new Map<string, number>();
+  for (const item of items) {
+    const name = nameOf(item);
+    const round = seen.get(name) ?? 0;
+    seen.set(name, round + 1);
+    (batches[round] ??= []).push(item);
+  }
+  return batches;
 }
 
 function json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -64,7 +71,7 @@ export async function startLocalDependencyRegistry(
   // scripts stripped so the behavior does not depend on the npm version.
   const stagingDir = path.join(tempRoot, 'dependency-staging');
   const stagedManifests = new Map<string, Record<string, unknown>>();
-  const stagedPaths = packagePaths.map((packagePath, index) => {
+  const staged = packagePaths.map((packagePath, index) => {
     const stagedPath = path.join(stagingDir, String(index));
     fs.cpSync(packagePath, stagedPath, { recursive: true });
     const manifestPath = path.join(stagedPath, 'package.json');
@@ -83,17 +90,28 @@ export async function startLocalDependencyRegistry(
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
     }
     stagedManifests.set(`${manifest.name}@${manifest.version}`, manifest);
-    return stagedPath;
+    return { stagedPath, name: String(manifest.name) };
   });
-  const packedResult = await runner.run(
-    ['npm', 'pack', '--ignore-scripts', '--json', '--pack-destination', tarballDir, ...stagedPaths],
-    repoRoot
-  );
-  const packed = JSON.parse(packedResult.stdout) as PackedDependency[];
+  const packed: NpmPackRecord[] = [];
+  for (const batch of batchByUniqueName(staged, entry => entry.name)) {
+    const packedResult = await runner.run(
+      [
+        'npm',
+        'pack',
+        '--ignore-scripts',
+        '--json',
+        '--pack-destination',
+        tarballDir,
+        ...batch.map(entry => entry.stagedPath),
+      ],
+      repoRoot
+    );
+    packed.push(...parseNpmPackJson(packedResult.stdout, batch.length));
+  }
   // A name can appear at several versions at once (hoisted plus nested copies
   // with disjoint semver ranges), so the metadata must carry every version or
   // npm fails the unsatisfied range with ETARGET.
-  const byName = new Map<string, Map<string, PackedDependency>>();
+  const byName = new Map<string, Map<string, NpmPackRecord>>();
   for (const dependency of packed) {
     let versions = byName.get(dependency.name);
     if (!versions) byName.set(dependency.name, (versions = new Map()));

@@ -5,15 +5,7 @@ import path from 'node:path';
 import type { Artifacts } from './artifacts.js';
 import type { CommandRunner } from './commands.js';
 import { startLocalDependencyRegistry } from './local-registry.js';
-
-interface NpmPackResult {
-  id: string;
-  name: string;
-  version: string;
-  filename: string;
-  shasum: string;
-  integrity: string;
-}
+import { parseNpmPackJson } from './npm-pack-json.js';
 
 export interface PackChecks {
   requiredFilesPresent: boolean;
@@ -39,6 +31,15 @@ export interface PackedPackage {
   cleanup(): void;
 }
 
+// `npm run` exports its resolved config as npm_config_* variables. A nested npm
+// reads those as command-line settings, and npm 12 refuses some of them in a
+// project install (a user-level allow-scripts fails with EALLOWSCRIPTS), so the
+// consumer npm reads the user's .npmrc like a fresh install would.
+export function consumerNpmEnv(env: NodeJS.ProcessEnv, npmCache: string): NodeJS.ProcessEnv {
+  const inherited = Object.entries(env).filter(([key]) => !/^npm_config_/i.test(key));
+  return { ...Object.fromEntries(inherited), npm_config_cache: npmCache };
+}
+
 async function setupPackedPackage(
   repoRoot: string,
   runner: CommandRunner,
@@ -50,9 +51,7 @@ async function setupPackedPackage(
     ['npm', 'pack', '--json', '--pack-destination', tempRoot],
     repoRoot
   );
-  const parsed = JSON.parse(packResult.stdout) as NpmPackResult[];
-  if (parsed.length !== 1) throw new Error(`npm pack produced ${parsed.length} package records`);
-  const packed = parsed[0];
+  const [packed] = parseNpmPackJson(packResult.stdout, 1);
   const tarballPath = path.join(tempRoot, packed.filename);
   const sha256 = crypto.createHash('sha256').update(fs.readFileSync(tarballPath)).digest('hex');
   const listingResult = await runner.run(['tar', '-tzf', tarballPath], repoRoot);
@@ -85,7 +84,7 @@ async function setupPackedPackage(
   const npmCache = path.join(tempRoot, 'npm-cache');
   fs.mkdirSync(npmCache);
   await runner.run(['npm', 'init', '-y'], consumerDir, {
-    env: { ...process.env, npm_config_cache: npmCache },
+    env: consumerNpmEnv(process.env, npmCache),
   });
 
   const registry = await startLocalDependencyRegistry(repoRoot, tempRoot, runner);
@@ -93,7 +92,7 @@ async function setupPackedPackage(
     await runner.run(
       ['npm', 'install', tarballPath, '--no-audit', '--no-fund', '--registry', registry.url],
       consumerDir,
-      { env: { ...process.env, npm_config_cache: npmCache } }
+      { env: consumerNpmEnv(process.env, npmCache) }
     );
   } finally {
     await registry.close();
