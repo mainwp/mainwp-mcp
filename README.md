@@ -188,7 +188,7 @@ Instead of environment variables, you can use a `settings.json` file in the work
 
 ## Tools
 
-Around 60 tools, organized by category (the exact count varies by Dashboard version):
+Around 70 tools, organized by category (the exact count varies by Dashboard version):
 
 | Category         | Tools | Reference                                                                                |
 | ---------------- | ----- | ---------------------------------------------------------------------------------------- |
@@ -197,6 +197,7 @@ Around 60 tools, organized by category (the exact count varies by Dashboard vers
 | Clients          | 11    | [Clients Abilities](https://docs.mainwp.com/api-reference/abilities-api/clients)         |
 | Tags             | 7     | [Tags Abilities](https://docs.mainwp.com/api-reference/abilities-api/tags)               |
 | Batch Operations | 1     | [Batch Operations](https://docs.mainwp.com/api-reference/abilities-api/batch-operations) |
+| Knowledge        | 7     | Requires Dashboard 6.3 or later                                                          |
 
 Tool names drop the `mainwp/` namespace and use underscores: the ability `mainwp/list-sites-v1` is the tool `list_sites_v1`. Naming rules, the built-in MCP resources (`mainwp://abilities`, `mainwp://status`, and friends), and namespace prefixing for third-party abilities are covered in [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
 
