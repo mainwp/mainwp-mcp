@@ -923,9 +923,12 @@ describe('validateInput - declared maxLength', () => {
     expect(() => validateInput({ field: [new Array(1001).fill('x')] })).toThrow(
       /too many elements/
     );
+    // Same accounting as objects: the property itself is level 1, so five
+    // nested arrays fit and a sixth does not.
     let deep: unknown = 'x';
-    for (let i = 0; i < 7; i++) deep = [deep];
-    expect(() => validateInput({ field: deep })).toThrow(/maximum nesting depth/);
+    for (let i = 0; i < 5; i++) deep = [deep];
+    expect(() => validateInput({ field: deep })).not.toThrow();
+    expect(() => validateInput({ field: [deep] })).toThrow(/maximum nesting depth/);
   });
 });
 

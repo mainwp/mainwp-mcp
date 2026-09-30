@@ -196,7 +196,7 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
     }
 
     if (Array.isArray(value)) {
-      validateArray(value, valueSchema, key, depth);
+      validateArray(value, valueSchema, key, depth + 1);
     }
 
     // Nested object: recurse to validate contents (string lengths, ID ranges, depth)
