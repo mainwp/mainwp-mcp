@@ -747,9 +747,9 @@ describe('validateInput - recursive nested validation', () => {
 });
 
 describe('validateInput - declared maxLength', () => {
-  const schemaFor = (fieldSchema: unknown) => ({
+  const schemaFor = (fieldSchema: unknown, key = 'field') => ({
     type: 'object',
-    properties: { field: fieldSchema },
+    properties: { [key]: fieldSchema },
   });
 
   const thrown = (fn: () => void): McpError => {
@@ -760,6 +760,87 @@ describe('validateInput - declared maxLength', () => {
     }
     throw new Error('expected validateInput to throw');
   };
+
+  it('accepts a UUID in a string-typed request_id', () => {
+    const schema = schemaFor({ type: 'string' }, 'request_id');
+    expect(() =>
+      validateInput({ request_id: '550e8400-e29b-41d4-a716-446655440000' }, schema)
+    ).not.toThrow();
+  });
+
+  it.each([
+    ['empty', ''],
+    ['over 255 characters', 'a'.repeat(256)],
+    ['containing a control character', 'abc\u0000def'],
+  ])('rejects a %s string-typed request_id', (_case, request_id) => {
+    const schema = schemaFor({ type: 'string' }, 'request_id');
+    expect(thrown(() => validateInput({ request_id }, schema)).message).toContain(
+      'Parameter "request_id" must be a non-empty string of at most 255 characters without control characters'
+    );
+  });
+
+  it('rejects a number in a string-only request_id', () => {
+    const schema = schemaFor({ type: 'string' }, 'request_id');
+    expect(thrown(() => validateInput({ request_id: 7 }, schema)).message).toContain(
+      'Parameter "request_id" must be a non-empty string'
+    );
+  });
+
+  it('keeps the positive-integer rule for integer-typed site_id', () => {
+    const schema = schemaFor({ type: 'integer' }, 'site_id');
+    expect(thrown(() => validateInput({ site_id: 'abc-uuid' }, schema)).message).toContain(
+      'Parameter "site_id" must be a positive integer'
+    );
+  });
+
+  it.each([{ type: {} }, { type: ['string', 7] }, { type: ['string', 'bogus'] }, { type: 42 }])(
+    'falls back to the positive-integer rule for malformed type $type',
+    fieldSchema => {
+      const schema = schemaFor(fieldSchema, 'request_id');
+      expect(thrown(() => validateInput({ request_id: 'abc-uuid' }, schema)).message).toContain(
+        'Parameter "request_id" must be a positive integer'
+      );
+    }
+  );
+
+  it('accepts numbers and strings in an integer/string id union', () => {
+    const schema = schemaFor({ type: ['integer', 'string'] }, 'request_id');
+    expect(() => validateInput({ request_id: 7 }, schema)).not.toThrow();
+    expect(() => validateInput({ request_id: 'abc' }, schema)).not.toThrow();
+  });
+
+  it('uses string-typed items for plural ids', () => {
+    const schema = schemaFor({ type: 'array', items: { type: 'string' } }, 'request_ids');
+    expect(() => validateInput({ request_ids: ['abc-uuid', 'def-uuid'] }, schema)).not.toThrow();
+    expect(
+      thrown(() => validateInput({ request_ids: ['abc\u0000def'] }, schema)).message
+    ).toContain(
+      'Element in "request_ids" must be a non-empty string of at most 255 characters without control characters'
+    );
+  });
+
+  it('falls back to the positive-integer rule for malformed plural id item type', () => {
+    const schema = schemaFor(
+      { type: 'array', items: { type: ['string', 'bogus'] } },
+      'request_ids'
+    );
+    expect(thrown(() => validateInput({ request_ids: ['abc-uuid'] }, schema)).message).toContain(
+      'Element in "request_ids" must be a positive integer'
+    );
+  });
+
+  it('enforces a declared maxLength below 255 on a string id', () => {
+    const schema = schemaFor({ type: 'string', maxLength: 10 }, 'request_id');
+    expect(() => validateInput({ request_id: 'a'.repeat(10) }, schema)).not.toThrow();
+    expect(thrown(() => validateInput({ request_id: 'a'.repeat(11) }, schema)).message).toContain(
+      '10 characters, from the tool schema'
+    );
+  });
+
+  it('treats a format-only id schema as string-typed', () => {
+    const schema = schemaFor({ format: 'uuid' }, 'request_id');
+    expect(() => validateInput({ request_id: 'abc-uuid' }, schema)).not.toThrow();
+  });
 
   it('keeps the 10000 default when the property declares no maxLength', () => {
     const schema = schemaFor({ type: 'string' });

@@ -1243,6 +1243,172 @@ describe('executeAbility', () => {
     vi.restoreAllMocks();
   });
 
+  async function callWithMockResponse(
+    abilityName: string,
+    input?: Record<string, unknown>,
+    extraAbility?: Ability
+  ) {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => (extraAbility ? [...sampleAbilities, extraAbility] : sampleAbilities),
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+      headers: new Headers(),
+    });
+    await executeAbility(baseConfig, abilityName, input);
+    return mockFetch.mock.calls[1] as [string, { method: string; body?: string }];
+  }
+
+  it.each([{}, undefined, { page: undefined }])(
+    'sends empty input= for a declared GET schema with %s',
+    async input => {
+      const [url, request] = await callWithMockResponse('mainwp/list-sites-v1', input);
+      expect(request.method).toBe('GET');
+      expect(url).toMatch(/\/run\?input=$/);
+    }
+  );
+
+  it('sends empty input= for a declared DELETE schema', async () => {
+    const [url, request] = await callWithMockResponse('mainwp/delete-site-v1', {});
+    expect(request.method).toBe('DELETE');
+    expect(url).toMatch(/\/run\?input=$/);
+  });
+
+  it('omits empty GET input so a top-level schema default applies', async () => {
+    const defaultAbility: Ability = {
+      ...sampleAbilities[0],
+      name: 'mainwp/default-read-v1',
+      input_schema: { type: ['object', 'null'], default: [] },
+    };
+    const [url, request] = await callWithMockResponse(
+      defaultAbility.name,
+      undefined,
+      defaultAbility
+    );
+    expect(request.method).toBe('GET');
+    expect(url).toMatch(/\/run$/);
+  });
+
+  it('omits empty DELETE input so a top-level schema default applies', async () => {
+    const defaultAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/default-delete-v1',
+      input_schema: { type: ['object', 'null'], default: [] },
+    };
+    const [url, request] = await callWithMockResponse(
+      defaultAbility.name,
+      undefined,
+      defaultAbility
+    );
+    expect(request.method).toBe('DELETE');
+    expect(url).toMatch(/\/run$/);
+  });
+
+  it('omits unserializable GET input so a top-level schema default applies', async () => {
+    const defaultAbility: Ability = {
+      ...sampleAbilities[0],
+      name: 'mainwp/default-read-v1',
+      input_schema: { type: ['object', 'null'], default: [] },
+    };
+    const [url, request] = await callWithMockResponse(
+      defaultAbility.name,
+      { page: undefined },
+      defaultAbility
+    );
+    expect(request.method).toBe('GET');
+    expect(url).toMatch(/\/run$/);
+  });
+
+  it('omits empty GET input for an empty schema', async () => {
+    const emptySchemaAbility: Ability = {
+      ...sampleAbilities[0],
+      name: 'mainwp/empty-schema-read-v1',
+      input_schema: {},
+    };
+    const [url, request] = await callWithMockResponse(
+      emptySchemaAbility.name,
+      undefined,
+      emptySchemaAbility
+    );
+    expect(request.method).toBe('GET');
+    expect(url).toMatch(/\/run$/);
+  });
+
+  it('omits the query string for an empty GET without an input schema', async () => {
+    const noSchemaAbility = {
+      ...sampleAbilities[0],
+      name: 'mainwp/no-schema-read-v1',
+      input_schema: undefined,
+    };
+    const [url, request] = await callWithMockResponse(noSchemaAbility.name, {}, noSchemaAbility);
+    expect(request.method).toBe('GET');
+    expect(url).toMatch(/\/run$/);
+  });
+
+  it('still sends non-empty GET input without an input schema', async () => {
+    const noSchemaAbility = {
+      ...sampleAbilities[0],
+      name: 'mainwp/no-schema-read-v1',
+      input_schema: undefined,
+    };
+    const [url] = await callWithMockResponse(noSchemaAbility.name, { page: 2 }, noSchemaAbility);
+    expect(url).toMatch(/\/run\?input\[page\]=2$/);
+  });
+
+  it('sends an empty input object for a declared POST schema', async () => {
+    const [, request] = await callWithMockResponse('mainwp/update-site-v1', {});
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body ?? '')).toEqual({ input: {} });
+  });
+
+  it('omits empty POST input for an empty schema', async () => {
+    const emptySchemaAbility: Ability = {
+      ...sampleAbilities[6],
+      name: 'mainwp/empty-schema-post-v1',
+      input_schema: {},
+    };
+    const [, request] = await callWithMockResponse(
+      emptySchemaAbility.name,
+      undefined,
+      emptySchemaAbility
+    );
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body ?? '')).toEqual({});
+  });
+
+  it('omits input from a POST without an input schema', async () => {
+    const noSchemaAbility = {
+      ...sampleAbilities[6],
+      name: 'mainwp/no-schema-post-v1',
+      input_schema: undefined,
+    };
+    const [, request] = await callWithMockResponse(noSchemaAbility.name, {}, noSchemaAbility);
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body ?? '')).toEqual({});
+  });
+
+  it('still sends non-empty POST input without an input schema', async () => {
+    const noSchemaAbility = {
+      ...sampleAbilities[6],
+      name: 'mainwp/no-schema-post-v1',
+      input_schema: undefined,
+    };
+    const [, request] = await callWithMockResponse(
+      noSchemaAbility.name,
+      { site_id: 1 },
+      noSchemaAbility
+    );
+    expect(JSON.parse(request.body ?? '')).toEqual({ input: { site_id: 1 } });
+  });
+
+  it('keeps non-empty GET query encoding', async () => {
+    const [url] = await callWithMockResponse('mainwp/list-sites-v1', { page: 2 });
+    expect(url).toContain('input[page]=2');
+  });
+
   // HTTP Method Selection Tests
   // Rules: GET (readonly), DELETE (destructive + idempotent), POST (everything else)
 

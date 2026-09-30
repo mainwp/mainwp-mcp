@@ -149,15 +149,22 @@ export class IndependentVerifier {
     const isDestructive = annotations?.destructive ?? true;
     const isIdempotent = annotations?.idempotent ?? false;
     const endpoint = `${this.baseUrl}/abilities/${abilityName}/run`;
+    const schema: unknown = ability.input_schema;
+    const hasInputSchema =
+      schema !== null &&
+      typeof schema === 'object' &&
+      !Array.isArray(schema) &&
+      Object.keys(schema).length > 0;
+    const hasSchemaDefault = hasInputSchema && Object.hasOwn(schema, 'default');
 
     if (isReadonly || (isDestructive && isIdempotent)) {
       const method = isReadonly ? 'GET' : 'DELETE';
-      return this.requestJson(
-        endpoint + (Object.keys(input).length > 0 ? serializeToPhpQueryString(input) : ''),
-        method
-      );
+      const queryString =
+        serializeToPhpQueryString(input) || (hasInputSchema && !hasSchemaDefault ? '?input=' : '');
+      return this.requestJson(endpoint + queryString, method);
     }
-    return this.requestJson(endpoint, 'POST', JSON.stringify({ input }));
+    const sendInput = hasInputSchema || Object.keys(input).length > 0;
+    return this.requestJson(endpoint, 'POST', JSON.stringify(sendInput ? { input } : {}));
   }
 
   async listSites(): Promise<VerifiedSite[]> {

@@ -125,9 +125,11 @@ function parseScalar(value: string): string | number | boolean {
   return value;
 }
 
-function parseQueryInput(url: URL): Record<string, unknown> {
+function parseQueryInput(url: URL): Record<string, unknown> | null {
   const input: Record<string, unknown> = {};
+  let hasInput = url.searchParams.has('input');
   for (const [rawKey, rawValue] of url.searchParams) {
+    if (rawKey.startsWith('input[')) hasInput = true;
     const arrayMatch = rawKey.match(/^input\[([^\]]+)\]\[\]$/);
     if (arrayMatch) {
       const current = input[arrayMatch[1]];
@@ -139,10 +141,13 @@ function parseQueryInput(url: URL): Record<string, unknown> {
     const scalarMatch = rawKey.match(/^input\[([^\]]+)\]$/);
     if (scalarMatch) input[scalarMatch[1]] = parseScalar(rawValue);
   }
-  return input;
+  return hasInput ? input : null;
 }
 
-async function parseInput(request: IncomingMessage, url: URL): Promise<Record<string, unknown>> {
+async function parseInput(
+  request: IncomingMessage,
+  url: URL
+): Promise<Record<string, unknown> | null> {
   if (request.method === 'GET' || request.method === 'DELETE') return parseQueryInput(url);
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
@@ -297,6 +302,7 @@ export const FIXTURE_ROUTED_ABILITIES = [
   'mainwp/get-site-security-v1',
   'mainwp/get-site-changes-v1',
   'mainwp/check-site-v1',
+  'mainwp/get-batch-job-status-v1',
   'mainwp/delete-site-v1',
   FIXTURE_CONFIRM_ONLY_ABILITY,
 ] as const;
@@ -363,6 +369,21 @@ async function runAbility(
   if (abilityName === 'mainwp/count-sites-v1') {
     const status = typeof input.status === 'string' ? input.status : null;
     json(response, 200, { total: sites.filter(site => !status || site.status === status).length });
+    return;
+  }
+
+  if (abilityName === 'mainwp/get-batch-job-status-v1') {
+    if (input.job_id !== 'sync_abc123') return notFound(response, 'The batch job was not found.');
+    json(response, 200, {
+      job_id: 'sync_abc123',
+      type: 'sync',
+      status: 'completed',
+      progress: 100,
+      processed: 1,
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+    });
     return;
   }
 
@@ -618,7 +639,29 @@ export async function startFixtureDashboard(
       if (url.pathname.startsWith(prefix) && url.pathname.endsWith(suffix)) {
         const abilityName = decodeURIComponent(url.pathname.slice(prefix.length, -suffix.length));
         const input = await parseInput(request, url);
-        await runAbility(abilityName, input, sites, response);
+        const ability = (
+          abilities as Array<{
+            name: string;
+            input_schema?: { type?: unknown; default?: unknown };
+          }>
+        ).find(candidate => candidate.name === abilityName);
+        const schema = ability?.input_schema;
+        const schemaType = schema?.type;
+        if (
+          input === null &&
+          FIXTURE_ROUTED_ABILITIES.some(candidate => candidate === abilityName) &&
+          schema &&
+          !Object.hasOwn(schema, 'default') &&
+          (schemaType === 'object' || (Array.isArray(schemaType) && schemaType.includes('object')))
+        ) {
+          // The WP run controller reads a missing GET/DELETE input as null.
+          json(response, 400, {
+            code: 'rest_invalid_param',
+            message: 'input is not of type object.',
+          });
+          return;
+        }
+        await runAbility(abilityName, input ?? {}, sites, response);
         return;
       }
 

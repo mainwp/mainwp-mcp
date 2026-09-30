@@ -963,7 +963,16 @@ export async function executeAbility(
   const isDestructive = classifyDestructive(ability.meta?.annotations);
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
-  const hasInput = input && Object.keys(input).length > 0;
+  // WordPress treats an empty schema as absent and rejects non-null input for it.
+  // A top-level default needs missing GET/DELETE input; input= prevents it from applying.
+  const schema = ability.input_schema;
+  const hasInputSchema =
+    schema !== null &&
+    typeof schema === 'object' &&
+    !Array.isArray(schema) &&
+    Object.keys(schema).length > 0;
+  const hasSchemaDefault = hasInputSchema && Object.hasOwn(schema, 'default');
+  const hasInputEntries = input !== undefined && Object.keys(input).length > 0;
   const writeOnlyRedactor = createWriteOnlyRedactor(ability.input_schema, input);
   const safeLogger = logger ? withSecretRedaction(logger, writeOnlyRedactor.text) : undefined;
 
@@ -983,7 +992,9 @@ export async function executeAbility(
     if (isReadonly || (isDestructive && isIdempotent)) {
       // GET or DELETE — both use query string params (WP Abilities API doesn't parse DELETE bodies)
       const method = isReadonly ? 'GET' : 'DELETE';
-      const queryString = hasInput ? serializeToPhpQueryString(input) : '';
+      const queryString =
+        serializeToPhpQueryString(input ?? {}) ||
+        (hasInputSchema && !hasSchemaDefault ? '?input=' : '');
       const fullUrl = url + queryString;
       if (fullUrl.length > MAX_URL_LENGTH) {
         throw new Error(
@@ -995,7 +1006,7 @@ export async function executeAbility(
       // POST request for non-destructive write operations
       response = await customFetch(url, {
         method: 'POST',
-        body: JSON.stringify({ input: input ?? {} }),
+        body: JSON.stringify(hasInputSchema || hasInputEntries ? { input: input ?? {} } : {}),
         signal,
       });
     }

@@ -10,8 +10,18 @@ import { McpErrorFactory } from './errors.js';
 
 // Input validation limits
 const MAX_STRING_LENGTH = 10000;
+const MAX_ID_STRING_LENGTH = 255;
 const MAX_ARRAY_ELEMENTS = 1000;
 const MAX_OBJECT_DEPTH = 5;
+const JSON_SCHEMA_TYPES = new Set([
+  'string',
+  'integer',
+  'number',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
 
 /**
  * Ceiling on a string limit raised by a tool's declared maxLength. The schema
@@ -99,6 +109,71 @@ function checkFiniteNumber(value: number, key: string, label: string): void {
   }
 }
 
+function validateId(
+  value: unknown,
+  schema: Record<string, unknown> | undefined,
+  key: string,
+  label: string
+): void {
+  const declaredType = schema && Object.hasOwn(schema, 'type') ? schema.type : undefined;
+  let types: string[] | undefined;
+  if (typeof declaredType === 'string') {
+    types = [declaredType];
+  } else if (
+    Array.isArray(declaredType) &&
+    declaredType.every(type => typeof type === 'string' && JSON_SCHEMA_TYPES.has(type))
+  ) {
+    types = declaredType;
+  } else if (
+    schema &&
+    !Object.hasOwn(schema, 'type') &&
+    ((Object.hasOwn(schema, 'format') &&
+      typeof schema.format === 'string' &&
+      schema.format.length > 0) ||
+      (Object.hasOwn(schema, 'pattern') &&
+        typeof schema.pattern === 'string' &&
+        schema.pattern.length > 0))
+  ) {
+    types = ['string'];
+  }
+
+  if (!types?.includes('string')) {
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw McpErrorFactory.invalidParams(
+        `${label} must be a string or number, got ${typeof value}`,
+        { parameter: key }
+      );
+    }
+    if (!isValidId(value)) {
+      throw McpErrorFactory.invalidParams(`${label} must be a positive integer`, {
+        parameter: key,
+      });
+    }
+    return;
+  }
+
+  const acceptsNumber = types.includes('integer') || types.includes('number');
+  if (typeof value === 'number' && acceptsNumber) {
+    if (!isValidId(value)) {
+      throw McpErrorFactory.invalidParams(`${label} must be a positive integer`, {
+        parameter: key,
+      });
+    }
+    return;
+  }
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAX_ID_STRING_LENGTH ||
+    /\p{Cc}/u.test(value)
+  ) {
+    throw McpErrorFactory.invalidParams(
+      `${label} must be a non-empty string of at most ${MAX_ID_STRING_LENGTH} characters without control characters${acceptsNumber ? ' or a positive integer' : ''}`,
+      { parameter: key }
+    );
+  }
+}
+
 // Nested arrays recurse too, so strings inside them get the same limits
 // (items.items.maxLength or the default) instead of skipping the check.
 function validateArray(
@@ -160,38 +235,17 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
       checkFiniteNumber(value, key, `Parameter "${key}"`);
     }
 
-    // ID fields: accept number or numeric string, must be positive integer
     if (key.endsWith('_id')) {
-      if (typeof value !== 'string' && typeof value !== 'number') {
-        throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" must be a string or number, got ${typeof value}`,
-          { parameter: key }
-        );
-      }
-      if (!isValidId(value)) {
-        throw McpErrorFactory.invalidParams(`Parameter "${key}" must be a positive integer`, {
-          parameter: key,
-        });
-      }
+      validateId(value, valueSchema, key, `Parameter "${key}"`);
     }
 
-    // Plural ID fields (e.g., site_ids): must be an array of valid positive integers
     if (key.endsWith('_ids')) {
       if (!Array.isArray(value)) {
         throw McpErrorFactory.invalidParams(`"${key}" must be an array`, { parameter: key });
       }
+      const itemsSchema = ownSchema(valueSchema, 'items');
       for (const item of value) {
-        if (typeof item !== 'string' && typeof item !== 'number') {
-          throw McpErrorFactory.invalidParams(
-            `Element in "${key}" must be a string or number, got ${typeof item}`,
-            { parameter: key }
-          );
-        }
-        if (!isValidId(item)) {
-          throw McpErrorFactory.invalidParams(`Element in "${key}" must be a positive integer`, {
-            parameter: key,
-          });
-        }
+        validateId(item, itemsSchema, key, `Element in "${key}"`);
       }
     }
 

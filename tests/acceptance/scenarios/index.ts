@@ -2,6 +2,7 @@ import { abilityReadScenarios } from './ability-reads.js';
 import { configurationScenarios } from './configuration.js';
 import { completionScenarios } from './completions.js';
 import { confirmationScenarios } from './confirmation.js';
+import { idInputScenarios } from './id-inputs.js';
 import { policyScenarios } from './policy.js';
 import { readScenarios } from './read.js';
 import { setupScenarios } from './setup.js';
@@ -19,6 +20,7 @@ export const scenarios: ScenarioDefinition[] = [
   ...writeScenarios,
   ...confirmationScenarios,
   ...transportScenarios,
+  ...idInputScenarios,
 ];
 
 const duplicateIds = scenarios

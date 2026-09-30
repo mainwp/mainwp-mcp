@@ -3904,7 +3904,7 @@ describe('acceptance fixture catalog', () => {
         (await run('mainwp/get-site-updates-v1', '?input[site_id_or_domain]=2')).updates
       ).toEqual([]);
 
-      const network = await run('mainwp/list-updates-v1');
+      const network = await run('mainwp/list-updates-v1', '?input=');
       expect(network.summary).toEqual({
         core: 1,
         plugins: 2,
@@ -3913,7 +3913,7 @@ describe('acceptance fixture catalog', () => {
         total: 4,
       });
       expect(network.total).toBe(4);
-      expect((await run('mainwp/list-ignored-updates-v1')).total).toBe(2);
+      expect((await run('mainwp/list-ignored-updates-v1', '?input=')).total).toBe(2);
 
       const themes = await run('mainwp/get-site-themes-v1', '?input[site_id_or_domain]=1');
       expect(themes.active_theme).toBe('bakehouse');
@@ -3936,10 +3936,10 @@ describe('acceptance fixture catalog', () => {
         }
       );
       expect(deleted.status).toBe(200);
-      expect((await run('mainwp/list-updates-v1')).total).toBe(2);
+      expect((await run('mainwp/list-updates-v1', '?input=')).total).toBe(2);
       // The inventory travels with the site record, so reset() restores it.
       fixture.reset();
-      expect((await run('mainwp/list-updates-v1')).total).toBe(4);
+      expect((await run('mainwp/list-updates-v1', '?input=')).total).toBe(4);
     } finally {
       await fixture.close();
     }
