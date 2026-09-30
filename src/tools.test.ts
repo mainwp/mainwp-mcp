@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
-import { clearPendingPreviews } from './confirmation.js';
+import { clearPendingPreviews, getPreviewKey } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
 import { MCP_ERROR_CODES } from './errors.js';
 import {
@@ -944,6 +944,66 @@ describe('executeTool', () => {
 
     expect(result.content[0].text).toContain('error');
     expect(result.isError).toBe(true);
+  });
+
+  describe('declared maxLength', () => {
+    const packageAbility = (readonly: boolean): Ability => ({
+      name: 'mainwp/upload-package-v1',
+      label: 'Upload Package',
+      description: 'Upload a plugin package',
+      category: 'mainwp-plugins',
+      input_schema: {
+        type: 'object',
+        properties: { package_base64: { type: 'string', maxLength: 34952536 } },
+      },
+      meta: { annotations: { readonly, destructive: false, idempotent: false } },
+    });
+
+    it('sends a string above 10000 characters to a write tool that declares room for it', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [packageAbility(false)],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ uploaded: true }),
+        headers: new Headers(),
+      });
+      const payload = 'A'.repeat(50000);
+
+      const result = await executeTool(
+        baseConfig,
+        'upload_package_v1',
+        { package_base64: payload },
+        mockLogger
+      );
+
+      expect(result.isError).toBeUndefined();
+      const [url, init] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(url).toMatch(/\/abilities\/mainwp\/upload-package-v1\/run$/);
+      expect(JSON.parse(init.body as string)).toEqual({ input: { package_base64: payload } });
+    });
+
+    it('still enforces the URL cap for a readonly tool with a large declared maxLength', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [packageAbility(true)],
+        headers: new Headers(),
+      });
+
+      const result = await executeTool(
+        baseConfig,
+        'upload_package_v1',
+        { package_base64: 'A'.repeat(50000) },
+        mockLogger
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Request URL exceeds 8000 characters');
+      // Only the abilities fetch ran; the oversized GET was never sent.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('should return isError for unknown tool', async () => {
@@ -2166,6 +2226,30 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(confirmResult.content[0].text).toContain('success');
+  });
+});
+
+describe('getPreviewKey', () => {
+  it('keeps the key size fixed however large the arguments are', () => {
+    const small = getPreviewKey('scope', 'upload_package_v1', { package_base64: 'A' });
+    const large = getPreviewKey('scope', 'upload_package_v1', {
+      package_base64: 'A'.repeat(1_000_000),
+    });
+    expect(large.length).toBe(small.length);
+    expect(large).not.toBe(small);
+  });
+
+  it('ignores confirmation parameters and key order', () => {
+    const preview = getPreviewKey('scope', 'delete_site_v1', { site_id: 1, name: 'x' });
+    const confirm = getPreviewKey('scope', 'delete_site_v1', {
+      name: 'x',
+      site_id: 1,
+      confirm: true,
+      user_confirmed: true,
+      dry_run: false,
+      confirmation_token: 'token',
+    });
+    expect(confirm).toBe(preview);
   });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -9,7 +10,8 @@ import {
   ResourceListChangedNotificationSchema,
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { createServer } from './index.js';
+import { createServer, createStdioTransport, STDIO_MAX_BUFFER_SIZE } from './index.js';
+import { MAX_DECLARED_STRING_LENGTH } from './security.js';
 import { clearCache, initRateLimiter } from './abilities.js';
 import { clearToolsCache } from './tools.js';
 import { ConfigState } from './setup.js';
@@ -255,6 +257,49 @@ describe('MCP request handlers', () => {
     const text = (result.content as Array<{ text: string }>)[0].text;
     expect(text).toContain('CONFIRMATION_UNSUPPORTED');
     expect(runUrls()).toHaveLength(0);
+    await client.close();
+    await server.close();
+  });
+
+  it("accepts a string up to the tool's declared maxLength through tools/call", async () => {
+    // Issue #74: a third-party ability taking a plugin ZIP as base64 declares
+    // maxLength 34952536, but the server capped every string at 10000.
+    const uploadAbility = {
+      name: 'mainwp/upload-package-v1',
+      label: 'Upload Package',
+      description: 'Upload a plugin package',
+      category: 'mainwp-plugins',
+      input_schema: {
+        type: 'object',
+        properties: { package_base64: { type: 'string', maxLength: 34952536 } },
+      },
+      meta: { annotations: { readonly: false, destructive: false, idempotent: false } },
+    };
+    mockFetch.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => (url.includes('/run') ? { uploaded: true } : [uploadAbility]),
+      headers: new Headers(),
+    }));
+    const { client, server } = await connectedClient();
+    const payload = 'A'.repeat(100000);
+
+    const result = await client.callTool({
+      name: 'upload_package_v1',
+      arguments: { package_base64: payload },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const runCall = mockFetch.mock.calls.find(call => String(call[0]).includes('/run'));
+    expect(JSON.parse(runCall?.[1].body)).toEqual({ input: { package_base64: payload } });
+
+    const tooLong = await client.callTool({
+      name: 'upload_package_v1',
+      arguments: { package_base64: 'A'.repeat(34952537) },
+    });
+    expect(tooLong.isError).toBe(true);
+    expect((tooLong.content as Array<{ text: string }>)[0].text).toContain(
+      '34952536 characters, from the tool schema'
+    );
     await client.close();
     await server.close();
   });
@@ -528,6 +573,108 @@ describe('MCP request handlers', () => {
     await client.close();
     await server.close();
   });
+});
+
+describe('stdio transport buffer', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sizes the read buffer for the largest string validation can accept', async () => {
+    expect(STDIO_MAX_BUFFER_SIZE).toBeGreaterThan(MAX_DECLARED_STRING_LENGTH);
+    const stdin = new PassThrough();
+    const transport = createStdioTransport(stdin, new PassThrough());
+    const failure = new Promise<Error>(resolve => {
+      transport.onerror = resolve;
+    });
+    await transport.start();
+
+    stdin.write(Buffer.alloc(STDIO_MAX_BUFFER_SIZE + 1, 0x41));
+
+    expect((await failure).message).toBe(
+      `ReadBuffer exceeded maximum size of ${STDIO_MAX_BUFFER_SIZE} bytes`
+    );
+  });
+
+  it('returns a validation error for an oversized string instead of dropping the connection', async () => {
+    // A 20M-character string is over the SDK's 10 MiB default, so before the
+    // buffer was raised this message closed the transport with no response.
+    const declared = 20_000_000;
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          name: 'mainwp/upload-package-v1',
+          label: 'Upload Package',
+          description: 'Upload a plugin package',
+          category: 'mainwp-plugins',
+          input_schema: {
+            type: 'object',
+            properties: { package_base64: { type: 'string', maxLength: declared } },
+          },
+          meta: { annotations: { readonly: false, destructive: false, idempotent: false } },
+        },
+      ],
+      headers: new Headers(),
+    });
+    const { server } = await createServer(makeBaseConfig());
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const response = new Promise<{ result: { isError: boolean; content: { text: string }[] } }>(
+      (resolve, reject) => {
+        let buffered = '';
+        stdout.on('data', chunk => {
+          buffered += String(chunk);
+          // Only complete lines are messages; a chunk may end mid-line.
+          const lines = buffered.split('\n');
+          buffered = lines.pop() ?? '';
+          for (const line of lines.filter(Boolean)) {
+            const message = JSON.parse(line);
+            if (message.id === 2) resolve(message);
+          }
+        });
+        server.onclose = () => reject(new Error('transport closed'));
+      }
+    );
+    await server.connect(createStdioTransport(stdin, stdout));
+
+    const send = (message: unknown) => stdin.write(JSON.stringify(message) + '\n');
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0.0' },
+      },
+    });
+    send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    send({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'upload_package_v1',
+        arguments: { package_base64: 'A'.repeat(declared + 1) },
+      },
+    });
+
+    const { result } = await response;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(`${declared} characters, from the tool schema`);
+    expect(mockFetch.mock.calls.map(call => String(call[0]))).not.toContainEqual(
+      expect.stringContaining('/run')
+    );
+    await server.close();
+  }, 30_000);
 });
 
 describe('setup mode handlers', () => {

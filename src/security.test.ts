@@ -15,11 +15,30 @@ import {
   DEPTH_LIMIT_MARKER,
   RateLimiter,
   isValidId,
+  MAX_DECLARED_STRING_LENGTH,
 } from './security.js';
+import { McpError } from './errors.js';
 
 describe('validateInput', () => {
   it('should accept valid input', () => {
     expect(() => validateInput({ name: 'test', count: 5 })).not.toThrow();
+  });
+
+  it.each([
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+    ['NaN', NaN],
+  ])('should reject %s wherever a number appears', (_label, value) => {
+    expect(() => validateInput({ target: value })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ targets: [value] })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ nested: { target: value } })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ matrix: [[value]] })).toThrow(/must be a finite number/);
+  });
+
+  it('should accept finite numbers of any sign or magnitude', () => {
+    expect(() =>
+      validateInput({ a: 0, b: -1.5, c: Number.MAX_VALUE, d: [1e308], e: { f: 2 ** 53 } })
+    ).not.toThrow();
   });
 
   it('should reject strings exceeding MAX_STRING_LENGTH', () => {
@@ -724,6 +743,192 @@ describe('validateInput - recursive nested validation', () => {
 
   it('should reject nested objects inside arrays with invalid IDs', () => {
     expect(() => validateInput({ arr: [{ site_id: 0 }] })).toThrow(/must be a positive integer/);
+  });
+});
+
+describe('validateInput - declared maxLength', () => {
+  const schemaFor = (fieldSchema: unknown) => ({
+    type: 'object',
+    properties: { field: fieldSchema },
+  });
+
+  const thrown = (fn: () => void): McpError => {
+    try {
+      fn();
+    } catch (error) {
+      return error as McpError;
+    }
+    throw new Error('expected validateInput to throw');
+  };
+
+  it('keeps the 10000 default when the property declares no maxLength', () => {
+    const schema = schemaFor({ type: 'string' });
+    expect(() => validateInput({ field: 'a'.repeat(10000) }, schema)).not.toThrow();
+    const error = thrown(() => validateInput({ field: 'a'.repeat(10001) }, schema));
+    expect(error.message).toContain('10000 characters, default limit');
+    expect(error.data).toEqual({ parameter: 'field', maxLength: 10000, limitSource: 'default' });
+  });
+
+  it('honors a declared maxLength above the default, up to the limit', () => {
+    const schema = schemaFor({ type: 'string', maxLength: 20000 });
+    expect(() => validateInput({ field: 'a'.repeat(20000) }, schema)).not.toThrow();
+    const error = thrown(() => validateInput({ field: 'a'.repeat(20001) }, schema));
+    expect(error.message).toContain('20000 characters, from the tool schema');
+    expect(error.data).toEqual({ parameter: 'field', maxLength: 20000, limitSource: 'schema' });
+  });
+
+  it('honors a declared maxLength below the default', () => {
+    const schema = schemaFor({ type: 'string', maxLength: 100 });
+    expect(() => validateInput({ field: 'a'.repeat(100) }, schema)).not.toThrow();
+    expect(() => validateInput({ field: 'a'.repeat(101) }, schema)).toThrow(
+      /100 characters, from the tool schema/
+    );
+  });
+
+  it('accepts the base64 plugin package size from issue #74', () => {
+    const schema = schemaFor({ type: 'string', maxLength: 34952536 });
+    expect(() => validateInput({ field: 'a'.repeat(34952536) }, schema)).not.toThrow();
+  });
+
+  it.each([
+    ['a numeric string', '20000'],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['a negative number', -20000],
+    ['zero', 0],
+    ['a fraction', 20000.5],
+    ['a number above MAX_SAFE_INTEGER', 2 ** 53],
+    ['null', null],
+    ['a boolean', true],
+    ['an object', { value: 20000 }],
+    ['an array', [20000]],
+  ])('falls back to the default when maxLength is %s', (_label, maxLength) => {
+    const schema = schemaFor({ type: 'string', maxLength });
+    expect(() => validateInput({ field: 'a'.repeat(10000) }, schema)).not.toThrow();
+    const error = thrown(() => validateInput({ field: 'a'.repeat(10001) }, schema));
+    expect(error.data).toEqual({ parameter: 'field', maxLength: 10000, limitSource: 'default' });
+  });
+
+  it.each([
+    ['a null schema', null],
+    ['a string schema', 'object'],
+    ['an array schema', [{ maxLength: 20000 }]],
+    ['non-object properties', { properties: 'field' }],
+    ['array properties', { properties: [{ maxLength: 20000 }] }],
+    ['a non-object property schema', { properties: { field: 20000 } }],
+    [
+      'an inherited property schema',
+      { properties: Object.create({ field: { maxLength: 20000 } }) },
+    ],
+    ['an inherited maxLength', { properties: { field: Object.create({ maxLength: 20000 }) } }],
+  ])('falls back to the default for %s', (_label, schema) => {
+    expect(() => validateInput({ field: 'a'.repeat(10001) }, schema)).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('clamps a declared maxLength above the ceiling', () => {
+    const schema = schemaFor({ type: 'string', maxLength: 2 ** 40 });
+    expect(() =>
+      validateInput({ field: 'a'.repeat(MAX_DECLARED_STRING_LENGTH) }, schema)
+    ).not.toThrow();
+    const error = thrown(() =>
+      validateInput({ field: 'a'.repeat(MAX_DECLARED_STRING_LENGTH + 1) }, schema)
+    );
+    expect(error.message).toContain(`${MAX_DECLARED_STRING_LENGTH} characters, server ceiling`);
+    expect(error.data).toEqual({
+      parameter: 'field',
+      maxLength: MAX_DECLARED_STRING_LENGTH,
+      limitSource: 'ceiling',
+    });
+  });
+
+  it('honors items.maxLength for array elements', () => {
+    const schema = schemaFor({ type: 'array', items: { type: 'string', maxLength: 20000 } });
+    expect(() => validateInput({ field: ['a'.repeat(20000)] }, schema)).not.toThrow();
+    const error = thrown(() => validateInput({ field: ['a'.repeat(20001)] }, schema));
+    expect(error.message).toContain('Element in "field"');
+    expect(error.data).toEqual({ parameter: 'field', maxLength: 20000, limitSource: 'schema' });
+  });
+
+  it.each([
+    ['missing items', { type: 'array' }],
+    ['tuple items', { type: 'array', items: [{ maxLength: 20000 }] }],
+    ['items with an invalid maxLength', { type: 'array', items: { maxLength: '20000' } }],
+    ['maxLength on the array instead of items', { type: 'array', maxLength: 20000 }],
+  ])('keeps the default for array elements with %s', (_label, fieldSchema) => {
+    expect(() => validateInput({ field: ['a'.repeat(10001)] }, schemaFor(fieldSchema))).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('honors maxLength on nested object properties', () => {
+    const schema = schemaFor({
+      type: 'object',
+      properties: { inner: { type: 'string', maxLength: 20000 } },
+    });
+    expect(() => validateInput({ field: { inner: 'a'.repeat(20000) } }, schema)).not.toThrow();
+    expect(() => validateInput({ field: { inner: 'a'.repeat(20001) } }, schema)).toThrow(
+      /20000 characters, from the tool schema/
+    );
+    // A sibling the nested schema does not declare keeps the default.
+    expect(() => validateInput({ field: { other: 'a'.repeat(10001) } }, schema)).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('honors maxLength on properties of objects inside arrays', () => {
+    const schema = schemaFor({
+      type: 'array',
+      items: { type: 'object', properties: { inner: { type: 'string', maxLength: 20000 } } },
+    });
+    expect(() => validateInput({ field: [{ inner: 'a'.repeat(20000) }] }, schema)).not.toThrow();
+    expect(() => validateInput({ field: [{ inner: 'a'.repeat(20001) }] }, schema)).toThrow(
+      /20000 characters, from the tool schema/
+    );
+  });
+
+  it('does not apply a top-level maxLength to a same-named nested key', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        field: { type: 'string', maxLength: 20000 },
+        nested: { type: 'object' },
+      },
+    };
+    expect(() => validateInput({ nested: { field: 'a'.repeat(10001) } }, schema)).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('applies the default limit to strings inside nested arrays', () => {
+    expect(() => validateInput({ field: [['a'.repeat(10000)]] })).not.toThrow();
+    expect(() => validateInput({ field: [['a'.repeat(10001)]] })).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('honors items.items.maxLength for nested arrays', () => {
+    const schema = schemaFor({
+      type: 'array',
+      items: { type: 'array', items: { type: 'string', maxLength: 20000 } },
+    });
+    expect(() => validateInput({ field: [['a'.repeat(20000)]] }, schema)).not.toThrow();
+    expect(() => validateInput({ field: [['a'.repeat(20001)]] }, schema)).toThrow(
+      /20000 characters, from the tool schema/
+    );
+  });
+
+  it('enforces element count and depth limits on nested arrays', () => {
+    expect(() => validateInput({ field: [new Array(1001).fill('x')] })).toThrow(
+      /too many elements/
+    );
+    // Same accounting as objects: the property itself is level 1, so five
+    // nested arrays fit and a sixth does not.
+    let deep: unknown = 'x';
+    for (let i = 0; i < 5; i++) deep = [deep];
+    expect(() => validateInput({ field: deep })).not.toThrow();
+    expect(() => validateInput({ field: [deep] })).toThrow(/maximum nesting depth/);
   });
 });
 

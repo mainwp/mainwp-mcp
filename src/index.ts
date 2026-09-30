@@ -18,6 +18,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { realpathSync } from 'node:fs';
+import type { Readable, Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import {
   CallToolRequestSchema,
@@ -44,7 +45,13 @@ import { validateCredentials } from './credential-check.js';
 import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
-import { appPasswordSecret, sanitizeError, registerKnownSecrets, isValidId } from './security.js';
+import {
+  appPasswordSecret,
+  sanitizeError,
+  registerKnownSecrets,
+  isValidId,
+  MAX_DECLARED_STRING_LENGTH,
+} from './security.js';
 import { abilityNameToToolName } from './naming.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
 import {
@@ -62,6 +69,21 @@ const SERVER_VERSION = '1.3.0';
 
 // Completion limits
 const MAX_COMPLETION_SUGGESTIONS = 20;
+
+/**
+ * Inbound stdio message cap. The SDK's default read buffer is 10 MiB and it
+ * closes the transport when one message exceeds it, which would drop the
+ * connection before validateInput can reject an oversized string or accept a
+ * declared one. Sized for the largest string validation can accept plus the
+ * JSON-RPC envelope and other arguments. The ceiling counts characters and
+ * the buffer counts UTF-8 bytes; base64 payloads are ASCII, so they fit.
+ */
+export const STDIO_JSON_RPC_OVERHEAD = 8 * 1024 * 1024;
+export const STDIO_MAX_BUFFER_SIZE = MAX_DECLARED_STRING_LENGTH + STDIO_JSON_RPC_OVERHEAD;
+
+export function createStdioTransport(stdin?: Readable, stdout?: Writable): StdioServerTransport {
+  return new StdioServerTransport(stdin, stdout, { maxBufferSize: STDIO_MAX_BUFFER_SIZE });
+}
 
 const SETUP_GUIDE_URL = 'https://github.com/mainwp/mainwp-mcp#readme';
 
@@ -538,7 +560,7 @@ async function main(): Promise<void> {
     const { server, logger } = await createServer(state);
 
     // Connect via stdio transport
-    const transport = new StdioServerTransport();
+    const transport = createStdioTransport();
     await server.connect(transport);
 
     logger.info('MCP server running on stdio');

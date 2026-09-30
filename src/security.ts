@@ -13,6 +13,16 @@ const MAX_STRING_LENGTH = 10000;
 const MAX_ARRAY_ELEMENTS = 1000;
 const MAX_OBJECT_DEPTH = 5;
 
+/**
+ * Ceiling on a string limit raised by a tool's declared maxLength. The schema
+ * comes from the Dashboard, so a declaration can only raise the limit this
+ * far. 64 MiB of characters is base64 for about 48 MiB of binary, which covers
+ * a plugin ZIP upload (issue #74 declares 34952536) with room. POST bodies
+ * have no outbound size cap to defer to; GET and DELETE requests still hit
+ * MAX_URL_LENGTH in executeAbility, which rejects rather than truncates.
+ */
+export const MAX_DECLARED_STRING_LENGTH = 64 * 1024 * 1024;
+
 // Upper bound on the string sanitizeError runs its regexes over. Error bodies
 // forwarded here are untrusted and can be up to MAX_ERROR_BODY_BYTES (64KB);
 // capping the working string first keeps every replace() linear-bounded and
@@ -22,13 +32,118 @@ const MAX_OBJECT_DEPTH = 5;
 // clipped, and clipping can only remove content, never expose a secret.
 const MAX_SANITIZE_INPUT_LENGTH = 2000;
 
+interface StringLimit {
+  limit: number;
+  source: 'schema' | 'default' | 'ceiling';
+}
+
+const LIMIT_SOURCE_LABELS: Record<StringLimit['source'], string> = {
+  schema: 'from the tool schema',
+  default: 'default limit',
+  ceiling: 'server ceiling for declared limits',
+};
+
+function isSchemaObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Own properties only: bounded schemas are null-prototype, but a plain object
+// would otherwise resolve "constructor" or "toString" through its prototype.
+function ownSchema(schema: unknown, keyword: string): Record<string, unknown> | undefined {
+  if (!isSchemaObject(schema) || !Object.hasOwn(schema, keyword)) {
+    return undefined;
+  }
+  const child = schema[keyword];
+  return isSchemaObject(child) ? child : undefined;
+}
+
+function propertySchema(schema: unknown, key: string): Record<string, unknown> | undefined {
+  return ownSchema(ownSchema(schema, 'properties'), key);
+}
+
+// The schema is remote input. Only a positive safe integer can move the limit,
+// and never past MAX_DECLARED_STRING_LENGTH; anything else keeps the default.
+function stringLimit(schema: Record<string, unknown> | undefined): StringLimit {
+  const declared = schema && Object.hasOwn(schema, 'maxLength') ? schema.maxLength : undefined;
+  if (typeof declared !== 'number' || !Number.isSafeInteger(declared) || declared <= 0) {
+    return { limit: MAX_STRING_LENGTH, source: 'default' };
+  }
+  if (declared > MAX_DECLARED_STRING_LENGTH) {
+    return { limit: MAX_DECLARED_STRING_LENGTH, source: 'ceiling' };
+  }
+  return { limit: declared, source: 'schema' };
+}
+
+function checkStringLength(
+  value: string,
+  schema: Record<string, unknown> | undefined,
+  key: string,
+  label: string
+): void {
+  const { limit, source } = stringLimit(schema);
+  if (value.length > limit) {
+    throw McpErrorFactory.invalidParams(
+      `${label} exceeds maximum length (${limit} characters, ${LIMIT_SOURCE_LABELS[source]})`,
+      { parameter: key, maxLength: limit, limitSource: source }
+    );
+  }
+}
+
+// JSON has no non-finite numbers, but JSON.parse turns an out-of-range
+// literal like 1e309 into Infinity. JSON.stringify would then forward it as
+// null, so the preview and the executed request could carry different values
+// under one confirmation token. Reject them at the boundary instead.
+function checkFiniteNumber(value: number, key: string, label: string): void {
+  if (!Number.isFinite(value)) {
+    throw McpErrorFactory.invalidParams(`${label} must be a finite number`, { parameter: key });
+  }
+}
+
+// Nested arrays recurse too, so strings inside them get the same limits
+// (items.items.maxLength or the default) instead of skipping the check.
+function validateArray(
+  value: unknown[],
+  schema: Record<string, unknown> | undefined,
+  key: string,
+  depth: number
+): void {
+  if (depth > MAX_OBJECT_DEPTH) {
+    throw McpErrorFactory.invalidParams(
+      `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
+      { maxDepth: MAX_OBJECT_DEPTH }
+    );
+  }
+  if (value.length > MAX_ARRAY_ELEMENTS) {
+    throw McpErrorFactory.invalidParams(
+      `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
+      { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
+    );
+  }
+  const itemsSchema = ownSchema(schema, 'items');
+  for (const item of value) {
+    if (typeof item === 'string') {
+      checkStringLength(item, itemsSchema, key, `Element in "${key}"`);
+    } else if (typeof item === 'number') {
+      checkFiniteNumber(item, key, `Element in "${key}"`);
+    } else if (Array.isArray(item)) {
+      validateArray(item, itemsSchema, key, depth + 1);
+    } else if (typeof item === 'object' && item !== null) {
+      validateInput(item as Record<string, unknown>, itemsSchema, depth + 1);
+    }
+  }
+}
+
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
  * Recurses into nested objects and arrays to enforce string length and ID range checks.
  * Throws McpError with INVALID_PARAMS code on validation failure.
+ *
+ * `schema` is the called ability's input_schema. A property's declared
+ * maxLength (or items.maxLength for array elements) replaces the default
+ * string limit, following `properties` wherever the input nests.
  */
-export function validateInput(args: Record<string, unknown>, depth = 0): void {
+export function validateInput(args: Record<string, unknown>, schema?: unknown, depth = 0): void {
   if (depth > MAX_OBJECT_DEPTH) {
     throw McpErrorFactory.invalidParams(
       `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
@@ -37,12 +152,12 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
   }
 
   for (const [key, value] of Object.entries(args)) {
-    // String length check
-    if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
-      throw McpErrorFactory.invalidParams(
-        `Parameter "${key}" exceeds maximum length (${MAX_STRING_LENGTH} characters)`,
-        { parameter: key, maxLength: MAX_STRING_LENGTH }
-      );
+    const valueSchema = propertySchema(schema, key);
+
+    if (typeof value === 'string') {
+      checkStringLength(value, valueSchema, key, `Parameter "${key}"`);
+    } else if (typeof value === 'number') {
+      checkFiniteNumber(value, key, `Parameter "${key}"`);
     }
 
     // ID fields: accept number or numeric string, must be positive integer
@@ -80,31 +195,13 @@ export function validateInput(args: Record<string, unknown>, depth = 0): void {
       }
     }
 
-    // Array validation
     if (Array.isArray(value)) {
-      if (value.length > MAX_ARRAY_ELEMENTS) {
-        throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
-          { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
-        );
-      }
-      // Validate array elements (strings and nested objects)
-      for (const item of value) {
-        if (typeof item === 'string' && item.length > MAX_STRING_LENGTH) {
-          throw McpErrorFactory.invalidParams(
-            `Element in "${key}" exceeds maximum length (${MAX_STRING_LENGTH} characters)`,
-            { parameter: key, maxLength: MAX_STRING_LENGTH }
-          );
-        }
-        if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
-          validateInput(item as Record<string, unknown>, depth + 1);
-        }
-      }
+      validateArray(value, valueSchema, key, depth + 1);
     }
 
     // Nested object: recurse to validate contents (string lengths, ID ranges, depth)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      validateInput(value as Record<string, unknown>, depth + 1);
+      validateInput(value as Record<string, unknown>, valueSchema, depth + 1);
     }
   }
 }
