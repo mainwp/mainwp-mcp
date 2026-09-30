@@ -837,9 +837,19 @@ describe('validateInput - declared maxLength', () => {
     );
   });
 
-  it('treats a format-only id schema as string-typed', () => {
+  it('keeps the positive-integer rule for a format-only id schema', () => {
     const schema = schemaFor({ format: 'uuid' }, 'request_id');
-    expect(() => validateInput({ request_id: 'abc-uuid' }, schema)).not.toThrow();
+    expect(
+      thrown(() => validateInput({ request_id: '550e8400-e29b-41d4-a716-446655440000' }, schema))
+        .message
+    ).toContain('Parameter "request_id" must be a positive integer');
+  });
+
+  it('accepts a UUID in a string-typed uuid-format request_id', () => {
+    const schema = schemaFor({ type: 'string', format: 'uuid' }, 'request_id');
+    expect(() =>
+      validateInput({ request_id: '550e8400-e29b-41d4-a716-446655440000' }, schema)
+    ).not.toThrow();
   });
 
   it('keeps the 10000 default when the property declares no maxLength', () => {

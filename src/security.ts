@@ -124,17 +124,6 @@ function validateId(
     declaredType.every(type => typeof type === 'string' && JSON_SCHEMA_TYPES.has(type))
   ) {
     types = declaredType;
-  } else if (
-    schema &&
-    !Object.hasOwn(schema, 'type') &&
-    ((Object.hasOwn(schema, 'format') &&
-      typeof schema.format === 'string' &&
-      schema.format.length > 0) ||
-      (Object.hasOwn(schema, 'pattern') &&
-        typeof schema.pattern === 'string' &&
-        schema.pattern.length > 0))
-  ) {
-    types = ['string'];
   }
 
   if (!types?.includes('string')) {
