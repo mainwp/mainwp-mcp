@@ -24,6 +24,23 @@ describe('validateInput', () => {
     expect(() => validateInput({ name: 'test', count: 5 })).not.toThrow();
   });
 
+  it.each([
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+    ['NaN', NaN],
+  ])('should reject %s wherever a number appears', (_label, value) => {
+    expect(() => validateInput({ target: value })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ targets: [value] })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ nested: { target: value } })).toThrow(/must be a finite number/);
+    expect(() => validateInput({ matrix: [[value]] })).toThrow(/must be a finite number/);
+  });
+
+  it('should accept finite numbers of any sign or magnitude', () => {
+    expect(() =>
+      validateInput({ a: 0, b: -1.5, c: Number.MAX_VALUE, d: [1e308], e: { f: 2 ** 53 } })
+    ).not.toThrow();
+  });
+
   it('should reject strings exceeding MAX_STRING_LENGTH', () => {
     const longString = 'a'.repeat(10001);
     expect(() => validateInput({ field: longString })).toThrow(/exceeds maximum length/);

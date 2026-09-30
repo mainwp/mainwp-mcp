@@ -632,7 +632,10 @@ describe('stdio transport buffer', () => {
         let buffered = '';
         stdout.on('data', chunk => {
           buffered += String(chunk);
-          for (const line of buffered.split('\n').filter(Boolean)) {
+          // Only complete lines are messages; a chunk may end mid-line.
+          const lines = buffered.split('\n');
+          buffered = lines.pop() ?? '';
+          for (const line of lines.filter(Boolean)) {
             const message = JSON.parse(line);
             if (message.id === 2) resolve(message);
           }

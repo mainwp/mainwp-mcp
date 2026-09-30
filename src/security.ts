@@ -89,6 +89,16 @@ function checkStringLength(
   }
 }
 
+// JSON has no non-finite numbers, but JSON.parse turns an out-of-range
+// literal like 1e309 into Infinity. JSON.stringify would then forward it as
+// null, so the preview and the executed request could carry different values
+// under one confirmation token. Reject them at the boundary instead.
+function checkFiniteNumber(value: number, key: string, label: string): void {
+  if (!Number.isFinite(value)) {
+    throw McpErrorFactory.invalidParams(`${label} must be a finite number`, { parameter: key });
+  }
+}
+
 // Nested arrays recurse too, so strings inside them get the same limits
 // (items.items.maxLength or the default) instead of skipping the check.
 function validateArray(
@@ -113,6 +123,8 @@ function validateArray(
   for (const item of value) {
     if (typeof item === 'string') {
       checkStringLength(item, itemsSchema, key, `Element in "${key}"`);
+    } else if (typeof item === 'number') {
+      checkFiniteNumber(item, key, `Element in "${key}"`);
     } else if (Array.isArray(item)) {
       validateArray(item, itemsSchema, key, depth + 1);
     } else if (typeof item === 'object' && item !== null) {
@@ -144,6 +156,8 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
 
     if (typeof value === 'string') {
       checkStringLength(value, valueSchema, key, `Parameter "${key}"`);
+    } else if (typeof value === 'number') {
+      checkFiniteNumber(value, key, `Parameter "${key}"`);
     }
 
     // ID fields: accept number or numeric string, must be positive integer
