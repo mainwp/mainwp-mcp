@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
-import { clearPendingPreviews } from './confirmation.js';
+import { clearPendingPreviews, getPreviewKey } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
 import { MCP_ERROR_CODES } from './errors.js';
 import {
@@ -2226,6 +2226,30 @@ describe('confirmation flow - full cycle', () => {
     );
 
     expect(confirmResult.content[0].text).toContain('success');
+  });
+});
+
+describe('getPreviewKey', () => {
+  it('keeps the key size fixed however large the arguments are', () => {
+    const small = getPreviewKey('scope', 'upload_package_v1', { package_base64: 'A' });
+    const large = getPreviewKey('scope', 'upload_package_v1', {
+      package_base64: 'A'.repeat(1_000_000),
+    });
+    expect(large.length).toBe(small.length);
+    expect(large).not.toBe(small);
+  });
+
+  it('ignores confirmation parameters and key order', () => {
+    const preview = getPreviewKey('scope', 'delete_site_v1', { site_id: 1, name: 'x' });
+    const confirm = getPreviewKey('scope', 'delete_site_v1', {
+      name: 'x',
+      site_id: 1,
+      confirm: true,
+      user_confirmed: true,
+      dry_run: false,
+      confirmation_token: 'token',
+    });
+    expect(confirm).toBe(preview);
   });
 });
 

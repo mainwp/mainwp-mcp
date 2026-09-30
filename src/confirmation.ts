@@ -114,8 +114,15 @@ function canonicalize(value: unknown): unknown {
  * so without the scope a token issued against one dashboard/principal could
  * confirm the same tool and arguments against another createServer(config)
  * instance in the same process.
+ * The arguments enter the key as a digest: MAX_PENDING_PREVIEWS counts
+ * entries, not bytes, and a tool may declare room for megabytes per string.
+ * @internal exported for tests
  */
-function getPreviewKey(scope: string, toolName: string, args: Record<string, unknown>): string {
+export function getPreviewKey(
+  scope: string,
+  toolName: string,
+  args: Record<string, unknown>
+): string {
   const {
     confirm: _confirm,
     user_confirmed: _user_confirmed,
@@ -123,7 +130,11 @@ function getPreviewKey(scope: string, toolName: string, args: Record<string, unk
     confirmation_token: _confirmation_token,
     ...relevantArgs
   } = args;
-  return `${scope}:${toolName}:${JSON.stringify(canonicalize(relevantArgs))}`;
+  const digest = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(canonicalize(relevantArgs)))
+    .digest('hex');
+  return `${scope}:${toolName}:${digest}`;
 }
 
 /**

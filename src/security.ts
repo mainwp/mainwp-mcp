@@ -89,6 +89,38 @@ function checkStringLength(
   }
 }
 
+// Nested arrays recurse too, so strings inside them get the same limits
+// (items.items.maxLength or the default) instead of skipping the check.
+function validateArray(
+  value: unknown[],
+  schema: Record<string, unknown> | undefined,
+  key: string,
+  depth: number
+): void {
+  if (depth > MAX_OBJECT_DEPTH) {
+    throw McpErrorFactory.invalidParams(
+      `Input exceeds maximum nesting depth (${MAX_OBJECT_DEPTH})`,
+      { maxDepth: MAX_OBJECT_DEPTH }
+    );
+  }
+  if (value.length > MAX_ARRAY_ELEMENTS) {
+    throw McpErrorFactory.invalidParams(
+      `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
+      { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
+    );
+  }
+  const itemsSchema = ownSchema(schema, 'items');
+  for (const item of value) {
+    if (typeof item === 'string') {
+      checkStringLength(item, itemsSchema, key, `Element in "${key}"`);
+    } else if (Array.isArray(item)) {
+      validateArray(item, itemsSchema, key, depth + 1);
+    } else if (typeof item === 'object' && item !== null) {
+      validateInput(item as Record<string, unknown>, itemsSchema, depth + 1);
+    }
+  }
+}
+
 /**
  * Validate input arguments before forwarding to the API.
  * Prevents malicious payloads and enforces reasonable limits.
@@ -149,24 +181,8 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
       }
     }
 
-    // Array validation
     if (Array.isArray(value)) {
-      if (value.length > MAX_ARRAY_ELEMENTS) {
-        throw McpErrorFactory.invalidParams(
-          `Parameter "${key}" has too many elements (max ${MAX_ARRAY_ELEMENTS})`,
-          { parameter: key, maxElements: MAX_ARRAY_ELEMENTS, actualElements: value.length }
-        );
-      }
-      // Validate array elements (strings and nested objects)
-      const itemsSchema = ownSchema(valueSchema, 'items');
-      for (const item of value) {
-        if (typeof item === 'string') {
-          checkStringLength(item, itemsSchema, key, `Element in "${key}"`);
-        }
-        if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
-          validateInput(item as Record<string, unknown>, itemsSchema, depth + 1);
-        }
-      }
+      validateArray(value, valueSchema, key, depth);
     }
 
     // Nested object: recurse to validate contents (string lengths, ID ranges, depth)

@@ -883,6 +883,33 @@ describe('validateInput - declared maxLength', () => {
       /10000 characters, default limit/
     );
   });
+
+  it('applies the default limit to strings inside nested arrays', () => {
+    expect(() => validateInput({ field: [['a'.repeat(10000)]] })).not.toThrow();
+    expect(() => validateInput({ field: [['a'.repeat(10001)]] })).toThrow(
+      /10000 characters, default limit/
+    );
+  });
+
+  it('honors items.items.maxLength for nested arrays', () => {
+    const schema = schemaFor({
+      type: 'array',
+      items: { type: 'array', items: { type: 'string', maxLength: 20000 } },
+    });
+    expect(() => validateInput({ field: [['a'.repeat(20000)]] }, schema)).not.toThrow();
+    expect(() => validateInput({ field: [['a'.repeat(20001)]] }, schema)).toThrow(
+      /20000 characters, from the tool schema/
+    );
+  });
+
+  it('enforces element count and depth limits on nested arrays', () => {
+    expect(() => validateInput({ field: [new Array(1001).fill('x')] })).toThrow(
+      /too many elements/
+    );
+    let deep: unknown = 'x';
+    for (let i = 0; i < 7; i++) deep = [deep];
+    expect(() => validateInput({ field: deep })).toThrow(/maximum nesting depth/);
+  });
 });
 
 describe('RateLimiter - AbortSignal support', () => {
