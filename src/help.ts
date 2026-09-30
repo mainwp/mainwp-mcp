@@ -6,7 +6,7 @@
  */
 
 import { abilityNameToToolName } from './naming.js';
-import { declaresUsableBooleanParam } from './policy.js';
+import { declaresUsableBooleanParam, resolveConfirmationParam } from './policy.js';
 import type { Ability } from './abilities.js';
 
 /**
@@ -91,6 +91,7 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
   // records. Null prototype so a remote "__proto__" key cannot hit the
   // prototype setter and vanish (or pollute).
   const rawProps: unknown = ability.input_schema?.properties;
+  const confirmationParam = resolveConfirmationParam(ability.input_schema);
   const props: Record<string, Record<string, unknown>> = Object.create(null) as Record<
     string,
     Record<string, unknown>
@@ -133,8 +134,12 @@ export function generateToolHelp(ability: Ability, primaryNamespace: string): To
       // RAW properties, not the normalized map: normalization turns a `false`
       // or malformed entry into {}, and {} accepts anything — help would then
       // advertise dry_run/confirm that execution (which reads raw) refuses.
-      supportsDryRun: declaresUsableBooleanParam(rawProps, 'dry_run'),
-      requiresConfirm: declaresUsableBooleanParam(rawProps, 'confirm'),
+      // Same resolution as tool-schema and the execution gate: a named
+      // confirm_* counts as the confirmation channel and has no dry_run path.
+      supportsDryRun:
+        declaresUsableBooleanParam(rawProps, 'dry_run') &&
+        (confirmationParam === undefined || confirmationParam === 'confirm'),
+      requiresConfirm: confirmationParam !== undefined,
     },
     parameters,
   };
@@ -181,7 +186,7 @@ export function generateHelpDocument(abilities: Ability[], primaryNamespace: str
       safetyConventions: {
         dryRun: 'Pass dry_run: true to preview the operation without making changes',
         confirm:
-          'Pass confirm: true to begin the confirmation flow for destructive operations; execution requires a follow-up call with user_confirmed: true and the issued confirmation_token',
+          'Pass confirm: true (or the required confirm_* parameter a tool names) to begin the confirmation flow for destructive operations; execution requires a follow-up call with user_confirmed: true and the issued confirmation_token',
         destructive: 'These tools can permanently delete or modify data',
         readonly: 'These tools only read data and never modify anything',
       },

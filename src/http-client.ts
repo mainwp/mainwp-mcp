@@ -42,9 +42,22 @@ function clearResponseDeadline(deadline: ResponseDeadline): void {
 }
 
 function createTimeoutError(deadline: Pick<ResponseDeadline, 'effectiveTimeout' | 'url'>): Error {
-  const error = new Error(`Request timeout after ${deadline.effectiveTimeout}ms: ${deadline.url}`);
+  // No query string in the message: GET and DELETE ability calls carry their
+  // input there, including writeOnly values in percent-encoded form.
+  const error = new Error(
+    `Request timeout after ${deadline.effectiveTimeout}ms: ${deadline.url.split('?')[0]}`
+  );
   (error as Error & { code: string }).code = 'ETIMEDOUT';
   return error;
+}
+
+// Node quotes the request URL in some transport errors (an unparseable URL,
+// for one). Same reason as the timeout message: the query string carries GET
+// and DELETE input.
+function dropQueryFromError(error: unknown, url: string): void {
+  if (error instanceof Error && url.includes('?') && error.message.includes(url)) {
+    error.message = error.message.split(url).join(url.split('?')[0]);
+  }
 }
 
 /**
@@ -120,7 +133,13 @@ export function createFetch(config: Config, perCallTimeout?: number) {
         fetchOptions.dispatcher = getUnsafeDispatcher();
       }
 
-      const response = await fetch(url, fetchOptions as RequestInit);
+      let response: Response;
+      try {
+        response = await fetch(url, fetchOptions as RequestInit);
+      } catch (error) {
+        dropQueryFromError(error, url);
+        throw error;
+      }
 
       // Fail closed on redirects instead of following the Location header.
       // With `redirect: 'manual'`, fetch surfaces the 3xx response instead of
@@ -220,6 +239,9 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
   } catch (error) {
     if (deadline?.timedOut) {
       throw createTimeoutError(deadline);
+    }
+    if (deadline) {
+      dropQueryFromError(error, deadline.url);
     }
     throw error;
   } finally {

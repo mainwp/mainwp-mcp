@@ -11,6 +11,7 @@ import {
   decidePolicy,
   classifyDestructive,
   declaresUsableBooleanParam,
+  resolveConfirmationParam,
   isToolAllowed,
   type PolicyDecision,
 } from './policy.js';
@@ -235,5 +236,94 @@ describe('declaresUsableBooleanParam', () => {
 
   it('does not read inherited keys as declared parameters', () => {
     expect(declaresUsableBooleanParam({}, 'constructor')).toBe(false);
+  });
+});
+
+describe('resolveConfirmationParam', () => {
+  it('resolves the conventional confirm property', () => {
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['confirm_removals'],
+        properties: {
+          confirm: { type: 'boolean' },
+          confirm_removals: { type: 'boolean' },
+        },
+      })
+    ).toBe('confirm');
+  });
+
+  it('fails closed when confirm sits next to a pinned confirm_*', () => {
+    // A preview strips only the resolved field, so the pinned one would reach
+    // upstream as true before any token exists.
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm: { type: 'boolean' },
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+          dry_run: { type: 'boolean' },
+        },
+      })
+    ).toBeUndefined();
+  });
+
+  it('accepts one required schema-named confirmation field that permits true', () => {
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['site_id', 'confirm_lockout_risk'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+        },
+      })
+    ).toBe('confirm_lockout_risk');
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: { confirm_lockout_risk: { type: 'boolean', const: true } },
+      })
+    ).toBe('confirm_lockout_risk');
+  });
+
+  it('does not treat required domain flags that permit false as confirmation', () => {
+    for (const property of [{ type: 'boolean' }, { type: 'boolean', enum: [true, false] }]) {
+      expect(
+        resolveConfirmationParam({
+          type: 'object',
+          required: ['confirm_removals'],
+          properties: { confirm_removals: property },
+        })
+      ).toBeUndefined();
+    }
+  });
+
+  it('fails closed for optional, unusable, or ambiguous named fields', () => {
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        properties: { confirm_lockout_risk: { type: 'boolean', enum: [true] } },
+      })
+    ).toBeUndefined();
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: { confirm_lockout_risk: { type: 'boolean', enum: [false] } },
+      })
+    ).toBeUndefined();
+    expect(
+      resolveConfirmationParam({
+        type: 'object',
+        required: ['confirm_lockout_risk', 'confirm_recovery_action'],
+        properties: {
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+          confirm_recovery_action: { type: 'boolean', enum: [true] },
+        },
+      })
+    ).toBeUndefined();
   });
 });

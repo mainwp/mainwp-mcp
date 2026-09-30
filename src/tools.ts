@@ -17,7 +17,7 @@ import {
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
 import { McpErrorFactory, formatErrorResponse, getErrorMessage } from './errors.js';
-import { Logger, withRequestId } from './logging.js';
+import { Logger, withRequestId, withSecretRedaction } from './logging.js';
 import {
   trackSessionData,
   getSessionDataUsage,
@@ -26,8 +26,14 @@ import {
 } from './session.js';
 import { abilityToTool } from './tool-schema.js';
 import { handleConfirmationFlow } from './confirmation.js';
-import { decidePolicy, classifyDestructive, isToolAllowed } from './policy.js';
+import {
+  decidePolicy,
+  classifyDestructive,
+  isToolAllowed,
+  pinnedConfirmationParams,
+} from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
+import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
 
 /**
  * Options for tool execution
@@ -165,6 +171,8 @@ export async function executeTool(
   // Create a child logger that includes requestId in every log entry
   // for end-to-end tracing of this tool call through retry and API execution
   const reqLogger = withRequestId(logger, requestId);
+  let callLogger = reqLogger;
+  let writeOnlyRedactor: WriteOnlyRedactor | undefined;
 
   // SECURITY: Only log metadata (toolName, hasArguments boolean), never log actual
   // argument values or response content as they may contain sensitive data.
@@ -198,6 +206,8 @@ export async function executeTool(
     // executeAbility runs below, so the declared limits and the executed
     // ability cannot come from different fetches.
     validateInput(args, ability.input_schema);
+    writeOnlyRedactor = createWriteOnlyRedactor(ability.input_schema, args);
+    callLogger = withSecretRedaction(reqLogger, writeOnlyRedactor.text);
 
     const ctx = { tool: toolName, ability: abilityName };
 
@@ -209,7 +219,7 @@ export async function executeTool(
     // Always warn when annotations are missing — abilities without annotations
     // are treated as destructive and require confirmation as a safety default
     if (!annotations || typeof annotations.destructive !== 'boolean') {
-      reqLogger.warning('Ability missing destructive annotation, defaulting to destructive', {
+      callLogger.warning('Ability missing destructive annotation, defaulting to destructive', {
         toolName,
         abilityName,
         hasAnnotations: !!annotations,
@@ -220,7 +230,7 @@ export async function executeTool(
     // blocks below. The matching "executed" event lives in executeAbility;
     // grep "AUDIT:" for the full trail.
     if (isDestructive) {
-      reqLogger.info('AUDIT: destructive operation requested', {
+      callLogger.info('AUDIT: destructive operation requested', {
         toolName,
         abilityName,
         safeMode: config.safeMode,
@@ -235,12 +245,23 @@ export async function executeTool(
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)
       if ('confirm' in args) {
-        const { confirm, ...safeArgs } = args;
+        // The supplied value is not logged: it is caller input, and a number
+        // passes the writeOnly log redaction, which matches strings.
+        const { confirm: _confirm, ...safeArgs } = args;
         effectiveArgs = safeArgs;
-        reqLogger.info('Stripped confirm parameter in safe mode', {
-          toolName,
-          hadConfirm: confirm,
-        });
+        callLogger.info('Stripped confirm parameter in safe mode', { toolName });
+      }
+      // Every pinned confirm_*, not only the resolved one: a schema that
+      // declares confirm next to a pinned confirm_* resolves to no channel.
+      for (const confirmationParam of pinnedConfirmationParams(ability.input_schema)) {
+        if (confirmationParam in effectiveArgs) {
+          const { [confirmationParam]: _confirmation, ...safeArgs } = effectiveArgs;
+          effectiveArgs = safeArgs;
+          callLogger.info('Stripped confirmation parameter in safe mode', {
+            toolName,
+            confirmationParam,
+          });
+        }
       }
     }
 
@@ -249,7 +270,7 @@ export async function executeTool(
     // sessionDataBytes tracking. The session data limit is designed to prevent
     // runaway API responses, not small fixed-size local error messages.
     if (decision === 'safe-mode-blocked') {
-      reqLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
+      callLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
       return {
         content: [
           {
@@ -271,7 +292,7 @@ export async function executeTool(
         abilityName,
         args,
         effectiveArgs,
-        logger: reqLogger,
+        logger: callLogger,
         signal: options?.signal,
       });
 
@@ -287,7 +308,7 @@ export async function executeTool(
       config,
       abilityName,
       effectiveArgs,
-      reqLogger,
+      callLogger,
       ability,
       options?.signal
     );
@@ -300,10 +321,15 @@ export async function executeTool(
     // Format the result as JSON for the AI to parse
     const formattedResult = formatJson(config, result);
 
-    const responseBytes = trackSessionData(formattedResult, config, reqLogger, 'for tool response');
+    const responseBytes = trackSessionData(
+      formattedResult,
+      config,
+      callLogger,
+      'for tool response'
+    );
 
     const durationMs = Math.round(performance.now() - startTime);
-    reqLogger.info('Tool execution succeeded', {
+    callLogger.info('Tool execution succeeded', {
       toolName,
       success: true,
       durationMs,
@@ -329,11 +355,11 @@ export async function executeTool(
       const responseBytes = trackSessionData(
         noChangeText,
         config,
-        reqLogger,
+        callLogger,
         'during no-op response'
       );
       const durationMs = Math.round(performance.now() - startTime);
-      reqLogger.info('Tool execution no-op (idempotent already-state)', {
+      callLogger.info('Tool execution no-op (idempotent already-state)', {
         toolName,
         durationMs,
         responseBytes,
@@ -343,8 +369,10 @@ export async function executeTool(
     }
 
     const durationMs = Math.round(performance.now() - startTime);
-    const errorMessage = sanitizeError(getErrorMessage(error));
-    reqLogger.error('Tool execution failed', {
+    const redactError = (message: string): string =>
+      sanitizeError(writeOnlyRedactor?.text(message) ?? message);
+    const errorMessage = redactError(getErrorMessage(error));
+    callLogger.error('Tool execution failed', {
       toolName,
       success: false,
       durationMs,
@@ -357,7 +385,7 @@ export async function executeTool(
       content: [
         {
           type: 'text',
-          text: formatErrorResponse(error, sanitizeError),
+          text: formatErrorResponse(error, redactError),
         },
       ],
       isError: true,

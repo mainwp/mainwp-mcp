@@ -151,6 +151,50 @@ describe('abilityToTool confirmation parameter injection', () => {
     expect(props.confirmation_token).toMatchObject({ type: 'string' });
   });
 
+  it('declares the token flow for one required schema-named confirmation field', () => {
+    const ability = makeAbility({
+      name: 'mainwp/set-dashboard-ip-restrictions-v1',
+      input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+        },
+      },
+      meta: { annotations: { destructive: true, readonly: false, idempotent: true } },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp');
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(props.user_confirmed).toBeDefined();
+    expect(props.confirmation_token).toBeDefined();
+    expect(props.user_confirmed.description).toContain('confirm_lockout_risk:true');
+    expect(props.confirmation_token.description).toContain('confirm_lockout_risk:true');
+    expect(props.user_confirmed.description).not.toContain('confirm:true');
+    expect(tool.description).toContain('confirm_lockout_risk:true');
+    expect(tool.description).toContain('no preview available');
+  });
+
+  it('does not advertise an upstream preview for named confirmation even with dry_run declared', () => {
+    const ability = makeAbility({
+      input_schema: {
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+          dry_run: { type: 'boolean' },
+        },
+      },
+      meta: { annotations: { destructive: true, readonly: false, idempotent: true } },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp');
+
+    expect(tool.description).toContain('no preview available');
+    expect(tool.description).not.toContain('preview what will be affected');
+  });
+
   it('advertises the token-bound flow in the standard description', () => {
     const tool = abilityToTool(makeDestructiveAbility(true), 'mainwp');
 
@@ -221,5 +265,37 @@ describe('abilityToTool confirmation parameter injection', () => {
     expect(props.user_confirmed).toBeUndefined();
     expect(props.confirmation_token).toBeUndefined();
     expect(tool.description).not.toContain('confirmation_token');
+  });
+});
+
+describe('abilityToTool schema verbosity keeps semantic property fields', () => {
+  const fieldValues: Array<[string, unknown]> = [
+    ['const', true],
+    ['const', null],
+    ['const', 0],
+    ['nullable', true],
+    ['nullable', false],
+    ['writeOnly', true],
+    ['writeOnly', false],
+  ];
+  const cases = (['compact', 'standard'] as const).flatMap(verbosity =>
+    fieldValues.map(([field, value]) => [verbosity, field, value] as const)
+  );
+
+  it.each(cases)('keeps %s %s: %j on the property', (verbosity, field, value) => {
+    // A declared falsy value is still a declaration: compact mode must copy it
+    // by key presence, not truthiness.
+    const ability = makeAbility({
+      input_schema: {
+        type: 'object',
+        properties: { target: { type: 'boolean', description: 'Target.', [field]: value } },
+      },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp', verbosity);
+
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(field in props.target).toBe(true);
+    expect(props.target[field]).toEqual(value);
   });
 });

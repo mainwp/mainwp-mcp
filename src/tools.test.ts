@@ -876,6 +876,196 @@ describe('executeTool', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps nested writeOnly values out of confirmation responses and logs', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/replace-private-profile-v1',
+      label: 'Replace Private Profile',
+      description: 'Previews a private profile replacement',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: {
+          private_profile: {
+            type: 'object',
+            writeOnly: true,
+            properties: {
+              token: { type: 'string' },
+              contacts: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          dry_run: { type: 'boolean' },
+          confirm: { type: 'boolean' },
+        },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: true, idempotent: false },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        preview: {
+          token: 'preview-private-token',
+          contacts: ['preview-private@example.test'],
+        },
+      }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'replace_private_profile_v1',
+      {
+        private_profile: {
+          token: 'preview-private-token',
+          contacts: ['preview-private@example.test'],
+        },
+        confirm: true,
+      },
+      mockLogger
+    );
+    const response = result.content[0].text;
+    const logs = JSON.stringify(
+      Object.values(mockLogger).flatMap(
+        method => (method as { mock: { calls: unknown[] } }).mock.calls
+      )
+    );
+
+    expect(response).toContain('CONFIRMATION_REQUIRED');
+    expect(response).not.toContain('preview-private-token');
+    expect(response).not.toContain('preview-private@example.test');
+    expect(response).toContain('[redacted]');
+    expect(logs).not.toContain('preview-private-token');
+    expect(logs).not.toContain('preview-private@example.test');
+  });
+
+  it('redacts writeOnly values in tool results and withholds reflected errors', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/validate-private-code-v1',
+      label: 'Validate Private Code',
+      description: 'Validates private code',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: false, idempotent: true },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ reflected: 'private-code-result' }),
+      headers: new Headers(),
+    });
+
+    const success = await executeTool(
+      baseConfig,
+      'validate_private_code_v1',
+      { code: 'private-code-result' },
+      mockLogger
+    );
+    expect(success.content[0].text).not.toContain('private-code-result');
+    expect(success.content[0].text).toContain('[redacted]');
+
+    clearCache();
+    clearToolsCache();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () =>
+        JSON.stringify({ code: 'invalid_private_code', message: 'Rejected private-code-error' }),
+      headers: new Headers(),
+    });
+
+    const failure = await executeTool(
+      baseConfig,
+      'validate_private_code_v1',
+      { code: 'private-code-error' },
+      mockLogger
+    );
+    expect(failure.isError).toBe(true);
+    expect(failure.content[0].text).not.toContain('private-code-error');
+    expect(failure.content[0].text).toContain(
+      'Ability execution failed: invalid_private_code (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+    );
+    expect(
+      JSON.stringify(
+        Object.values(mockLogger).flatMap(
+          method => (method as { mock: { calls: unknown[] } }).mock.calls
+        )
+      )
+    ).not.toContain('private-code-error');
+  });
+
+  it.each([
+    { order: 'input', reflected: { user: 'ab', pin: 12 } },
+    { order: 'reversed', reflected: { pin: 12, user: 'ab' } },
+  ])(
+    'withholds a short-leaf writeOnly object from an upstream error in $order order',
+    async ({ reflected }) => {
+      const privateAbility: Ability = {
+        name: 'mainwp/validate-private-profile-v1',
+        label: 'Validate Private Profile',
+        description: 'Validates private profile',
+        category: 'mainwp-private',
+        input_schema: {
+          type: 'object',
+          properties: { profile: { type: 'object', writeOnly: true } },
+        },
+        meta: {
+          annotations: { readonly: false, destructive: false, idempotent: true },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [...sampleAbilities, privateAbility],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => JSON.stringify({ message: `Rejected ${JSON.stringify(reflected)}` }),
+        headers: new Headers(),
+      });
+
+      const failure = await executeTool(
+        baseConfig,
+        'validate_private_profile_v1',
+        { profile: { user: 'ab', pin: 12 } },
+        mockLogger
+      );
+      const failureLog = vi
+        .mocked(mockLogger.error)
+        .mock.calls.find(([message]) => message === 'Tool execution failed')?.[1];
+
+      expect(failure.isError).toBe(true);
+      expect(failure.content[0].text).toContain(
+        'Ability execution failed: 400 (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+      );
+      expect(failure.content[0].text).not.toContain('"user":"ab"');
+      expect(failureLog?.error).toContain('upstream message is withheld');
+      expect(failureLog?.error).not.toContain('"user":"ab"');
+    }
+  );
+
   it('should execute read-only tool successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1077,6 +1267,157 @@ describe('executeTool', () => {
       expect.stringContaining('Stripped confirm'),
       expect.any(Object)
     );
+  });
+
+  it('strips a required schema-named confirmation parameter from safe-mode requests', async () => {
+    const namedConfirmAbility: Ability = {
+      ...sampleAbilities[3],
+      name: 'mainwp/update-site-with-confirm-v1',
+      input_schema: {
+        type: 'object',
+        required: ['site_id', 'confirm_purge'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm_purge: { type: 'boolean', enum: [true] },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [namedConfirmAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ changed: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      { ...baseConfig, safeMode: true },
+      'update_site_with_confirm_v1',
+      { site_id: 7, confirm_purge: true },
+      mockLogger
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const runOptions = mockFetch.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(runOptions.body))).toEqual({ input: { site_id: 7 } });
+  });
+
+  it('strips confirm and a pinned confirm_* declared side by side in safe mode', async () => {
+    const mixedConfirmAbility: Ability = {
+      ...sampleAbilities[3],
+      name: 'mainwp/update-site-mixed-confirm-v1',
+      input_schema: {
+        type: 'object',
+        required: ['site_id', 'confirm_purge'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm: { type: 'boolean' },
+          confirm_purge: { type: 'boolean', enum: [true] },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [mixedConfirmAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ changed: true }),
+      headers: new Headers(),
+    });
+
+    await executeTool(
+      { ...baseConfig, safeMode: true },
+      'update_site_mixed_confirm_v1',
+      { site_id: 7, confirm: true, confirm_purge: true },
+      mockLogger
+    );
+
+    const runOptions = mockFetch.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(runOptions.body))).toEqual({ input: { site_id: 7 } });
+  });
+
+  it('logs no supplied value when safe mode strips confirmation parameters', async () => {
+    const writeOnlyConfirmAbility: Ability = {
+      ...sampleAbilities[3],
+      name: 'mainwp/update-site-write-only-confirm-v1',
+      input_schema: {
+        type: 'object',
+        required: ['site_id', 'confirm_purge'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm: { type: 'boolean', writeOnly: true },
+          confirm_purge: { type: 'boolean', enum: [true], writeOnly: true },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [writeOnlyConfirmAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ changed: true }),
+      headers: new Headers(),
+    });
+
+    await executeTool(
+      { ...baseConfig, safeMode: true },
+      'update_site_write_only_confirm_v1',
+      { site_id: 7, confirm: 918273, confirm_purge: 564738 },
+      mockLogger
+    );
+
+    const logged = JSON.stringify(
+      Object.values(mockLogger).flatMap(fn => (fn as ReturnType<typeof vi.fn>).mock.calls)
+    );
+    expect(logged).toContain('Stripped confirm');
+    expect(logged).not.toContain('918273');
+    expect(logged).not.toContain('564738');
+  });
+
+  it('keeps a non-pinned confirm_* domain flag on a non-destructive safe-mode tool', async () => {
+    const domainFlagAbility: Ability = {
+      ...sampleAbilities[3],
+      name: 'mainwp/update-site-removals-v1',
+      input_schema: {
+        type: 'object',
+        required: ['site_id', 'confirm_removals'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm_removals: { type: 'boolean', enum: [true, false] },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [domainFlagAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ changed: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      { ...baseConfig, safeMode: true },
+      'update_site_removals_v1',
+      { site_id: 7, confirm_removals: false },
+      mockLogger
+    );
+
+    expect(result.isError).toBeUndefined();
+    const runOptions = mockFetch.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(runOptions.body))).toEqual({
+      input: { site_id: 7, confirm_removals: false },
+    });
   });
 
   // A destructive ability whose schema declares no confirm parameter — the
@@ -1319,6 +1660,98 @@ describe('executeTool', () => {
     expect(confirmed.isError).toBeUndefined();
     expect(confirmed.content[0].text).toContain('deleted');
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a token-only flow for a required named confirmation field with dry_run declared', async () => {
+    const namedConfirmAbility: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/set-dashboard-ip-restrictions-v1',
+      input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['site_id', 'confirm_lockout_risk'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+          dry_run: { type: 'boolean' },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [namedConfirmAbility],
+      headers: new Headers(),
+    });
+
+    const first = await executeTool(
+      baseConfig,
+      'set_dashboard_ip_restrictions_v1',
+      { site_id: 7, confirm_lockout_risk: true },
+      mockLogger
+    );
+    const firstBody = JSON.parse(first.content[0].text);
+    expect(firstBody.next_action).toBe('confirm_without_preview');
+    expect(firstBody.message).toContain('confirm_lockout_risk: true');
+    expect(typeof firstBody.confirmation_token).toBe('string');
+    expect(first.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    const dryRun = await executeTool(
+      baseConfig,
+      'set_dashboard_ip_restrictions_v1',
+      { site_id: 7, confirm_lockout_risk: true, dry_run: true },
+      mockLogger
+    );
+    expect(dryRun.isError).toBe(true);
+    const dryRunBody = JSON.parse(dryRun.content[0].text);
+    expect(dryRunBody.error).toBe('INVALID_PARAMETER');
+    expect(dryRunBody.details.resolution).toContain('confirm_lockout_risk: true');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    const conflictingDryRun = await executeTool(
+      baseConfig,
+      'set_dashboard_ip_restrictions_v1',
+      { site_id: 7, dry_run: true, user_confirmed: true },
+      mockLogger
+    );
+    expect(JSON.parse(conflictingDryRun.content[0].text).error).toBe('INVALID_PARAMETER');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    const missingToken = await executeTool(
+      baseConfig,
+      'set_dashboard_ip_restrictions_v1',
+      { site_id: 7, user_confirmed: true },
+      mockLogger
+    );
+    expect(missingToken.isError).toBe(true);
+    expect(JSON.parse(missingToken.content[0].text).details.resolution).toContain(
+      'confirm_lockout_risk: true'
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ changed: true }),
+      headers: new Headers(),
+    });
+    const confirmed = await executeTool(
+      baseConfig,
+      'set_dashboard_ip_restrictions_v1',
+      {
+        site_id: 7,
+        confirm_lockout_risk: true,
+        user_confirmed: true,
+        confirmation_token: firstBody.confirmation_token,
+      },
+      mockLogger
+    );
+
+    expect(confirmed.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const runOptions = mockFetch.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(runOptions.body))).toEqual({
+      input: { site_id: 7, confirm_lockout_risk: true },
+    });
   });
 
   it('rejects injected dry_run on an ability that does not declare it', async () => {
@@ -2231,24 +2664,32 @@ describe('confirmation flow - full cycle', () => {
 
 describe('getPreviewKey', () => {
   it('keeps the key size fixed however large the arguments are', () => {
-    const small = getPreviewKey('scope', 'upload_package_v1', { package_base64: 'A' });
-    const large = getPreviewKey('scope', 'upload_package_v1', {
-      package_base64: 'A'.repeat(1_000_000),
-    });
+    const small = getPreviewKey('scope', 'upload_package_v1', { package_base64: 'A' }, 'confirm');
+    const large = getPreviewKey(
+      'scope',
+      'upload_package_v1',
+      { package_base64: 'A'.repeat(1_000_000) },
+      'confirm'
+    );
     expect(large.length).toBe(small.length);
     expect(large).not.toBe(small);
   });
 
   it('ignores confirmation parameters and key order', () => {
-    const preview = getPreviewKey('scope', 'delete_site_v1', { site_id: 1, name: 'x' });
-    const confirm = getPreviewKey('scope', 'delete_site_v1', {
-      name: 'x',
-      site_id: 1,
-      confirm: true,
-      user_confirmed: true,
-      dry_run: false,
-      confirmation_token: 'token',
-    });
+    const preview = getPreviewKey('scope', 'delete_site_v1', { site_id: 1, name: 'x' }, 'confirm');
+    const confirm = getPreviewKey(
+      'scope',
+      'delete_site_v1',
+      {
+        name: 'x',
+        site_id: 1,
+        confirm: true,
+        user_confirmed: true,
+        dry_run: false,
+        confirmation_token: 'token',
+      },
+      'confirm'
+    );
     expect(confirm).toBe(preview);
   });
 });
