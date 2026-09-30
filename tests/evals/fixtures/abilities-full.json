@@ -5515,7 +5515,7 @@
   {
     "name": "mainwp/get-knowledge-record-v1",
     "label": "Get Knowledge Record",
-    "description": "Read one knowledge record in full by id. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied.",
+    "description": "Read one knowledge record in full by id. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -5620,7 +5620,7 @@
   {
     "name": "mainwp/get-site-knowledge-v1",
     "label": "Get Site Knowledge",
-    "description": "Load the knowledge summary for one site: its context records in full, plus its skills and memories as a list without bodies, and the client's records the same way when the site belongs to a client. Call this first, then get-knowledge-record for a body you need. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_access_denied.",
+    "description": "Load the knowledge summary for one site: its context records in full, plus its skills and memories as a list without bodies, and the client's records the same way when the site belongs to a client. Call this first, then get-knowledge-record for a body you need. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -5972,7 +5972,7 @@
   {
     "name": "mainwp/get-client-knowledge-v1",
     "label": "Get Client Knowledge",
-    "description": "Load the knowledge summary for one client: its context records in full, plus its skills and memories as a list without bodies. Site records are never included; load them per site. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_client_not_found, mainwp_access_denied.",
+    "description": "Load the knowledge summary for one client: its context records in full, plus its skills and memories as a list without bodies. Site records are never included; load them per site. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_client_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -6162,7 +6162,7 @@
   {
     "name": "mainwp/list-knowledge-v1",
     "label": "List Knowledge",
-    "description": "List knowledge records the current user can see, without bodies. Filter by scope, type or a text query on title and body. total is computed under the same filters. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input.",
+    "description": "List knowledge records the current user can see, without bodies. Filter by scope, type or a text query on title and body. total is computed under the same filters. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": ["object", "null"],
