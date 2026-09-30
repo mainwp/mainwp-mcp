@@ -31,7 +31,8 @@ export function makeBaseConfig(overrides: Partial<Config> = {}): Config {
     retryBaseDelay: 1000,
     retryMaxDelay: 2000,
     abilityNamespaces: ['mainwp'],
-    configSource: 'environment',
+    connectionSources: { MAINWP_URL: 'env', MAINWP_USER: 'env', MAINWP_APP_PASSWORD: 'env' },
+    overriddenSettingsKeys: [],
     ...overrides,
   };
 }

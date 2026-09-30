@@ -9,6 +9,11 @@ import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, createHttpError, getErrorMessage } from './errors.js';
 import {
+  describeCredentialRejection,
+  isCredentialRejection,
+  safeWpErrorCode,
+} from './credential-diagnostics.js';
+import {
   RateLimiter,
   containsKnownSecret,
   redactKnownSecrets,
@@ -1006,7 +1011,8 @@ export async function executeAbility(
       if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
         try {
           const errorData = JSON.parse(bodyText);
-          errorCode = (errorData as { code?: string }).code || errorCode;
+          errorCode =
+            safeWpErrorCode((errorData as { code?: unknown }).code) ?? String(response.status);
           errorMsg = (errorData as { message?: string }).message || errorMsg;
         } catch {
           // JSON parse failed - use raw text as message
@@ -1023,10 +1029,15 @@ export async function executeAbility(
         upstreamLatencyMs,
       });
 
+      // Credentials revoked or wrong after startup: WordPress's own text names
+      // neither the user nor where the value came from.
+      const rejection = isCredentialRejection(response.status, errorCode)
+        ? ` ${describeCredentialRejection(config, errorCode)}`
+        : '';
       throw createHttpError(
         response.status,
         errorCode,
-        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}`
+        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${rejection}`
       );
     }
 

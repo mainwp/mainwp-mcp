@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
+  LoggingMessageNotificationSchema,
   PromptListChangedNotificationSchema,
   ResourceListChangedNotificationSchema,
   ToolListChangedNotificationSchema,
@@ -12,8 +13,9 @@ import {
 import { createServer } from './index.js';
 import { clearCache, initRateLimiter } from './abilities.js';
 import { clearToolsCache } from './tools.js';
-import { ConfigState } from './setup.js';
-import { makeBaseConfig } from '../tests/helpers/config.js';
+import { ConfigState, checkStartupCredentials } from './setup.js';
+import { trustedSettingsPath } from './settings-writer.js';
+import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -83,6 +85,83 @@ describe('MCP request handlers', () => {
     await expect(
       client.getPrompt({ name: 'performance-check', arguments: { site_id: 'not-an-id' } })
     ).rejects.toMatchObject({ code: -32602 });
+    await client.close();
+    await server.close();
+  });
+
+  it('adds credential sources to a 401 tool failure but not a 500', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [sampleAbilities[0]],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => JSON.stringify({ code: 'invalid_username', message: 'Unknown login' }),
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'Server Error',
+      text: async () => JSON.stringify({ code: 'server_error', message: 'Temporary failure' }),
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient(
+      makeBaseConfig({ username: 'wrong-login', appPassword: 'private-app-password' })
+    );
+
+    const rejected = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+    expect(rejected.isError).toBe(true);
+    const rejectedText = (rejected.content as Array<{ text: string }>)[0].text;
+    expect(rejectedText).toContain('wrong-login');
+    expect(rejectedText).toContain('MAINWP_USER from the environment');
+    expect(rejectedText).not.toContain('private-app-password');
+
+    const serverFailure = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+    expect(serverFailure.isError).toBe(true);
+    const serverText = (serverFailure.content as Array<{ text: string }>)[0].text;
+    expect(serverText).toContain('server_error');
+    expect(serverText).not.toContain('MAINWP_USER from the environment');
+    await client.close();
+    await server.close();
+  });
+
+  it('names the rejected user in the tools/list log for a 401 but not a 500', async () => {
+    const { client, server } = await connectedClient(
+      makeBaseConfig({ username: 'wrong-login', appPassword: 'private-app-password' })
+    );
+    const logged: string[] = [];
+    client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
+      logged.push(JSON.stringify(notification.params.data));
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => JSON.stringify({ code: 'invalid_username', message: 'Unknown login' }),
+      headers: new Headers(),
+    });
+    expect((await client.listTools()).tools).toEqual([]);
+    await vi.waitFor(() => expect(logged).toHaveLength(1));
+    expect(logged[0]).toContain('wrong-login');
+    expect(logged[0]).toContain('MAINWP_USER from the environment');
+    expect(logged[0]).not.toContain('private-app-password');
+
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Server Error',
+      text: async () => JSON.stringify({ code: 'server_error', message: 'Temporary failure' }),
+      headers: new Headers(),
+    });
+    expect((await client.listTools()).tools).toEqual([]);
+    await vi.waitFor(() => expect(logged).toHaveLength(2));
+    expect(logged[1]).toContain('Error listing tools');
+    expect(logged[1]).not.toContain('MAINWP_USER from the environment');
     await client.close();
     await server.close();
   });
@@ -570,6 +649,30 @@ describe('setup mode handlers', () => {
     return { client, server };
   }
 
+  async function startupState(config = makeBaseConfig()): Promise<ConfigState> {
+    const state = ConfigState.fromConfig(config);
+    await checkStartupCredentials(state, config, makeMockLogger());
+    return state;
+  }
+
+  function toolText(result: unknown): string {
+    return (result as { content: Array<{ text: string }> }).content[0].text;
+  }
+
+  function setupStatus(text: string): Record<string, unknown> {
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+
+  function rejectedResponse(code: string) {
+    return {
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => JSON.stringify({ code, message: 'Authentication failed' }),
+      headers: new Headers(),
+    };
+  }
+
   beforeEach(() => {
     vi.resetAllMocks();
     clearCache();
@@ -661,7 +764,8 @@ describe('setup mode handlers', () => {
       json: async () => sampleAbilities,
       headers: new Headers(),
     });
-    const { client, server } = await connectState(unconfiguredState());
+    const state = unconfiguredState();
+    const { client, server } = await connectState(state);
     const changed: string[] = [];
     client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
       changed.push('tools');
@@ -690,6 +794,11 @@ describe('setup mode handlers', () => {
     expect((await client.listPrompts()).prompts.length).toBeGreaterThan(0);
     expect((await client.listResources()).resources.length).toBeGreaterThan(0);
     expect(changed).toEqual(['tools', 'resources', 'prompts']);
+    expect(state.retainedConfig?.connectionSources).toEqual({
+      MAINWP_URL: 'settings.json',
+      MAINWP_USER: 'settings.json',
+      MAINWP_APP_PASSWORD: 'settings.json',
+    });
 
     const listed = await client.callTool({ name: 'list_sites_v1', arguments: {} });
     expect(listed.isError).toBeUndefined();
@@ -736,6 +845,224 @@ describe('setup mode handlers', () => {
     expect(denied.isError).toBe(true);
     expect((denied.content as Array<{ text: string }>)[0].text).toContain('not_configured');
     expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('shows the wrong env username and its source after startup rejection', async () => {
+    mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
+    const config = makeBaseConfig({ username: 'Display Name' });
+    const state = await startupState(config);
+    const { client, server } = await connectState(state);
+
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
+    const status = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(status).toMatchObject({
+      state: 'credentials_rejected',
+      dashboardHost: 'test.local',
+      username: 'Display Name',
+      connectionSources: config.connectionSources,
+      overriddenSettingsKeys: [],
+    });
+    expect(status.problem).toContain('MAINWP_USER from the environment');
+    expect(status.problem).toContain('login name or email address, not the display name');
+    expect(status.problem).not.toContain('overrides a different value');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    await client.close();
+    await server.close();
+  });
+
+  it('names an env username that overrode a different settings.json value', async () => {
+    mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
+    const config = makeBaseConfig({
+      username: 'env-user',
+      connectionSources: {
+        MAINWP_URL: 'settings.json',
+        MAINWP_USER: 'env',
+        MAINWP_APP_PASSWORD: 'settings.json',
+      },
+      overriddenSettingsKeys: ['MAINWP_USER'],
+    });
+    const state = await startupState(config);
+    const { client, server } = await connectState(state);
+
+    const status = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(status).toMatchObject({
+      state: 'credentials_rejected',
+      overriddenSettingsKeys: ['MAINWP_USER'],
+    });
+    expect(status.problem).toContain(
+      'MAINWP_USER from the environment overrides a different value in settings.json; correcting only the file has no effect.'
+    );
+    await client.close();
+    await server.close();
+  });
+
+  it('shows the wrong application password after startup rejection', async () => {
+    mockFetch.mockResolvedValueOnce(rejectedResponse('incorrect_password'));
+    const config = makeBaseConfig({ appPassword: 'private-app-password' });
+    const state = await startupState(config);
+    const { client, server } = await connectState(state);
+
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
+    const statusText = toolText(await client.callTool({ name: 'mainwp_get_setup_status' }));
+    const status = setupStatus(statusText);
+    expect(status).toMatchObject({ state: 'credentials_rejected', username: 'admin' });
+    expect(status.problem).toContain('MAINWP_APP_PASSWORD from the environment');
+    expect(statusText).not.toContain(config.appPassword);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    await client.close();
+    await server.close();
+  });
+
+  it('keeps a network failure degraded and marks a rejected retry', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND test.local'));
+    const state = await startupState();
+    const { client, server } = await connectState(state);
+
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
+    mockFetch.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND test.local'));
+    const networkStatus = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(networkStatus).toMatchObject({ state: 'degraded', dashboardHost: 'test.local' });
+    expect(networkStatus.problem).toContain('Network error');
+
+    mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
+    const rejectedStatus = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(rejectedStatus).toMatchObject({ state: 'credentials_rejected', username: 'admin' });
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
+    await client.close();
+    await server.close();
+  });
+
+  it('lists MainWP tools after valid startup and diagnoses a later 401', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    const state = await startupState();
+    const { client, server } = await connectState(state);
+
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    expect(names).toContain('list_sites_v1');
+    expect(names).not.toContain('mainwp_get_setup_status');
+    const status = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(status.state).toBe('ready');
+
+    mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
+    const result = await client.callTool({ name: 'list_sites_v1', arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toContain('MAINWP_USER from the environment');
+    await client.close();
+    await server.close();
+  });
+
+  it('does not retry a rejected login when setup status is requested again', async () => {
+    mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
+    const state = await startupState();
+    const { client, server } = await connectState(state);
+    mockFetch.mockClear();
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const status = setupStatus(
+        toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+      );
+      expect(status.state).toBe('credentials_rejected');
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    await client.close();
+    await server.close();
+  });
+
+  it('refuses configure while degraded and after the Dashboard rejected the credentials', async () => {
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error: Cannot reach MAINWP_URL.');
+    const { client, server } = await connectState(state);
+    const arguments_ = {
+      dashboard_url: 'https://dashboard.example.com',
+      username: 'correct-login',
+      application_password: 'abcd efgh ijkl mnop qrst uvwx',
+    };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const degraded = await client.callTool({ name: 'mainwp_configure', arguments: arguments_ });
+    expect(degraded.isError).toBe(true);
+    expect(toolText(degraded)).toContain('ALREADY_CONFIGURED');
+
+    state.markRejected('The Dashboard rejected the credentials');
+    const rejected = await client.callTool({ name: 'mainwp_configure', arguments: arguments_ });
+
+    expect(rejected.isError).toBe(true);
+    expect(toolText(rejected)).toContain('ALREADY_CONFIGURED');
+    expect(state.state).toBe('credentials_rejected');
+    expect(state.retainedConfig?.username).toBe('admin');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+    await client.close();
+    await server.close();
+  });
+
+  it('offers no chat paste after a startup rejection and keeps configure refused', async () => {
+    mockFetch.mockResolvedValueOnce(rejectedResponse('incorrect_password'));
+    const state = await startupState();
+    const { client, server } = await connectState(state);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+
+    const status = setupStatus(
+      toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+    );
+    expect(status.state).toBe('credentials_rejected');
+    expect(status).not.toHaveProperty('chatSetupAvailable');
+    expect(String(status.guidance)).not.toMatch(/paste/i);
+    expect(String(status.relayInstructions)).toContain('Do not ask for credentials in chat');
+
+    const result = await client.callTool({
+      name: 'mainwp_configure',
+      arguments: {
+        dashboard_url: 'https://dashboard.example.com',
+        username: 'correct-login',
+        application_password: 'abcd efgh ijkl mnop qrst uvwx',
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toContain('ALREADY_CONFIGURED');
+    expect(toolText(result)).toContain('which user was rejected');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'mainwp_get_setup_status',
+      'mainwp_configure',
+    ]);
     await client.close();
     await server.close();
   });

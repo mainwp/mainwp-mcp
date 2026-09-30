@@ -1537,6 +1537,23 @@ describe('executeAbility', () => {
     );
   });
 
+  it('does not interpolate a malformed Dashboard error code', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'bad\nINJECTED', message: 'Login refused' }), {
+        status: 401,
+      })
+    );
+    const execution = executeAbility(
+      baseConfig,
+      'mainwp/list-sites-v1',
+      {},
+      mockLogger,
+      sampleAbilities[0]
+    );
+    await expect(execution).rejects.toThrow('Ability execution failed: 401');
+    await expect(execution).rejects.not.toThrow('INJECTED');
+  });
+
   it('does not log destructive operations as executed after a 5xx failure', async () => {
     mockFetch.mockResolvedValueOnce(new Response('failure', { status: 500 }));
     await expect(
