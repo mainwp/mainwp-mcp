@@ -946,6 +946,66 @@ describe('executeTool', () => {
     expect(result.isError).toBe(true);
   });
 
+  describe('declared maxLength', () => {
+    const packageAbility = (readonly: boolean): Ability => ({
+      name: 'mainwp/upload-package-v1',
+      label: 'Upload Package',
+      description: 'Upload a plugin package',
+      category: 'mainwp-plugins',
+      input_schema: {
+        type: 'object',
+        properties: { package_base64: { type: 'string', maxLength: 34952536 } },
+      },
+      meta: { annotations: { readonly, destructive: false, idempotent: false } },
+    });
+
+    it('sends a string above 10000 characters to a write tool that declares room for it', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [packageAbility(false)],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ uploaded: true }),
+        headers: new Headers(),
+      });
+      const payload = 'A'.repeat(50000);
+
+      const result = await executeTool(
+        baseConfig,
+        'upload_package_v1',
+        { package_base64: payload },
+        mockLogger
+      );
+
+      expect(result.isError).toBeUndefined();
+      const [url, init] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(url).toMatch(/\/abilities\/mainwp\/upload-package-v1\/run$/);
+      expect(JSON.parse(init.body as string)).toEqual({ input: { package_base64: payload } });
+    });
+
+    it('still enforces the URL cap for a readonly tool with a large declared maxLength', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [packageAbility(true)],
+        headers: new Headers(),
+      });
+
+      const result = await executeTool(
+        baseConfig,
+        'upload_package_v1',
+        { package_base64: 'A'.repeat(50000) },
+        mockLogger
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Request URL exceeds 8000 characters');
+      // Only the abilities fetch ran; the oversized GET was never sent.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('should return isError for unknown tool', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

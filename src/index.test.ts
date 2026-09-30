@@ -259,6 +259,49 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it("accepts a string up to the tool's declared maxLength through tools/call", async () => {
+    // Issue #74: a third-party ability taking a plugin ZIP as base64 declares
+    // maxLength 34952536, but the server capped every string at 10000.
+    const uploadAbility = {
+      name: 'mainwp/upload-package-v1',
+      label: 'Upload Package',
+      description: 'Upload a plugin package',
+      category: 'mainwp-plugins',
+      input_schema: {
+        type: 'object',
+        properties: { package_base64: { type: 'string', maxLength: 34952536 } },
+      },
+      meta: { annotations: { readonly: false, destructive: false, idempotent: false } },
+    };
+    mockFetch.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => (url.includes('/run') ? { uploaded: true } : [uploadAbility]),
+      headers: new Headers(),
+    }));
+    const { client, server } = await connectedClient();
+    const payload = 'A'.repeat(100000);
+
+    const result = await client.callTool({
+      name: 'upload_package_v1',
+      arguments: { package_base64: payload },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const runCall = mockFetch.mock.calls.find(call => String(call[0]).includes('/run'));
+    expect(JSON.parse(runCall?.[1].body)).toEqual({ input: { package_base64: payload } });
+
+    const tooLong = await client.callTool({
+      name: 'upload_package_v1',
+      arguments: { package_base64: 'A'.repeat(34952537) },
+    });
+    expect(tooLong.isError).toBe(true);
+    expect((tooLong.content as Array<{ text: string }>)[0].text).toContain(
+      '34952536 characters, from the tool schema'
+    );
+    await client.close();
+    await server.close();
+  });
+
   it('rejects a blocked tool call without leaking the ability name', async () => {
     const { client, server } = await connectedClient({
       ...makeBaseConfig(),
