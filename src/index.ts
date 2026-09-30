@@ -30,7 +30,7 @@ import {
   CompleteRequestSchema,
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { resolveConfig, Config, MissingConfigError } from './config.js';
+import { resolveConfig, Config, MissingConfigError, formatConnectionSources } from './config.js';
 import { getTools, executeTool } from './tools.js';
 import { decidePolicy, classifyDestructive } from './policy.js';
 import { formatBytes } from './session.js';
@@ -41,7 +41,6 @@ import {
   executeAbility,
   initRateLimiter,
 } from './abilities.js';
-import { validateCredentials } from './credential-check.js';
 import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
@@ -53,9 +52,17 @@ import {
   MAX_DECLARED_STRING_LENGTH,
 } from './security.js';
 import { abilityNameToToolName } from './naming.js';
-import { formatErrorResponse, getErrorMessage, McpErrorFactory, McpError } from './errors.js';
+import {
+  formatErrorResponse,
+  getErrorMessage,
+  getHttpStatus,
+  McpErrorFactory,
+  McpError,
+} from './errors.js';
+import { describeCredentialRejection, isCredentialRejection } from './credential-diagnostics.js';
 import {
   ConfigState,
+  checkStartupCredentials,
   executeSetupTool,
   getSetupTools,
   isSetupToolName,
@@ -202,7 +209,12 @@ export async function createServer(
       const tools = await getTools(config, logger);
       return { tools };
     } catch (error) {
-      logger.error('Error listing tools', {
+      const code =
+        error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+      const message = isCredentialRejection(getHttpStatus(error), code)
+        ? `Error listing tools: ${describeCredentialRejection(config, code)}`
+        : 'Error listing tools';
+      logger.error(message, {
         error: getErrorMessage(error),
       });
       return { tools: [] };
@@ -518,7 +530,7 @@ async function main(): Promise<void> {
     } else if (config) {
       startupLogger.info(`Dashboard: ${config.dashboardUrl}`);
       startupLogger.info(`Auth: ${config.authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}`);
-      startupLogger.info(`Config source: ${config.configSource}`);
+      startupLogger.info(`Config source: ${formatConnectionSources(config.connectionSources)}`);
       startupLogger.info(`Session data limit: ${formatBytes(config.maxSessionData)}`);
       if (config.skipSslVerify) {
         startupLogger.error('WARNING: SSL verification disabled.');
@@ -540,20 +552,7 @@ async function main(): Promise<void> {
         );
       }
 
-      // A failed check no longer kills the process: the session starts
-      // degraded, keeps the credentials, and the setup-status tool retries.
-      startupLogger.info('Validating credentials...');
-      try {
-        const abilities = await validateCredentials(config, startupLogger);
-        startupLogger.info(`Connected! Found ${abilities.length} abilities`);
-        abilities.forEach(a => startupLogger.debug(`  - ${a.name}: ${a.label}`));
-      } catch (error) {
-        const reason = sanitizeError(getErrorMessage(error));
-        state.markDegraded(reason);
-        startupLogger.warning(
-          `Could not reach the MainWP Dashboard at startup: ${reason} Starting anyway; MainWP tools stay hidden until the connection works.`
-        );
-      }
+      await checkStartupCredentials(state, config, startupLogger);
     }
 
     // Create server (returns server + structured logger)

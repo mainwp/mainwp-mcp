@@ -12,6 +12,7 @@ import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 import type { Config, PolicyConfig } from './config.js';
 import { clearCache, fetchAbilities } from './abilities.js';
 import { clearKnownSecrets, registerKnownSecrets, sanitizeError } from './security.js';
+import { describeCredentialRejection } from './credential-diagnostics.js';
 import { trustedSettingsPath } from './settings-writer.js';
 import {
   ConfigState,
@@ -186,6 +187,65 @@ describe('mainwp_configure preconditions', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it.each(['environment', 'cwd', 'neither'])(
+    'refuses configure after a rejection with %s configuration and offers no paste',
+    async source => {
+      if (source === 'environment') setEnv('MAINWP_USER', 'admin');
+      if (source === 'cwd') fs.writeFileSync(path.join(cwd, 'settings.json'), '{}');
+      const state = ConfigState.fromConfig(makeBaseConfig());
+      state.markRejected('The Dashboard rejected the credentials.');
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => [sampleAbility],
+        headers: new Headers(),
+      });
+
+      const configured = await executeSetupTool(
+        state,
+        CONFIGURE_TOOL,
+        CONFIGURE_ARGS,
+        makeMockLogger(),
+        noopNotify
+      );
+      expect(configured.isError).toBe(true);
+      expect(resultText(configured)).toContain('ALREADY_CONFIGURED');
+      expect(resultText(configured)).toContain(SETUP_STATUS_TOOL);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(fs.existsSync(trustedSettingsPath(home))).toBe(false);
+      expect(state.state).toBe('credentials_rejected');
+
+      const result = await executeSetupTool(
+        state,
+        SETUP_STATUS_TOOL,
+        {},
+        makeMockLogger(),
+        noopNotify
+      );
+      const status = JSON.parse(resultText(result));
+      expect(status.state).toBe('credentials_rejected');
+      expect(status).not.toHaveProperty('chatSetupAvailable');
+      expect(status.guidance).not.toMatch(/paste/i);
+      expect(status.relayInstructions).toContain('Do not ask for credentials in chat');
+    }
+  );
+
+  it('omits a password-shaped username from the rejected status result', async () => {
+    const username = 'abcd efgh ijkl mnop qrst uvwx';
+    const config = makeBaseConfig({ username });
+    const state = ConfigState.fromConfig(config);
+    state.markRejected(describeCredentialRejection(config, 'invalid_username'));
+    const result = await executeSetupTool(
+      state,
+      SETUP_STATUS_TOOL,
+      {},
+      makeMockLogger(),
+      noopNotify
+    );
+    expect(JSON.stringify(result)).not.toContain(username);
+    expect(JSON.parse(resultText(result))).not.toHaveProperty('username');
+    expect(resultText(result)).toContain('MAINWP_USER and MAINWP_APP_PASSWORD may be swapped');
+  });
+
   it('refuses when connection environment variables are authoritative', async () => {
     setEnv('MAINWP_URL', 'https://env.example.com');
     const state = unconfiguredState();
@@ -305,7 +365,8 @@ describe('mainwp_configure preconditions', () => {
       authType: 'basic',
       username: 'admin',
       appPassword: APP_PASSWORD,
-      configSource: 'settings file',
+      connectionSources: {},
+      overriddenSettingsKeys: [],
     };
     mockFetch.mockResolvedValue({
       ok: true,

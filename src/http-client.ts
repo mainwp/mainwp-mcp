@@ -7,6 +7,7 @@
 
 import { Agent as UndiciAgent } from 'undici';
 import { Config, getAuthHeaders } from './config.js';
+import { safeWpErrorCode } from './credential-diagnostics.js';
 import { createHttpError } from './errors.js';
 import { sanitizeError } from './security.js';
 import type { Logger } from './logging.js';
@@ -229,6 +230,19 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
   }
 }
 
+/** The `code` of a WordPress REST error body, if it is a plain slug. */
+function wpErrorCode(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return safeWpErrorCode((parsed as { code?: unknown }).code);
+    }
+  } catch {
+    // Not JSON: fall back to the status code.
+  }
+  return undefined;
+}
+
 /**
  * Paginate through a WP REST API collection endpoint.
  * Fetches pages sequentially until X-WP-TotalPages is reached or MAX_PAGES cap hit.
@@ -251,7 +265,8 @@ export async function paginateApi<T>(
       const errorText = await readLimitedBody(response, MAX_ERROR_BODY_BYTES);
       throw createHttpError(
         response.status,
-        String(response.status),
+        // WordPress's error code tells a wrong username from a wrong password.
+        wpErrorCode(errorText) ?? String(response.status),
         `Failed to fetch ${label}: ${response.status} ${response.statusText} - ${sanitizeError(errorText)}`
       );
     }

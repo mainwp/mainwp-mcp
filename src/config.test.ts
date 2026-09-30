@@ -528,6 +528,139 @@ describe('loadConfig', () => {
     expect(config.dashboardUrl).toBe('https://from-env.com');
   });
 
+  describe('connection sources and override warnings', () => {
+    function homeSettings(settings: Record<string, unknown>): void {
+      vi.mocked(fs.existsSync).mockImplementation(p => !String(p).includes(process.cwd()));
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+    }
+
+    it('attributes an env-only Basic connection per key', () => {
+      process.env = {
+        MAINWP_URL: 'https://dashboard.example.com',
+        MAINWP_USER: 'admin',
+        MAINWP_APP_PASSWORD: 'private-app-password',
+      };
+
+      expect(loadConfig().connectionSources).toEqual({
+        MAINWP_URL: 'env',
+        MAINWP_USER: 'env',
+        MAINWP_APP_PASSWORD: 'env',
+      });
+    });
+
+    it('attributes a file-only Basic connection per key', () => {
+      process.env = {};
+      homeSettings({
+        dashboardUrl: 'https://dashboard.example.com',
+        username: 'admin',
+        appPassword: 'private-app-password',
+      });
+
+      expect(loadConfig().connectionSources).toEqual({
+        MAINWP_URL: 'settings.json',
+        MAINWP_USER: 'settings.json',
+        MAINWP_APP_PASSWORD: 'settings.json',
+      });
+    });
+
+    it('attributes mixed Basic sources and omits an unused token', () => {
+      process.env = { MAINWP_USER: 'env-user', MAINWP_TOKEN: 'unused-token' };
+      homeSettings({
+        dashboardUrl: 'https://dashboard.example.com',
+        username: 'file-user',
+        appPassword: 'private-app-password',
+      });
+
+      expect(loadConfig().connectionSources).toEqual({
+        MAINWP_URL: 'settings.json',
+        MAINWP_USER: 'env',
+        MAINWP_APP_PASSWORD: 'settings.json',
+      });
+    });
+
+    it('attributes bearer sources without Basic credentials', () => {
+      process.env = { MAINWP_TOKEN: 'env-token' };
+      homeSettings({ dashboardUrl: 'https://dashboard.example.com', apiToken: 'file-token' });
+
+      expect(loadConfig().connectionSources).toEqual({
+        MAINWP_URL: 'settings.json',
+        MAINWP_TOKEN: 'env',
+      });
+    });
+
+    it('does not warn about an unused bearer token under Basic auth', () => {
+      process.env = {
+        MAINWP_URL: 'https://dashboard.example.com',
+        MAINWP_USER: 'admin',
+        MAINWP_APP_PASSWORD: 'basic-password',
+        MAINWP_TOKEN: 'env-token',
+      };
+      homeSettings({
+        dashboardUrl: 'https://dashboard.example.com',
+        username: 'admin',
+        appPassword: 'basic-password',
+        apiToken: 'file-token',
+      });
+      const config = loadConfig();
+      expect(config.authType).toBe('basic');
+      expect(config.overriddenSettingsKeys).toEqual([]);
+      expect(vi.mocked(console.error).mock.calls).toEqual([
+        ['[mainwp-mcp] Loaded settings from file'],
+      ]);
+    });
+
+    it('names a differing env username override without logging values', () => {
+      process.env = {
+        MAINWP_URL: 'https://dashboard.example.com',
+        MAINWP_USER: 'env-user',
+        MAINWP_APP_PASSWORD: 'env-private-password',
+      };
+      homeSettings({
+        dashboardUrl: 'https://dashboard.example.com',
+        username: 'file-user',
+        appPassword: 'file-private-password',
+      });
+
+      expect(loadConfig().overriddenSettingsKeys).toEqual(['MAINWP_USER', 'MAINWP_APP_PASSWORD']);
+
+      const messages = vi.mocked(console.error).mock.calls.map(call => call.map(String).join(' '));
+      expect(messages).toContain(
+        '[mainwp-mcp] MAINWP_USER from the environment overrides a different value in settings.json.'
+      );
+      expect(messages).toContain(
+        '[mainwp-mcp] MAINWP_APP_PASSWORD from the environment overrides a different value in settings.json.'
+      );
+      expect(messages.join('\n')).not.toContain('env-user');
+      expect(messages.join('\n')).not.toContain('file-user');
+      expect(messages.join('\n')).not.toContain('env-private-password');
+      expect(messages.join('\n')).not.toContain('file-private-password');
+    });
+
+    it('warns only for real differences, not equal values or URL trailing slashes', () => {
+      process.env = {
+        MAINWP_URL: 'https://dashboard.example.com/',
+        MAINWP_USER: 'env-user',
+        MAINWP_APP_PASSWORD: 'same-password',
+      };
+      homeSettings({
+        dashboardUrl: 'https://dashboard.example.com',
+        username: 'file-user',
+        appPassword: 'same-password',
+      });
+
+      expect(loadConfig().overriddenSettingsKeys).toEqual(['MAINWP_USER']);
+
+      const messages = vi.mocked(console.error).mock.calls.map(call => String(call[0]));
+      expect(messages).toContain(
+        '[mainwp-mcp] MAINWP_USER from the environment overrides a different value in settings.json.'
+      );
+      expect(messages.join('\n')).not.toContain('MAINWP_URL from the environment overrides');
+      expect(messages.join('\n')).not.toContain(
+        'MAINWP_APP_PASSWORD from the environment overrides'
+      );
+    });
+  });
+
   describe('abilityNamespaces', () => {
     function envOnlyConfig() {
       process.env.MAINWP_URL = 'https://test.com';

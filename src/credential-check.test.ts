@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateCredentials } from './credential-check.js';
+import { CredentialRejectedError, validateCredentials } from './credential-check.js';
 import { clearCache, initRateLimiter } from './abilities.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
@@ -48,8 +48,40 @@ describe('validateCredentials', () => {
     });
 
     await expect(validateCredentials(makeBaseConfig(), mockLogger)).rejects.toThrow(
-      /Authentication failed: Invalid credentials\. Verify MAINWP_USER and MAINWP_APP_PASSWORD/
+      /Authentication failed: The Dashboard rejected the credentials for user "admin".*MAINWP_USER from the environment.*login name or email address, not the display name/
     );
+  });
+
+  it.each([
+    ['incorrect_password', "Application Password from that user's profile page"],
+    ['invalid_username', 'has no user'],
+  ])('preserves the WordPress %s code on a 403', async (code, guidance) => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code, message: 'Login refused' }), { status: 403 })
+    );
+    const validation = validateCredentials(makeBaseConfig(), mockLogger);
+    await expect(validation).rejects.toBeInstanceOf(CredentialRejectedError);
+    await expect(validation).rejects.toThrow(guidance);
+  });
+
+  it('keeps the old basic-auth guidance for a bare 403 while a 401 is rejected', async () => {
+    const forbiddenResponse = {
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+      text: async () => 'Access denied',
+      headers: new Headers(),
+    };
+    mockFetch.mockResolvedValueOnce(forbiddenResponse);
+    await expect(validateCredentials(makeBaseConfig(), mockLogger)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringContaining('Verify MAINWP_USER and MAINWP_APP_PASSWORD'),
+    });
+
+    mockFetch.mockResolvedValueOnce({ ...forbiddenResponse, status: 401 });
+    await expect(validateCredentials(makeBaseConfig(), mockLogger)).rejects.toMatchObject({
+      name: 'CredentialRejectedError',
+    });
   });
 
   it('classifies a 401 with the bearer-token hint for token auth', async () => {

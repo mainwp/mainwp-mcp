@@ -80,9 +80,24 @@ export interface Config {
   retryBaseDelay: number;
   /** Maximum delay between retries in milliseconds (default: 2000) */
   retryMaxDelay: number;
-  /** Configuration source: 'environment', 'settings file', or 'mixed' */
-  configSource: 'environment' | 'settings file' | 'mixed';
+  /**
+   * Where each connection value in effect came from. Empty for a tuple
+   * submitted through mainwp_configure that has not been saved yet.
+   */
+  connectionSources: ConnectionSources;
+  /**
+   * Keys whose environment value replaced a different settings.json value.
+   * Keys only: one of the values is a password.
+   */
+  overriddenSettingsKeys: ConnectionKey[];
 }
+
+/** Connection settings, by the environment variable that sets each one. */
+export type ConnectionKey = 'MAINWP_URL' | 'MAINWP_USER' | 'MAINWP_APP_PASSWORD' | 'MAINWP_TOKEN';
+
+export type ConnectionSource = 'env' | 'settings.json';
+
+export type ConnectionSources = Partial<Record<ConnectionKey, ConnectionSource>>;
 
 /**
  * Everything `loadConfig` validates that is not connection identity: policy,
@@ -92,7 +107,13 @@ export interface Config {
  */
 export type PolicyConfig = Omit<
   Config,
-  'dashboardUrl' | 'authType' | 'username' | 'appPassword' | 'apiToken'
+  | 'dashboardUrl'
+  | 'authType'
+  | 'username'
+  | 'appPassword'
+  | 'apiToken'
+  | 'connectionSources'
+  | 'overriddenSettingsKeys'
 >;
 
 /**
@@ -493,32 +514,25 @@ function getStringArray(
 }
 
 /**
- * Every MAINWP_* env var read by loadConfig. Used to compute configSource —
- * keep in sync with the getter calls below when adding a config option.
+ * The source of the value getString picked for one connection setting, or
+ * undefined when neither source set it.
  */
-const MAINWP_ENV_VARS = [
-  'MAINWP_URL',
-  'MAINWP_USER',
-  'MAINWP_APP_PASSWORD',
-  'MAINWP_TOKEN',
-  'MAINWP_SKIP_SSL_VERIFY',
-  'MAINWP_ALLOW_HTTP',
-  'MAINWP_SAFE_MODE',
-  'MAINWP_REQUIRE_USER_CONFIRMATION',
-  'MAINWP_RATE_LIMIT',
-  'MAINWP_REQUEST_TIMEOUT',
-  'MAINWP_MAX_RESPONSE_SIZE',
-  'MAINWP_MAX_SESSION_DATA',
-  'MAINWP_ALLOWED_TOOLS',
-  'MAINWP_BLOCKED_TOOLS',
-  'MAINWP_SCHEMA_VERBOSITY',
-  'MAINWP_RESPONSE_FORMAT',
-  'MAINWP_RETRY_ENABLED',
-  'MAINWP_MAX_RETRIES',
-  'MAINWP_RETRY_BASE_DELAY',
-  'MAINWP_RETRY_MAX_DELAY',
-  'MAINWP_ABILITY_NAMESPACES',
-] as const;
+function sourceOf(
+  envVar: string | undefined,
+  fileValue: string | undefined
+): ConnectionSource | undefined {
+  if (envVar !== undefined && envVar !== '') return 'env';
+  if (fileValue !== undefined && fileValue !== '') return 'settings.json';
+  return undefined;
+}
+
+/** Render per-key sources for the startup log: `MAINWP_URL: env, MAINWP_USER: settings.json`. */
+export function formatConnectionSources(sources: ConnectionSources): string {
+  return Object.entries(sources)
+    .filter(([, source]) => source !== undefined)
+    .map(([key, source]) => `${key}: ${source}`)
+    .join(', ');
+}
 
 /**
  * First-run configuration is absent entirely (no dashboard URL or no
@@ -565,12 +579,6 @@ export function resolveConfig(): ConfigResolution {
   // No file, or the trusted per-user config, counts as trusted.
   const settingsTrusted = loaded === null || loaded.trusted;
 
-  // Determine config source based on what's available
-  const hasEnvVars = MAINWP_ENV_VARS.some(name => !!process.env[name]);
-
-  const configSource: 'environment' | 'settings file' | 'mixed' =
-    settings === null ? 'environment' : !hasEnvVars ? 'settings file' : 'mixed';
-
   // Merge configuration with precedence: env > file > default
   // An untrusted CWD file may not choose where environment-sourced credentials
   // are sent: a planted file naming its own dashboardUrl, combined with real
@@ -604,6 +612,35 @@ export function resolveConfig(): ConfigResolution {
     fileDashboardUrl = undefined;
   }
   const dashboardUrl = getString(process.env.MAINWP_URL, fileDashboardUrl, '');
+
+  // An env value silently beating the file is how a user ends up editing
+  // settings.json and seeing no effect (issue #77). The key is named, never
+  // either value: one of them is a password.
+  const fileConnectionValues: Record<ConnectionKey, string | undefined> = {
+    MAINWP_URL: fileDashboardUrl,
+    MAINWP_USER: settings?.username,
+    MAINWP_APP_PASSWORD: settings?.appPassword,
+    MAINWP_TOKEN: settings?.apiToken,
+  };
+  const sentConnectionKeys: ConnectionKey[] = usesBasicAuth
+    ? ['MAINWP_URL', 'MAINWP_USER', 'MAINWP_APP_PASSWORD']
+    : ['MAINWP_URL', 'MAINWP_TOKEN'];
+  const overriddenSettingsKeys: ConnectionKey[] = [];
+  for (const key of sentConnectionKeys) {
+    const fileValue = fileConnectionValues[key];
+    const envValue = process.env[key];
+    // Trailing slashes are normalized away below, so they are not a difference.
+    const differs =
+      key === 'MAINWP_URL'
+        ? envValue?.replace(/\/+$/, '') !== fileValue?.replace(/\/+$/, '')
+        : envValue !== fileValue;
+    if (envValue && fileValue && differs) {
+      overriddenSettingsKeys.push(key);
+      console.error(
+        `[mainwp-mcp] ${key} from the environment overrides a different value in settings.json.`
+      );
+    }
+  }
   const skipSslVerify = getBoolean(
     'MAINWP_SKIP_SSL_VERIFY',
     process.env.MAINWP_SKIP_SSL_VERIFY,
@@ -824,7 +861,6 @@ export function resolveConfig(): ConfigResolution {
     maxRetries,
     retryBaseDelay,
     retryMaxDelay,
-    configSource,
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(blockedTools.length > 0 ? { blockedTools } : {}),
   };
@@ -888,17 +924,41 @@ export function resolveConfig(): ConfigResolution {
   const shared = {
     ...policy,
     dashboardUrl: normalizedUrl,
+    overriddenSettingsKeys,
   };
+  const urlSource = sourceOf(process.env.MAINWP_URL, fileDashboardUrl);
 
-  // Prefer basic auth (Application Password) as it works with Abilities API
+  // Prefer basic auth (Application Password) as it works with Abilities API.
+  // Sources cover only the values the selected auth mode sends.
   if (hasBasicAuth) {
     return {
       status: 'ready',
-      config: { ...shared, authType: 'basic' as const, username, appPassword },
+      config: {
+        ...shared,
+        authType: 'basic' as const,
+        username,
+        appPassword,
+        connectionSources: {
+          MAINWP_URL: urlSource,
+          MAINWP_USER: sourceOf(process.env.MAINWP_USER, settings?.username),
+          MAINWP_APP_PASSWORD: sourceOf(process.env.MAINWP_APP_PASSWORD, settings?.appPassword),
+        },
+      },
     };
   }
 
-  return { status: 'ready', config: { ...shared, authType: 'bearer' as const, apiToken } };
+  return {
+    status: 'ready',
+    config: {
+      ...shared,
+      authType: 'bearer' as const,
+      apiToken,
+      connectionSources: {
+        MAINWP_URL: urlSource,
+        MAINWP_TOKEN: sourceOf(process.env.MAINWP_TOKEN, settings?.apiToken),
+      },
+    },
+  };
 }
 
 /**

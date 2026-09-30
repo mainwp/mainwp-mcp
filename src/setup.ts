@@ -14,10 +14,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { formatJson, type Config, type ConfigResolution, type PolicyConfig } from './config.js';
+import {
+  formatJson,
+  type Config,
+  type ConfigResolution,
+  type ConnectionKey,
+  type PolicyConfig,
+} from './config.js';
 import { clearCache, initRateLimiter, type Ability } from './abilities.js';
 import { clearPendingPreviews } from './confirmation.js';
-import { validateCredentials } from './credential-check.js';
+import { looksLikeApplicationPassword } from './credential-diagnostics.js';
+import { CredentialRejectedError, validateCredentials } from './credential-check.js';
 import { getErrorMessage, McpErrorFactory } from './errors.js';
 import { withSecretRedaction, type Logger } from './logging.js';
 import { CONFIGURE_TOOL, RESERVED_TOOL_NAMES, SETUP_STATUS_TOOL } from './naming.js';
@@ -42,6 +49,37 @@ import {
 
 export { CONFIGURE_TOOL, SETUP_STATUS_TOOL };
 
+/**
+ * A failed check does not kill the process: the session starts in setup mode
+ * and keeps the credentials. An unreachable Dashboard is retried by the
+ * setup-status tool; a rejected login is reported, not resent.
+ */
+export async function checkStartupCredentials(
+  state: ConfigState,
+  config: Config,
+  logger: Logger
+): Promise<void> {
+  logger.info('Validating credentials...');
+  try {
+    const abilities = await validateCredentials(config, logger);
+    logger.info(`Connected! Found ${abilities.length} abilities`);
+    abilities.forEach(a => logger.debug(`  - ${a.name}: ${a.label}`));
+  } catch (error) {
+    const reason = sanitizeError(getErrorMessage(error));
+    if (error instanceof CredentialRejectedError) {
+      state.markRejected(reason);
+      logger.error(
+        `${reason} Starting in setup mode; MainWP tools stay hidden until the credentials are fixed.`
+      );
+    } else {
+      state.markDegraded(reason);
+      logger.warning(
+        `Could not reach the MainWP Dashboard at startup: ${reason} Starting anyway; MainWP tools stay hidden until the connection works.`
+      );
+    }
+  }
+}
+
 const SETUP_GUIDE_URL = 'https://github.com/mainwp/mainwp-mcp#readme';
 
 /** Connection environment variables. Any of them set makes the file we write moot. */
@@ -57,7 +95,7 @@ const MAX_URL_INPUT = 500;
 const MAX_USERNAME_INPUT = 200;
 const MAX_PASSWORD_INPUT = 200;
 
-export type SetupState = 'ready' | 'unconfigured' | 'degraded';
+export type SetupState = 'ready' | 'unconfigured' | 'degraded' | 'credentials_rejected';
 
 /**
  * Mutable readiness holder. Handlers keep a reference to this, not to a
@@ -69,6 +107,7 @@ export class ConfigState {
   private readonly missingSetting: 'MAINWP_URL' | 'credentials' | null;
   private policySettings: PolicyConfig;
   private failureReason: string | null = null;
+  private credentialsRejected = false;
   private operationInFlight = false;
 
   private constructor(
@@ -99,7 +138,8 @@ export class ConfigState {
    */
   get state(): SetupState {
     if (this.currentConfig === null) return 'unconfigured';
-    return this.failureReason === null ? 'ready' : 'degraded';
+    if (this.failureReason === null) return 'ready';
+    return this.credentialsRejected ? 'credentials_rejected' : 'degraded';
   }
 
   get isReady(): boolean {
@@ -130,10 +170,18 @@ export class ConfigState {
 
   markDegraded(reason: string): void {
     this.failureReason = reason;
+    this.credentialsRejected = false;
+  }
+
+  /** The Dashboard answered and refused the loaded credentials. */
+  markRejected(reason: string): void {
+    this.failureReason = reason;
+    this.credentialsRejected = true;
   }
 
   markReady(): void {
     this.failureReason = null;
+    this.credentialsRejected = false;
   }
 
   /** True while a configure or a degraded-connection retry holds the mutex. */
@@ -162,6 +210,7 @@ export class ConfigState {
     this.currentConfig = config;
     this.policySettings = policyOf(config);
     this.failureReason = null;
+    this.credentialsRejected = false;
   }
 }
 
@@ -172,6 +221,8 @@ function policyOf(config: Config): PolicyConfig {
     username: _username,
     appPassword: _appPassword,
     apiToken: _apiToken,
+    connectionSources: _connectionSources,
+    overriddenSettingsKeys: _overriddenSettingsKeys,
     ...policy
   } = config;
   return policy;
@@ -238,6 +289,49 @@ The credentials are still loaded. Ask me to check again once the Dashboard is re
 If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client.`;
 }
 
+// When reason already names the overridden keys, the generic precedence
+// sentence would say the same thing twice.
+function rejectedGuidance(reason: string, overrideNamed: boolean): string {
+  const precedence = overrideNamed
+    ? ''
+    : ' A value there wins over ~/.config/mainwp-mcp/settings.json, so correcting only the file has no effect.';
+  return `The MainWP MCP server has credentials, but the Dashboard rejected them: ${reason}
+
+Fix the value where the Sources list says it comes from, then restart the client. "The environment" means the "env" block of this server's entry in your MCP client config.${precedence}`;
+}
+
+// The startup stderr line naming the override never reaches an MCP client,
+// and #77 is exactly the user who edited settings.json and saw no change.
+function overrideNote(keys: ConnectionKey[]): string {
+  if (keys.length === 0) return '';
+  const subject =
+    keys.length === 1
+      ? `${keys[0]} from the environment overrides a different value`
+      : `${keys.join(', ')} from the environment override different values`;
+  return ` ${subject} in settings.json; correcting only the file has no effect.`;
+}
+
+function rejectedStatusResult(state: ConfigState, config: Config): ToolCallResult {
+  const policy = state.policy;
+  const reason =
+    (state.degradedReason ?? 'the Dashboard rejected the credentials.') +
+    overrideNote(config.overriddenSettingsKeys);
+  return setupResult(policy, {
+    state: 'credentials_rejected',
+    dashboardHost: hostOf(config.dashboardUrl),
+    ...(config.authType === 'basic' &&
+    config.username &&
+    !looksLikeApplicationPassword(config.username)
+      ? { username: config.username.slice(0, MAX_USERNAME_INPUT) }
+      : {}),
+    connectionSources: config.connectionSources,
+    overriddenSettingsKeys: config.overriddenSettingsKeys,
+    problem: reason,
+    guidance: rejectedGuidance(reason, config.overriddenSettingsKeys.length > 0),
+    relayInstructions: `Tell the user which value the Dashboard rejected and where it came from, using problem and connectionSources. Do not suggest retrying with the same credentials; the server will not resend them. Do not ask for credentials in chat; ${CONFIGURE_TOOL} will not replace loaded ones.`,
+  });
+}
+
 /**
  * JSON tool result. Every string is scrubbed of registered secrets, plus any
  * request-scoped values the caller supplies (the configure path passes the
@@ -276,7 +370,7 @@ export function getSetupTools(state: ConfigState): Tool[] {
     {
       name: SETUP_STATUS_TOOL,
       description:
-        'Report whether the MainWP MCP server is connected to a Dashboard yet, and return the setup instructions to show the user. Call this first when MainWP tools are missing. If the server has credentials but could not reach the Dashboard, this retries the connection.',
+        'Report whether the MainWP MCP server is connected to a Dashboard yet, and return the setup instructions to show the user. Call this first when MainWP tools are missing. If the server has credentials but could not reach the Dashboard, this retries the connection. If the Dashboard rejected the credentials, this reports which user was rejected and where each value came from.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: {
         title: 'MainWP setup status',
@@ -436,6 +530,13 @@ async function handleSetupStatus(
   const policy = state.policy;
   const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
 
+  // No retry here: config is loaded once, so a retry would resend a login
+  // WordPress already refused, and repeated failures can trip the lockouts
+  // security plugins apply to failed logins.
+  if (state.state === 'credentials_rejected' && state.retainedConfig) {
+    return rejectedStatusResult(state, state.retainedConfig);
+  }
+
   if (state.state === 'degraded') {
     const config = state.retainedConfig;
     if (config) {
@@ -460,6 +561,10 @@ async function handleSetupStatus(
           abilities = await validateCredentials(config, logger);
         } catch (error) {
           const reason = sanitizeError(getErrorMessage(error));
+          if (error instanceof CredentialRejectedError) {
+            state.markRejected(reason);
+            return rejectedStatusResult(state, config);
+          }
           state.markDegraded(reason);
           return setupResult(policy, {
             state: 'degraded',
@@ -529,11 +634,17 @@ async function handleConfigure(
   // Any loaded config, not only a working one: degraded means an operator's
   // credentials are present and the Dashboard was unreachable. A conversation
   // may bootstrap a connection, never replace one the operator provisioned.
+  // Rejected credentials included: a hostile Dashboard or a tampered
+  // connection could answer 401 on purpose to unlock replacement.
   if (state.retainedConfig !== null) {
+    const next =
+      state.state === 'credentials_rejected'
+        ? `The Dashboard rejected them; call ${SETUP_STATUS_TOOL} to see which user was rejected and where each value came from.`
+        : `If the connection is not working, call ${SETUP_STATUS_TOOL} to retry with the credentials it already has.`;
     return refusal(
       policy,
       'ALREADY_CONFIGURED',
-      `This server already has MainWP credentials loaded, so setup will not replace them from chat. If the connection is not working, call ${SETUP_STATUS_TOOL} to retry with the credentials it already has. To change the credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
+      `This server already has MainWP credentials loaded, so setup will not replace them from chat. ${next} To change the credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
     );
   }
 
@@ -604,13 +715,16 @@ async function handleConfigure(
   try {
     // Exactly the submitted tuple: never merged with stored or environment
     // values, so validation and persistence describe the same identity.
+    // No sources until saved, so a rejection names the user without
+    // pointing at a file that does not hold these values.
     const candidate: Config = {
       ...policy,
       dashboardUrl,
       authType: 'basic',
       username,
       appPassword,
-      configSource: 'settings file',
+      connectionSources: {},
+      overriddenSettingsKeys: [],
     };
 
     let abilities: Ability[];
@@ -693,7 +807,14 @@ async function handleConfigure(
     // identity, then tell the client every surface changed. Readiness is
     // visible from adopt() onward, so a client that re-lists as soon as the
     // notification lands sees the real tools.
-    state.adopt(candidate);
+    state.adopt({
+      ...candidate,
+      connectionSources: {
+        MAINWP_URL: 'settings.json',
+        MAINWP_USER: 'settings.json',
+        MAINWP_APP_PASSWORD: 'settings.json',
+      },
+    });
     initRateLimiter(candidate.rateLimit);
     clearPendingPreviews();
     clearToolsCache();
@@ -758,10 +879,17 @@ export function notReadyResult(state: ConfigState): ToolCallResult {
   const policy = state.policy;
   const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
   const statusToolAvailable = decidePolicy(policy, SETUP_STATUS_TOOL) === 'allow';
-  const guidance =
-    state.state === 'degraded'
-      ? degradedGuidance(state.degradedReason ?? 'the connection check failed')
-      : setupGuidance(chatSetupAvailable);
+  let guidance: string;
+  if (state.state === 'credentials_rejected') {
+    guidance = rejectedGuidance(
+      state.degradedReason ?? 'the Dashboard rejected the credentials',
+      false
+    );
+  } else if (state.state === 'degraded') {
+    guidance = degradedGuidance(state.degradedReason ?? 'the connection check failed');
+  } else {
+    guidance = setupGuidance(chatSetupAvailable);
+  }
   return setupResult(
     policy,
     {

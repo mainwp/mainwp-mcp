@@ -7,8 +7,20 @@
 
 import { fetchAbilities, type Ability } from './abilities.js';
 import { Config } from './config.js';
+import { describeCredentialRejection, isCredentialRejection } from './credential-diagnostics.js';
 import { getErrorMessage, getHttpStatus } from './errors.js';
 import type { Logger } from './logging.js';
+
+/**
+ * The Dashboard answered and refused these credentials. Retrying with the same
+ * values cannot help, unlike a network, TLS, or server failure.
+ */
+export class CredentialRejectedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CredentialRejectedError';
+  }
+}
 
 /**
  * Validate credentials by attempting to fetch abilities from the MainWP Dashboard.
@@ -33,8 +45,18 @@ export async function validateCredentials(config: Config, logger: Logger): Promi
     // (DNS, SSL, timeout) which have no status to inspect.
     const status = getHttpStatus(error);
 
-    // Authentication failures (401/403) - provide auth-type specific guidance
-    if (status === 401 || status === 403) {
+    const code =
+      error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    if (isCredentialRejection(status, code)) {
+      throw new CredentialRejectedError(
+        `Authentication failed: ${describeCredentialRejection(config, code)}`,
+        { cause: error }
+      );
+    }
+
+    // A bare 403 may come from a WAF or proxy rather than WordPress, so it
+    // keeps the generic guidance and the degraded retry path.
+    if (status === 403) {
       const authHint =
         config.authType === 'basic'
           ? 'Verify MAINWP_USER and MAINWP_APP_PASSWORD (or username/appPassword in settings.json) are correct and the user has REST API access.'
