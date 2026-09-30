@@ -267,3 +267,35 @@ describe('abilityToTool confirmation parameter injection', () => {
     expect(tool.description).not.toContain('confirmation_token');
   });
 });
+
+describe('abilityToTool schema verbosity keeps semantic property fields', () => {
+  const fieldValues: Array<[string, unknown]> = [
+    ['const', true],
+    ['const', null],
+    ['const', 0],
+    ['nullable', true],
+    ['nullable', false],
+    ['writeOnly', true],
+    ['writeOnly', false],
+  ];
+  const cases = (['compact', 'standard'] as const).flatMap(verbosity =>
+    fieldValues.map(([field, value]) => [verbosity, field, value] as const)
+  );
+
+  it.each(cases)('keeps %s %s: %j on the property', (verbosity, field, value) => {
+    // A declared falsy value is still a declaration: compact mode must copy it
+    // by key presence, not truthiness.
+    const ability = makeAbility({
+      input_schema: {
+        type: 'object',
+        properties: { target: { type: 'boolean', description: 'Target.', [field]: value } },
+      },
+    });
+
+    const tool = abilityToTool(ability, 'mainwp', verbosity);
+
+    const props = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    expect(field in props.target).toBe(true);
+    expect(props.target[field]).toEqual(value);
+  });
+});

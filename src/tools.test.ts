@@ -876,6 +876,196 @@ describe('executeTool', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps nested writeOnly values out of confirmation responses and logs', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/replace-private-profile-v1',
+      label: 'Replace Private Profile',
+      description: 'Previews a private profile replacement',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: {
+          private_profile: {
+            type: 'object',
+            writeOnly: true,
+            properties: {
+              token: { type: 'string' },
+              contacts: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          dry_run: { type: 'boolean' },
+          confirm: { type: 'boolean' },
+        },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: true, idempotent: false },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        preview: {
+          token: 'preview-private-token',
+          contacts: ['preview-private@example.test'],
+        },
+      }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'replace_private_profile_v1',
+      {
+        private_profile: {
+          token: 'preview-private-token',
+          contacts: ['preview-private@example.test'],
+        },
+        confirm: true,
+      },
+      mockLogger
+    );
+    const response = result.content[0].text;
+    const logs = JSON.stringify(
+      Object.values(mockLogger).flatMap(
+        method => (method as { mock: { calls: unknown[] } }).mock.calls
+      )
+    );
+
+    expect(response).toContain('CONFIRMATION_REQUIRED');
+    expect(response).not.toContain('preview-private-token');
+    expect(response).not.toContain('preview-private@example.test');
+    expect(response).toContain('[redacted]');
+    expect(logs).not.toContain('preview-private-token');
+    expect(logs).not.toContain('preview-private@example.test');
+  });
+
+  it('redacts writeOnly values in tool results and withholds reflected errors', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/validate-private-code-v1',
+      label: 'Validate Private Code',
+      description: 'Validates private code',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: false, idempotent: true },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ reflected: 'private-code-result' }),
+      headers: new Headers(),
+    });
+
+    const success = await executeTool(
+      baseConfig,
+      'validate_private_code_v1',
+      { code: 'private-code-result' },
+      mockLogger
+    );
+    expect(success.content[0].text).not.toContain('private-code-result');
+    expect(success.content[0].text).toContain('[redacted]');
+
+    clearCache();
+    clearToolsCache();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [...sampleAbilities, privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () =>
+        JSON.stringify({ code: 'invalid_private_code', message: 'Rejected private-code-error' }),
+      headers: new Headers(),
+    });
+
+    const failure = await executeTool(
+      baseConfig,
+      'validate_private_code_v1',
+      { code: 'private-code-error' },
+      mockLogger
+    );
+    expect(failure.isError).toBe(true);
+    expect(failure.content[0].text).not.toContain('private-code-error');
+    expect(failure.content[0].text).toContain(
+      'Ability execution failed: invalid_private_code (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+    );
+    expect(
+      JSON.stringify(
+        Object.values(mockLogger).flatMap(
+          method => (method as { mock: { calls: unknown[] } }).mock.calls
+        )
+      )
+    ).not.toContain('private-code-error');
+  });
+
+  it.each([
+    { order: 'input', reflected: { user: 'ab', pin: 12 } },
+    { order: 'reversed', reflected: { pin: 12, user: 'ab' } },
+  ])(
+    'withholds a short-leaf writeOnly object from an upstream error in $order order',
+    async ({ reflected }) => {
+      const privateAbility: Ability = {
+        name: 'mainwp/validate-private-profile-v1',
+        label: 'Validate Private Profile',
+        description: 'Validates private profile',
+        category: 'mainwp-private',
+        input_schema: {
+          type: 'object',
+          properties: { profile: { type: 'object', writeOnly: true } },
+        },
+        meta: {
+          annotations: { readonly: false, destructive: false, idempotent: true },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [...sampleAbilities, privateAbility],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => JSON.stringify({ message: `Rejected ${JSON.stringify(reflected)}` }),
+        headers: new Headers(),
+      });
+
+      const failure = await executeTool(
+        baseConfig,
+        'validate_private_profile_v1',
+        { profile: { user: 'ab', pin: 12 } },
+        mockLogger
+      );
+      const failureLog = vi
+        .mocked(mockLogger.error)
+        .mock.calls.find(([message]) => message === 'Tool execution failed')?.[1];
+
+      expect(failure.isError).toBe(true);
+      expect(failure.content[0].text).toContain(
+        'Ability execution failed: 400 (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+      );
+      expect(failure.content[0].text).not.toContain('"user":"ab"');
+      expect(failureLog?.error).toContain('upstream message is withheld');
+      expect(failureLog?.error).not.toContain('"user":"ab"');
+    }
+  );
+
   it('should execute read-only tool successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

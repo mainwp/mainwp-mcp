@@ -1246,6 +1246,574 @@ describe('executeAbility', () => {
   // HTTP Method Selection Tests
   // Rules: GET (readonly), DELETE (destructive + idempotent), POST (everything else)
 
+  it('preserves writeOnly discovery metadata and redacts nested private input from results', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/private-profile-v1',
+      label: 'Private Profile',
+      description: 'Processes a private profile',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: {
+          profile: {
+            type: 'object',
+            writeOnly: true,
+            properties: {
+              token: { type: 'string' },
+              contacts: { type: 'array', items: { type: 'string' } },
+            },
+          },
+        },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: false, idempotent: true },
+      },
+    };
+    const input = {
+      profile: {
+        token: 'private-token-123',
+        contacts: ['private@example.test', 'backup@example.test'],
+        updated_at: 0,
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [privateAbility],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ echoed: input.profile, status: 'validated', changed: false, count: 0 }),
+      headers: new Headers(),
+    });
+
+    const discovered = await fetchAbilities(baseConfig, false, mockLogger);
+    const result = await executeAbility(
+      baseConfig,
+      privateAbility.name,
+      input,
+      mockLogger,
+      discovered[0]
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(
+      (discovered[0].input_schema?.properties as Record<string, Record<string, unknown>>).profile
+        .writeOnly
+    ).toBe(true);
+    expect(serialized).not.toContain('private-token-123');
+    expect(serialized).not.toContain('private@example.test');
+    expect(serialized).not.toContain('backup@example.test');
+    expect(serialized).toContain('[redacted]');
+    expect(result).toEqual({
+      echoed: '[redacted]',
+      status: 'validated',
+      changed: false,
+      // The private updated_at of 0 is too short to redact; an unrelated count
+      // of 0 must survive.
+      count: 0,
+    });
+    expect(
+      JSON.stringify(
+        Object.values(mockLogger).flatMap(
+          method => (method as { mock: { calls: unknown[] } }).mock.calls
+        )
+      )
+    ).not.toContain('private-token-123');
+  });
+
+  it('withholds a reflected nested writeOnly value from an upstream error', async () => {
+    const privateAbility: Ability = {
+      name: 'mainwp/private-error-v1',
+      label: 'Private Error',
+      description: 'Rejects a private value',
+      category: 'mainwp-private',
+      input_schema: {
+        type: 'object',
+        properties: {
+          credentials: {
+            type: 'object',
+            writeOnly: true,
+            properties: { api_token: { type: 'string' } },
+          },
+        },
+      },
+      meta: {
+        annotations: { readonly: false, destructive: false, idempotent: true },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () =>
+        JSON.stringify({
+          code: 'invalid_private_value',
+          message: 'Rejected private-error-token',
+        }),
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(
+        baseConfig,
+        privateAbility.name,
+        { credentials: { api_token: 'private-error-token' } },
+        mockLogger,
+        privateAbility
+      )
+    ).rejects.toThrow(
+      'Ability execution failed: invalid_private_value (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+    );
+    expect(
+      JSON.stringify(
+        Object.values(mockLogger).flatMap(
+          method => (method as { mock: { calls: unknown[] } }).mock.calls
+        )
+      )
+    ).not.toContain('private-error-token');
+  });
+
+  it('withholds an upstream error for comma-coerced writeOnly items', async () => {
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: {
+          tokens: { type: 'array', items: { type: 'string', writeOnly: true } },
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () =>
+        JSON.stringify({ code: 'rest_invalid_param', message: 'Invalid token TOKENAAAA1' }),
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(
+        { ...baseConfig, retryEnabled: false },
+        privateAbility.name,
+        { tokens: 'TOKENAAAA1,TOKENBBBB2' },
+        mockLogger,
+        privateAbility
+      )
+    ).rejects.toMatchObject({
+      code: 'rest_invalid_param',
+      message:
+        'Ability execution failed: rest_invalid_param (HTTP 400). The upstream message is withheld because this call carried write-only input.',
+    });
+  });
+
+  it('redacts a writeOnly value spanning the error limit before retry logging', async () => {
+    const privateValue = 'SENTINEL_BOUNDARY_12345';
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: 'Unavailable',
+      text: async () => 'x'.repeat(495) + privateValue,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"ok":true}',
+      headers: new Headers(),
+    });
+
+    const result = await executeAbility(
+      { ...baseConfig, retryEnabled: true, maxRetries: 2, retryBaseDelay: 0 },
+      privateAbility.name,
+      { code: privateValue },
+      mockLogger,
+      privateAbility
+    );
+    const logs = JSON.stringify(
+      Object.values(mockLogger).flatMap(
+        method => (method as { mock: { calls: unknown[] } }).mock.calls
+      )
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(mockLogger.warning).toHaveBeenCalledWith(
+      'Retrying request after transient error',
+      expect.any(Object)
+    );
+    expect(logs).not.toContain(privateValue);
+    expect(logs).not.toContain(privateValue.slice(0, 8));
+  });
+
+  it('does not expose a writeOnly value in a malformed successful response', async () => {
+    const privateValue = 'private-response-value';
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => `not-json ${privateValue}`,
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(
+        { ...baseConfig, retryEnabled: false },
+        privateAbility.name,
+        { code: privateValue },
+        mockLogger,
+        privateAbility
+      )
+    ).rejects.toThrow('Invalid JSON in ability response');
+  });
+
+  it('reports the HTTP status for a numeric upstream error code while withholding the message', async () => {
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () => JSON.stringify({ code: 42, message: 'bad private-code-value' }),
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility(
+        { ...baseConfig, retryEnabled: false },
+        privateAbility.name,
+        { code: 'private-code-value' },
+        mockLogger,
+        privateAbility
+      )
+    ).rejects.toThrow(
+      'Ability execution failed: 400 (HTTP 400). The upstream message is withheld because this call carried write-only input.'
+    );
+  });
+
+  it('still explains a credential rejection when the upstream message is withheld', async () => {
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () =>
+        JSON.stringify({ code: 'invalid_username', message: 'Unknown login private-code-value' }),
+      headers: new Headers(),
+    });
+
+    const execution = executeAbility(
+      { ...baseConfig, retryEnabled: false },
+      privateAbility.name,
+      { code: 'private-code-value' },
+      mockLogger,
+      privateAbility
+    );
+    await expect(execution).rejects.toThrow(
+      'Ability execution failed: invalid_username (HTTP 401). The upstream message is withheld because this call carried write-only input. The Dashboard has no user'
+    );
+    await expect(execution).rejects.not.toThrow('private-code-value');
+  });
+
+  it('drops the username from the credential note when it matches a write-only value in any case', async () => {
+    const privateAbility: Ability = {
+      ...sampleAbilities[0],
+      input_schema: {
+        type: 'object',
+        properties: { code: { type: 'string', writeOnly: true } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => JSON.stringify({ code: 'invalid_username', message: 'Site-Admin' }),
+      headers: new Headers(),
+    });
+
+    const error = await executeAbility(
+      { ...baseConfig, username: 'site-admin', retryEnabled: false },
+      privateAbility.name,
+      { code: 'Site-Admin' },
+      mockLogger,
+      privateAbility
+    ).catch((caught: Error) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'Ability execution failed: invalid_username (HTTP 401). The upstream message is withheld because this call carried write-only input. The Dashboard rejected the credentials.'
+    );
+  });
+
+  it.each([
+    {
+      shape: 'a username the note escapes',
+      username: 'pa"ss_word1',
+      status: 401,
+      expected:
+        'Ability execution failed: invalid_username (HTTP 401). The upstream message is withheld because this call carried write-only input. The Dashboard rejected the credentials.',
+    },
+    {
+      shape: 'a username the note truncates',
+      username: `${'u'.repeat(95)}SecretTail42`,
+      status: 401,
+      expected:
+        'Ability execution failed: invalid_username (HTTP 401). The upstream message is withheld because this call carried write-only input. The Dashboard rejected the credentials.',
+    },
+    {
+      shape: 'a rejection code that is itself the write-only value',
+      username: 'site-admin',
+      secret: 'invalid_username',
+      status: 403,
+      expected:
+        'Ability execution failed: 403 (HTTP 403). The upstream message is withheld because this call carried write-only input. The Dashboard rejected the credentials.',
+    },
+  ])(
+    'keeps the credential note generic for $shape',
+    async ({ username, secret, status, expected }) => {
+      const privateAbility: Ability = {
+        ...sampleAbilities[0],
+        input_schema: {
+          type: 'object',
+          properties: { code: { type: 'string', writeOnly: true } },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status,
+        statusText: 'Rejected',
+        text: async () => JSON.stringify({ code: 'invalid_username', message: 'Rejected' }),
+        headers: new Headers(),
+      });
+
+      const error = await executeAbility(
+        { ...baseConfig, username, retryEnabled: false },
+        privateAbility.name,
+        { code: secret ?? username },
+        mockLogger,
+        privateAbility
+      ).catch((caught: Error) => caught);
+
+      expect((error as Error).message).toBe(expected);
+    }
+  );
+
+  it.each([
+    {
+      shape: 'raw value',
+      input: { code: 'private-raw-value' },
+      body: { code: 'invalid_private', message: 'Rejected private-raw-value' },
+      expectedCode: 'invalid_private',
+      forbidden: 'private-raw-value',
+    },
+    {
+      shape: 'JSON-escaped value',
+      input: { code: 'a/b "c" d' },
+      body: { code: 'invalid_private', message: 'Rejected a\\/b \\"c\\" d' },
+      expectedCode: 'invalid_private',
+      forbidden: 'a\\/b',
+    },
+    {
+      shape: 'percent-encoded value',
+      input: { code: 'a b&c' },
+      body: { code: 'invalid_private', message: 'Rejected a%20b%26c' },
+      expectedCode: 'invalid_private',
+      forbidden: 'a%20b%26c',
+    },
+    {
+      shape: 'whole short-leaf object',
+      input: { code: { pin: 'xy', id: 12 } },
+      body: { code: 'invalid_private', message: 'Rejected {"pin":"xy","id":12}' },
+      expectedCode: 'invalid_private',
+      forbidden: '"pin":"xy"',
+    },
+    {
+      shape: 'value in the code field',
+      input: { code: 'private-code-value' },
+      body: { code: 'private-code-value', message: 'Rejected private-code-value' },
+      expectedCode: '400',
+      forbidden: 'private-code-value',
+    },
+    {
+      shape: 'writeOnly number embedded in an error code',
+      input: { code: 1234 },
+      body: { code: 'invalid1234', message: 'Rejected 1234' },
+      expectedCode: '400',
+      forbidden: '1234',
+    },
+    {
+      shape: 'case-folded writeOnly string embedded in an error code',
+      input: { code: 'ErrSecret1' },
+      body: { code: 'errsecret1', message: 'Rejected ErrSecret1' },
+      expectedCode: '400',
+      forbidden: 'ErrSecret1',
+    },
+    {
+      shape: 'unrelated error code with writeOnly input',
+      input: { code: 1234 },
+      body: { code: 'rest_invalid_param', message: 'Rejected 1234' },
+      expectedCode: 'rest_invalid_param',
+      forbidden: '1234',
+    },
+    {
+      shape: 'unsafe code characters',
+      input: { code: 'private-code-value' },
+      body: { code: 'invalid private/code', message: 'Rejected private-code-value' },
+      expectedCode: '400',
+      forbidden: 'private-code-value',
+    },
+    {
+      shape: 'code longer than 64 characters',
+      input: { code: 'private-code-value' },
+      body: { code: 'x'.repeat(65), message: 'Rejected private-code-value' },
+      expectedCode: '400',
+      forbidden: 'private-code-value',
+    },
+  ])(
+    'withholds upstream error text reflecting a $shape',
+    async ({ input, body, expectedCode, forbidden }) => {
+      const privateAbility: Ability = {
+        ...sampleAbilities[0],
+        input_schema: {
+          type: 'object',
+          properties: { code: { writeOnly: true } },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: `Rejected ${forbidden}`,
+        text: async () => JSON.stringify(body),
+        headers: new Headers(),
+      });
+      const expectedMessage = `Ability execution failed: ${expectedCode} (HTTP 400). The upstream message is withheld because this call carried write-only input.`;
+      await expect(
+        executeAbility(
+          { ...baseConfig, retryEnabled: false },
+          privateAbility.name,
+          input,
+          mockLogger,
+          privateAbility
+        )
+      ).rejects.toMatchObject({ message: expectedMessage, code: expectedCode, status: 400 });
+      const logs = JSON.stringify(
+        Object.values(mockLogger).flatMap(
+          method => (method as { mock: { calls: unknown[] } }).mock.calls
+        )
+      );
+      expect(logs).not.toContain(forbidden);
+    }
+  );
+
+  it('relays a sanitized upstream message when no writeOnly value was supplied', async () => {
+    const ability: Ability = {
+      ...sampleAbilities[0],
+      input_schema: { type: 'object', properties: { code: { writeOnly: true } } },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () =>
+        JSON.stringify({ code: 'invalid_private', message: 'Rejected private-raw-value' }),
+      headers: new Headers(),
+    });
+
+    await expect(
+      executeAbility({ ...baseConfig, retryEnabled: false }, ability.name, {}, mockLogger, ability)
+    ).rejects.toThrow('Ability execution failed: invalid_private - Rejected private-raw-value');
+  });
+
+  it('keeps GET input out of a transport error that reflects the request URL', async () => {
+    mockFetch.mockImplementationOnce((url: string) =>
+      Promise.reject(new Error(`Failed to fetch ${url}`))
+    );
+
+    const error = (await executeAbility(
+      { ...baseConfig, retryEnabled: false },
+      sampleAbilities[0].name,
+      { page: 1234 },
+      mockLogger,
+      sampleAbilities[0]
+    ).catch(caught => caught)) as Error;
+
+    expect(error.message).toMatch(/^Failed to fetch https?:\/\/[^?]+$/);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('input[page]=1234'),
+      expect.anything()
+    );
+  });
+
+  it('keeps GET input out of a response read error that reflects the request URL', async () => {
+    mockFetch.mockImplementationOnce((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body: new ReadableStream({
+          start(controller) {
+            controller.error(new Error(`Failed to read ${url}`));
+          },
+        }),
+      })
+    );
+
+    const error = (await executeAbility(
+      { ...baseConfig, retryEnabled: false },
+      sampleAbilities[0].name,
+      { page: 1234 },
+      mockLogger,
+      sampleAbilities[0]
+    ).catch(caught => caught)) as Error;
+
+    expect(error.message).toMatch(/^Failed to read https?:\/\/[^?]+$/);
+  });
+
+  it('keeps the query string, and any GET input in it, out of a timeout error', async () => {
+    mockFetch.mockImplementationOnce((_url, options: RequestInit) => {
+      const signal = options.signal as AbortSignal;
+      const stream = new ReadableStream({
+        start(controller) {
+          signal.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(new Response(stream));
+    });
+    const customFetch = createFetch(makeBaseConfig({ requestTimeout: 20 }));
+
+    const response = await customFetch('https://test.local/run?input[code]=private%20value');
+    const error = await readLimitedBody(response, 1000).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: 'ETIMEDOUT' });
+    expect((error as Error).message).toBe('Request timeout after 20ms: https://test.local/run');
+  });
+
   it('should use GET for readonly abilities', async () => {
     // First mock for fetchAbilities
     mockFetch.mockResolvedValueOnce({

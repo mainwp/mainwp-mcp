@@ -28,9 +28,10 @@ import {
   MAX_ERROR_BODY_BYTES,
   MAX_URL_LENGTH,
 } from './http-client.js';
-import type { Logger } from './logging.js';
+import { withSecretRedaction, type Logger } from './logging.js';
 import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
 import { classifyDestructive } from './policy.js';
+import { createWriteOnlyRedactor } from './write-only.js';
 
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
@@ -963,6 +964,8 @@ export async function executeAbility(
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   const hasInput = input && Object.keys(input).length > 0;
+  const writeOnlyRedactor = createWriteOnlyRedactor(ability.input_schema, input);
+  const safeLogger = logger ? withSecretRedaction(logger, writeOnlyRedactor.text) : undefined;
 
   /**
    * Fetch and validate response in a single operation.
@@ -1011,9 +1014,12 @@ export async function executeAbility(
       if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
         try {
           const errorData = JSON.parse(bodyText);
-          errorCode =
-            safeWpErrorCode((errorData as { code?: unknown }).code) ?? String(response.status);
-          errorMsg = (errorData as { message?: string }).message || errorMsg;
+          const { code, message } = errorData as { code?: unknown; message?: unknown };
+          errorCode = safeWpErrorCode(code) ?? errorCode;
+          errorMsg =
+            message === undefined || message === null || message === ''
+              ? errorMsg
+              : String(message);
         } catch {
           // JSON parse failed - use raw text as message
           errorMsg = bodyText || response.statusText;
@@ -1023,7 +1029,7 @@ export async function executeAbility(
         errorMsg = bodyText;
       }
 
-      logger?.warning('Upstream request failed', {
+      safeLogger?.warning('Upstream request failed', {
         abilityName,
         httpStatus: response.status,
         upstreamLatencyMs,
@@ -1031,20 +1037,46 @@ export async function executeAbility(
 
       // Credentials revoked or wrong after startup: WordPress's own text names
       // neither the user nor where the value came from.
-      const rejection = isCredentialRejection(response.status, errorCode)
-        ? ` ${describeCredentialRejection(config, errorCode)}`
-        : '';
+      const credentialNote = (code: string): string =>
+        isCredentialRejection(response.status, code)
+          ? ` ${describeCredentialRejection(config, code)}`
+          : '';
+
+      if (writeOnlyRedactor.carriesWriteOnly) {
+        // errorCode is already a plain slug or the status; drop it as well
+        // when it contains a write-only value.
+        const safeErrorCode = !writeOnlyRedactor.mentions(errorCode)
+          ? errorCode
+          : String(response.status);
+        // Decided on the original code, so a withheld code does not also drop
+        // the diagnosis. The note quotes the code and the configured username
+        // (escaped and cut to length), and downstream redaction is
+        // case-sensitive. A note whose text or raw username overlaps a
+        // write-only value in any case becomes a sentence that quotes nothing.
+        const note = credentialNote(errorCode);
+        const safeNote =
+          note &&
+          (writeOnlyRedactor.mentions(note) || writeOnlyRedactor.mentions(config.username ?? ''))
+            ? ' The Dashboard rejected the credentials.'
+            : note;
+        throw createHttpError(
+          response.status,
+          safeErrorCode,
+          `Ability execution failed: ${safeErrorCode} (HTTP ${response.status}). The upstream message is withheld because this call carried write-only input.${safeNote}`
+        );
+      }
+
       throw createHttpError(
         response.status,
         errorCode,
-        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${rejection}`
+        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${credentialNote(errorCode)}`
       );
     }
 
     // Read response body with streaming size enforcement
     const responseBody = await readLimitedBody(response, config.maxResponseSize);
 
-    logger?.debug('Upstream request succeeded', {
+    safeLogger?.debug('Upstream request succeeded', {
       abilityName,
       httpStatus: response.status,
       upstreamLatencyMs,
@@ -1055,7 +1087,13 @@ export async function executeAbility(
     // keys and string values at every depth — redacting the raw body text
     // instead would also replace across JSON syntax and turn a well-formed
     // response into a parse error.
-    return redactKnownSecretsDeep(JSON.parse(responseBody));
+    let parsedResponse: unknown;
+    try {
+      parsedResponse = JSON.parse(responseBody);
+    } catch {
+      throw new Error('Invalid JSON in ability response');
+    }
+    return writeOnlyRedactor.deep(redactKnownSecretsDeep(parsedResponse));
   };
 
   // Apply retry logic only for read-only operations when enabled
@@ -1066,7 +1104,7 @@ export async function executeAbility(
       baseDelay: config.retryBaseDelay,
       maxDelay: config.retryMaxDelay,
       timeoutBudget: config.requestTimeout,
-      logger,
+      logger: safeLogger,
     });
   } else {
     // No retry: execute directly with synthetic context
@@ -1078,7 +1116,7 @@ export async function executeAbility(
 
   if (isDestructive) {
     const action = input?.dry_run === true ? 'previewed' : 'executed';
-    logger?.info(`AUDIT: destructive operation ${action}`, { abilityName });
+    safeLogger?.info(`AUDIT: destructive operation ${action}`, { abilityName });
   }
 
   return result;

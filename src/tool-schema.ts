@@ -137,7 +137,8 @@ function truncateDescription(description: string | undefined | null): string {
 /**
  * Recursively compress a JSON Schema by truncating descriptions
  *
- * Preserves critical fields: type, enum, items, default, minimum, maximum, required, format
+ * Preserves critical fields: type, enum, const, nullable, writeOnly, items, default, minimum,
+ * maximum, required, format
  * Removes: examples field
  */
 function compressSchema(schema: Record<string, unknown>): Record<string, unknown> {
@@ -174,6 +175,9 @@ function compressSchema(schema: Record<string, unknown>): Record<string, unknown
       'minLength',
       'maxLength',
       'pattern',
+      'const',
+      'nullable',
+      'writeOnly',
     ];
     for (const field of criticalFields) {
       if (field in prop) {
