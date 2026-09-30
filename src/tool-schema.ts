@@ -15,7 +15,11 @@ import {
 } from './abilities.js';
 import type { SchemaVerbosity } from './config.js';
 import { abilityNameToToolName } from './naming.js';
-import { classifyDestructive, declaresUsableBooleanParam } from './policy.js';
+import {
+  classifyDestructive,
+  declaresUsableBooleanParam,
+  resolveConfirmationParam,
+} from './policy.js';
 
 /**
  * Convert an Ability's JSON Schema to MCP tool input schema format
@@ -310,7 +314,7 @@ function buildStandardDescription(
   ability: Ability,
   meta: AbilityAnnotations | undefined,
   hasDryRun: boolean,
-  hasConfirm: boolean,
+  confirmationParam: string | undefined,
   isDestructive: boolean
 ): string {
   // Category prefix (e.g., "[sites] ...")
@@ -320,6 +324,7 @@ function buildStandardDescription(
     : ability.description;
 
   // Append contextual LLM instructions
+  const hasConfirm = confirmationParam !== undefined;
   const instructions = generateInstructions(meta, hasDryRun, hasConfirm);
   if (instructions) {
     description += ` ${instructions}`;
@@ -338,9 +343,9 @@ function buildStandardDescription(
     description +=
       '\n\nCONFIRMATION FLOW: ' +
       (hasDryRun
-        ? '1) Call with confirm:true to preview what will be affected. ' +
+        ? `1) Call with ${confirmationParam}:true to preview what will be affected. ` +
           '2) Show preview to user and ask for confirmation. '
-        : '1) Call with confirm:true to receive a confirmation token (no preview available). ' +
+        : `1) Call with ${confirmationParam}:true to receive a confirmation token (no preview available). ` +
           '2) Ask the user for confirmation. ') +
       '3) If confirmed, call again with user_confirmed:true and the confirmation_token ' +
       'from the first response to execute. ' +
@@ -359,10 +364,11 @@ function buildCompactDescription(
   ability: Ability,
   meta: AbilityAnnotations | undefined,
   hasDryRun: boolean,
-  hasConfirm: boolean,
+  confirmationParam: string | undefined,
   isDestructive: boolean
 ): string {
   let description = truncateDescription(ability.description);
+  const hasConfirm = confirmationParam !== undefined;
   const tags = buildSafetyTags(meta, hasDryRun, hasConfirm, 'compact');
   if (tags) {
     description += ` ${tags}`;
@@ -374,9 +380,9 @@ function buildCompactDescription(
   // self-approval loophole the standard wording closes.
   if (isDestructive && hasConfirm) {
     description += hasDryRun
-      ? ' FLOW: confirm:true -> preview -> show user; a bare request is not approval; ' +
+      ? ` FLOW: ${confirmationParam}:true -> preview -> show user; a bare request is not approval; ` +
         'on explicit approval -> user_confirmed:true + confirmation_token'
-      : ' FLOW: confirm:true -> token, no preview available -> describe operation; ' +
+      : ` FLOW: ${confirmationParam}:true -> token, no preview available -> describe operation; ` +
         'a bare request is not approval; on explicit approval -> ' +
         'user_confirmed:true + confirmation_token';
   }
@@ -411,8 +417,11 @@ export function abilityToTool(
   // which would make an unusable channel (confirm: false) look usable here
   // while the execution gate fails closed on it.
   const rawSchemaProps: unknown = ability.input_schema?.properties;
-  const hasDryRun = declaresUsableBooleanParam(rawSchemaProps, 'dry_run');
-  const hasConfirm = declaresUsableBooleanParam(rawSchemaProps, 'confirm');
+  const confirmationParam = resolveConfirmationParam(ability.input_schema);
+  const hasDryRun =
+    declaresUsableBooleanParam(rawSchemaProps, 'dry_run') &&
+    (confirmationParam === undefined || confirmationParam === 'confirm');
+  const hasConfirm = confirmationParam !== undefined;
   // Fail-closed, same classifier as the execution policy. The old
   // `meta?.destructive ?? false` default advertised unannotated abilities as
   // non-destructive (and skipped their confirmation-parameter injection)
@@ -431,13 +440,12 @@ export function abilityToTool(
       type: 'boolean',
       description:
         'Confirm execution after user approval. ' +
-        'FLOW: 1) confirm:true, 2) show result to user, ' +
+        `FLOW: 1) ${confirmationParam}:true, 2) show result to user, ` +
         '3) user_confirmed:true + confirmation_token if approved.',
     };
     mutableProps['confirmation_token'] = {
       type: 'string',
-      description:
-        'Token issued by the confirm:true response; required alongside user_confirmed:true.',
+      description: `Token issued by the ${confirmationParam}:true response; required alongside user_confirmed:true.`,
     };
   }
 
@@ -449,8 +457,8 @@ export function abilityToTool(
   // Build description with safety context
   const description =
     verbosity === 'standard'
-      ? buildStandardDescription(ability, meta, hasDryRun, hasConfirm, isDestructive)
-      : buildCompactDescription(ability, meta, hasDryRun, hasConfirm, isDestructive);
+      ? buildStandardDescription(ability, meta, hasDryRun, confirmationParam, isDestructive)
+      : buildCompactDescription(ability, meta, hasDryRun, confirmationParam, isDestructive);
 
   return {
     name: toolName,

@@ -11,7 +11,7 @@ import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
-import { declaresUsableBooleanParam } from './policy.js';
+import { declaresUsableBooleanParam, resolveConfirmationParam } from './policy.js';
 import { trackSessionData } from './session.js';
 import {
   buildConfirmationUnsupportedResponse,
@@ -108,8 +108,8 @@ function canonicalize(value: unknown): unknown {
 
 /**
  * Generate a unique preview key for a tool call.
- * Excludes confirmation-related parameters (confirm, user_confirmed, dry_run)
- * from the key to ensure preview and execution calls match.
+ * Excludes confirmation-related parameters (confirm, the resolved confirm_*,
+ * user_confirmed, dry_run) from the key to ensure preview and execution calls match.
  * Prefixed with the config identity hash: the preview maps are module-level,
  * so without the scope a token issued against one dashboard/principal could
  * confirm the same tool and arguments against another createServer(config)
@@ -121,15 +121,15 @@ function canonicalize(value: unknown): unknown {
 export function getPreviewKey(
   scope: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  confirmationParam: string
 ): string {
-  const {
-    confirm: _confirm,
-    user_confirmed: _user_confirmed,
-    dry_run: _dry_run,
-    confirmation_token: _confirmation_token,
-    ...relevantArgs
-  } = args;
+  const relevantArgs = { ...args };
+  delete relevantArgs.confirm;
+  delete relevantArgs.user_confirmed;
+  delete relevantArgs.dry_run;
+  delete relevantArgs.confirmation_token;
+  delete relevantArgs[confirmationParam];
   const digest = crypto
     .createHash('sha256')
     .update(JSON.stringify(canonicalize(relevantArgs)))
@@ -179,15 +179,20 @@ export async function handleConfirmationFlow(
   params: ConfirmationFlowParams
 ): Promise<ConfirmationResult> {
   const { config, ability, toolName, abilityName, args, effectiveArgs, logger, signal } = params;
-  const ctx: ConfirmationContext = { tool: toolName, ability: abilityName };
-
   // Check if tool supports confirmation parameter. Usable means the declared
   // subschema can accept the literal `true` we send — a `confirm: false` or
   // `confirm: {type: "string"}` declaration has no working channel and takes
   // the same fail-closed path as an absent key.
   const schemaProps = ability.input_schema?.properties;
-  const hasConfirmParam = declaresUsableBooleanParam(schemaProps, 'confirm');
-  const hasDryRunParam = declaresUsableBooleanParam(schemaProps, 'dry_run');
+  const confirmationParam = resolveConfirmationParam(ability.input_schema);
+  const ctx: ConfirmationContext = {
+    tool: toolName,
+    ability: abilityName,
+    confirmationParam,
+  };
+  const hasConfirmParam = confirmationParam !== undefined;
+  const canPreview =
+    confirmationParam === 'confirm' && declaresUsableBooleanParam(schemaProps, 'dry_run');
 
   // Fail closed: a destructive ability that declares no confirm parameter has
   // no confirmation channel, so while confirmation is required it can never
@@ -209,7 +214,7 @@ export async function handleConfirmationFlow(
   }
 
   // Validation: Conflicting parameters (user_confirmed + dry_run)
-  if (args.user_confirmed === true && args.dry_run === true) {
+  if (confirmationParam === 'confirm' && args.user_confirmed === true && args.dry_run === true) {
     logger.warning('Conflicting parameters: user_confirmed and dry_run both set', {
       toolName,
       abilityName,
@@ -225,13 +230,12 @@ export async function handleConfirmationFlow(
     };
   }
 
-  // Case 1: Explicit dry_run bypass - skip confirmation flow entirely.
-  // Only honored when the ability declares dry_run: forwarding a fabricated
-  // dry_run (possibly alongside confirm: true) would execute for real if
-  // upstream ignores unknown input, so undeclared dry_run is rejected
-  // before any upstream call.
+  // Case 1: Explicit dry_run bypass for conventional confirm abilities.
+  // A named confirm_* must stay true in upstream input, so it cannot be
+  // removed for dry_run. Undeclared dry_run is also rejected before any
+  // upstream call.
   if (args.dry_run === true) {
-    if (!hasDryRunParam) {
+    if (!canPreview) {
       logger.warning('Invalid parameter: dry_run on tool without dry_run support', {
         toolName,
         abilityName,
@@ -248,24 +252,24 @@ export async function handleConfirmationFlow(
     // Strip confirm so upstream never sees the ambiguous confirm+dry_run
     // combination — mirrors the Case 2 preview call, which sends dry_run
     // with confirm removed.
-    const { confirm: _dryRunConfirm, ...dryRunArgs } = effectiveArgs;
+    const dryRunArgs = { ...effectiveArgs };
+    delete dryRunArgs.confirm;
+    delete dryRunArgs[confirmationParam!];
     return { action: 'execute', effectiveArgs: dryRunArgs };
   }
 
   // Case 2: Preview request (confirm: true without user_confirmed)
-  if (args.confirm === true && args.user_confirmed !== true) {
+  if (args[confirmationParam!] === true && args.user_confirmed !== true) {
     cleanupExpiredPreviews();
 
-    // Abilities without a declared dry_run parameter get no upstream preview
-    // call — fabricating dry_run against a schema that doesn't declare it
-    // could execute for real if upstream ignores unknown input. The two-phase
-    // gate still applies: a token is issued below so the confirmed follow-up
-    // call can proceed.
+    // Only conventional confirm abilities with declared dry_run get an
+    // upstream preview. Named confirm_* fields must stay true in input, so
+    // they use the token-only path even if dry_run is declared.
     let previewResult: unknown = null;
-    if (hasDryRunParam) {
+    if (canPreview) {
       // Execute preview with dry_run: true and the confirm flag removed
       const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
-      delete previewArgs.confirm;
+      delete previewArgs[confirmationParam!];
       previewResult = await executeAbility(
         config,
         abilityName,
@@ -275,14 +279,24 @@ export async function handleConfirmationFlow(
         signal
       );
     } else {
-      logger.warning('Preview unavailable - ability does not support dry_run', {
-        toolName,
-        abilityName,
-      });
+      logger.warning(
+        confirmationParam === 'confirm'
+          ? 'Preview unavailable - ability does not support dry_run'
+          : 'Preview unavailable for named confirmation parameter',
+        {
+          toolName,
+          abilityName,
+        }
+      );
     }
 
     // Store preview for later validation
-    const previewKey = getPreviewKey(configIdentityHash(config), toolName, args);
+    const previewKey = getPreviewKey(
+      configIdentityHash(config),
+      toolName,
+      args,
+      confirmationParam!
+    );
     pendingPreviews.set(previewKey, Date.now());
 
     // Clean up any existing token for this preview key before generating a new one
@@ -298,13 +312,11 @@ export async function handleConfirmationFlow(
     tokenIndex.set(token, previewKey);
 
     logger.info(
-      hasDryRunParam
-        ? 'Preview generated for confirmation'
-        : 'Confirmation required without preview',
+      canPreview ? 'Preview generated for confirmation' : 'Confirmation required without preview',
       { toolName }
     );
 
-    const confirmationResponse = hasDryRunParam
+    const confirmationResponse = canPreview
       ? buildConfirmationRequiredResponse(ctx, previewResult, token)
       : buildNoPreviewAvailableResponse(ctx, token);
     const previewResponse = formatJson(config, confirmationResponse);
@@ -320,7 +332,7 @@ export async function handleConfirmationFlow(
   // Case 3: Confirmed execution (user_confirmed: true)
   if (args.user_confirmed === true) {
     // Warning: Ambiguous parameters (confirm + user_confirmed both set)
-    if (args.confirm === true) {
+    if (args[confirmationParam!] === true) {
       logger.warning(
         'Ambiguous parameters: both confirm and user_confirmed set, treating as confirmation',
         { toolName, abilityName }
@@ -376,7 +388,12 @@ export async function handleConfirmationFlow(
       };
     }
     // Verify token matches current arguments (prevent arg-swap)
-    const currentPreviewKey = getPreviewKey(configIdentityHash(config), toolName, args);
+    const currentPreviewKey = getPreviewKey(
+      configIdentityHash(config),
+      toolName,
+      args,
+      confirmationParam!
+    );
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });
@@ -423,10 +440,12 @@ export async function handleConfirmationFlow(
       confirmation_token: _confirmation_token,
       ...confirmedArgs
     } = effectiveArgs;
+    delete confirmedArgs.confirm;
+    delete confirmedArgs[confirmationParam!];
 
     return {
       action: 'execute',
-      effectiveArgs: { ...confirmedArgs, confirm: true },
+      effectiveArgs: { ...confirmedArgs, [confirmationParam!]: true },
     };
   }
 
@@ -444,7 +463,7 @@ export async function handleConfirmationFlow(
           config,
           buildPreviewRequiredResponse(
             ctx,
-            'Destructive tools require confirmation parameters; neither confirm nor user_confirmed was provided'
+            `Destructive tools require confirmation parameters; neither ${confirmationParam} nor user_confirmed was provided`
           )
         ),
       },

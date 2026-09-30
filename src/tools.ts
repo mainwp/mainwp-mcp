@@ -26,7 +26,12 @@ import {
 } from './session.js';
 import { abilityToTool } from './tool-schema.js';
 import { handleConfirmationFlow } from './confirmation.js';
-import { decidePolicy, classifyDestructive, isToolAllowed } from './policy.js';
+import {
+  decidePolicy,
+  classifyDestructive,
+  isToolAllowed,
+  pinnedConfirmationParams,
+} from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 
 /**
@@ -235,12 +240,23 @@ export async function executeTool(
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)
       if ('confirm' in args) {
-        const { confirm, ...safeArgs } = args;
+        // The supplied value is not logged: it is caller input, and a number
+        // passes the writeOnly log redaction, which matches strings.
+        const { confirm: _confirm, ...safeArgs } = args;
         effectiveArgs = safeArgs;
-        reqLogger.info('Stripped confirm parameter in safe mode', {
-          toolName,
-          hadConfirm: confirm,
-        });
+        reqLogger.info('Stripped confirm parameter in safe mode', { toolName });
+      }
+      // Every pinned confirm_*, not only the resolved one: a schema that
+      // declares confirm next to a pinned confirm_* resolves to no channel.
+      for (const confirmationParam of pinnedConfirmationParams(ability.input_schema)) {
+        if (confirmationParam in effectiveArgs) {
+          const { [confirmationParam]: _confirmation, ...safeArgs } = effectiveArgs;
+          effectiveArgs = safeArgs;
+          reqLogger.info('Stripped confirmation parameter in safe mode', {
+            toolName,
+            confirmationParam,
+          });
+        }
       }
     }
 

@@ -113,3 +113,50 @@ export function declaresUsableBooleanParam(properties: unknown, name: string): b
   if (Object.hasOwn(schema, 'const') && schema.const !== true) return false;
   return true;
 }
+
+/**
+ * List the required `confirm_*` properties whose schema pins them to literal
+ * true with `const: true` or `enum: [true]`. Requiring both the naming
+ * convention and membership in `required` avoids treating an optional domain
+ * boolean as an execution-control channel; pinning it excludes domain flags
+ * that also accept false.
+ */
+export function pinnedConfirmationParams(schema: unknown): string[] {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return [];
+  const record = schema as Record<string, unknown>;
+  const properties = record.properties;
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return [];
+  }
+  const required = Array.isArray(record.required) ? record.required : [];
+  return required.filter((name): name is string => {
+    if (
+      typeof name !== 'string' ||
+      !/^confirm_[a-z0-9_]+$/.test(name) ||
+      !declaresUsableBooleanParam(properties, name)
+    ) {
+      return false;
+    }
+    const property = (properties as Record<string, Record<string, unknown>>)[name];
+    return (
+      property.const === true ||
+      (Array.isArray(property.enum) && property.enum.length === 1 && property.enum[0] === true)
+    );
+  });
+}
+
+/**
+ * Resolve the one input property that carries trusted confirmation: the
+ * conventional `confirm`, or else exactly one pinned `confirm_*` (see
+ * pinnedConfirmationParams). Ambiguity fails closed, including `confirm`
+ * next to a pinned `confirm_*`: removing only `confirm` from a preview
+ * would still send the pinned field as true.
+ */
+export function resolveConfirmationParam(schema: unknown): string | undefined {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
+  const pinned = pinnedConfirmationParams(schema);
+  if (declaresUsableBooleanParam((schema as Record<string, unknown>).properties, 'confirm')) {
+    return pinned.length === 0 ? 'confirm' : undefined;
+  }
+  return pinned.length === 1 ? pinned[0] : undefined;
+}

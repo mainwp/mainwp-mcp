@@ -1829,6 +1829,27 @@ describe('generateToolHelp', () => {
     expect(help.annotations.destructive).toBe(true);
   });
 
+  it('reports a pinned confirm_* as the confirmation channel with no dry_run path', () => {
+    const help = generateToolHelp(
+      {
+        ...sampleAbilities[1],
+        input_schema: {
+          type: 'object',
+          required: ['site_id', 'confirm_purge'],
+          properties: {
+            site_id: { type: 'integer' },
+            confirm_purge: { type: 'boolean', enum: [true] },
+            dry_run: { type: 'boolean' },
+          },
+        },
+      },
+      'mainwp'
+    );
+
+    expect(help.safetyFeatures.requiresConfirm).toBe(true);
+    expect(help.safetyFeatures.supportsDryRun).toBe(false);
+  });
+
   it('should include parameters', () => {
     const ability = sampleAbilities[1];
     const help = generateToolHelp(ability, 'mainwp');
