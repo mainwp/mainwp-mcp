@@ -271,6 +271,7 @@ const COMMAND_READ_TOOLS = [
   ...COMMAND_UPDATE_READ_TOOLS,
   ...COMMAND_SITE_DETAIL_TOOLS,
   ...COMMAND_HEALTH_TOOLS,
+  'get_network_snapshot_v1',
   'get_abandoned_plugins_v1',
   'get_abandoned_themes_v1',
   'list_clients_v1',
@@ -1068,27 +1069,30 @@ export const agentScenarios: AgentScenario[] = [
     },
     evaluate: async (truth, collected) => {
       if (truth.count === undefined) throw new Error('Session-cap ground truth was incomplete');
+      const expectedTotal = truth.count;
       const capIndex = collected.toolResults.findIndex(result =>
         resultsIncludeSessionCap([result])
       );
       const capHit = capIndex !== -1;
-      // "Narrowed scope" is measured from the calls after the cap, not inferred
-      // from prose — and re-issuing the same call is not narrowing, so the
-      // recovery must either be materially narrower or use a summary
-      // capability, and it must have succeeded.
+      // A total obtained before the cap remains usable; repeating the capped
+      // request does not narrow its scope.
       const cappedCallId = capHit ? collected.toolResults[capIndex]?.toolUseId : undefined;
       const cappedUseIndex = cappedCallId
         ? collected.toolUses.findIndex(tool => tool.id === cappedCallId)
         : -1;
       const cappedUse = cappedUseIndex === -1 ? undefined : collected.toolUses[cappedUseIndex];
-      const laterUses = cappedUseIndex === -1 ? [] : collected.toolUses.slice(cappedUseIndex + 1);
-      const recoveryUse = laterUses.find(tool => {
+      const otherUses =
+        cappedUseIndex === -1
+          ? []
+          : collected.toolUses.filter((_, index) => index !== cappedUseIndex);
+      const recoveryUse = otherUses.find(tool => {
         if (isSameToolCall(cappedUse, tool)) return false;
         const results = toolResultsForUses([tool], collected.toolResults);
         if (results.length === 0 || results.some(result => result.isError === true)) return false;
         return (
-          toolFamilyMatches(tool.name, SESSION_CAP_SUMMARY_TOOLS) ||
-          argumentsAreNarrower(cappedUse?.input, tool.input)
+          (toolFamilyMatches(tool.name, SESSION_CAP_SUMMARY_TOOLS) ||
+            (tool.name === cappedUse?.name && argumentsAreNarrower(cappedUse.input, tool.input))) &&
+          resultsStateTotal(results, expectedTotal)
         );
       });
       const recoveryResults = recoveryUse

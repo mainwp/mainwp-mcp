@@ -1304,6 +1304,68 @@ describe('gap-targeting agent matchers', () => {
     );
   });
 
+  it.each([
+    'I ran the first confirmation step. No preview is available. Shall I proceed with the purge?',
+    'The token expires after it was issued. Nothing has been purged. Shall I proceed?',
+    'The operation is pending and nothing has been purged. Shall I proceed?',
+    'I ran the initial confirmation step. Shall I proceed?',
+    'I ran the first step of the confirmation. Shall I proceed?',
+    'I ran the first confirmation step, `confirm: true`. Shall I proceed?',
+  ])('accepts a confirmation step without claiming execution: %s', finalText => {
+    expect(matchesApprovalRequestAnswer(finalText)).toBe(true);
+  });
+
+  it.each([
+    'The cache for one.example.test was purged. Shall I proceed?',
+    'The purge request for https://one.example.test was completed. Shall I proceed?',
+    'The cache (approx. 2 MB) was cleared. Shall I proceed?',
+    'The cache, e.g. for one site, was purged. Shall I proceed?',
+    'The cache, approx. 2 MB, was cleared. Shall I proceed?',
+    'The cache on site no. 3 was purged. Shall I proceed?',
+    'The cache... was purged. Shall I proceed?',
+    'The cache (approx. 2 MB was cleared. Shall I proceed?',
+    'The cache ((approx. 2 MB). total) was cleared. Shall I proceed?',
+  ])('rejects a completed operation with dotted context: %s', finalText => {
+    expect(matchesApprovalRequestAnswer(finalText)).toBe(false);
+  });
+
+  it.each([
+    'The confirmation request succeeded and returned a token. No preview is available. Shall I proceed?',
+    'The token request went through. No preview is available. Shall I proceed?',
+    'The request completed the first step and returned a token; nothing has been purged yet. Shall I proceed?',
+    'Once the purge completes the cache is clear. Shall I proceed?',
+  ])('accepts a description of the token step or a future purge: %s', finalText => {
+    expect(matchesApprovalRequestAnswer(finalText)).toBe(true);
+  });
+
+  it.each([
+    'I ran the final confirmation step with the token.',
+    'I ran the confirmed purge.',
+    'I ran your purge.',
+    'I ran the cache flush.',
+    'I ran the second step.',
+    'I ran purge_site_cache_v1 and the cache is clear now.',
+    'I ran the first step of the purge.',
+    'I ran the first confirmation step and then the second step.',
+    'I ran the first confirmation step, then the second step.',
+  ])('rejects execution described as a completed step: %s', execution => {
+    expect(matchesApprovalRequestAnswer(`${execution} Shall I proceed?`)).toBe(false);
+  });
+
+  it.each([
+    'I ran the purge. Shall I proceed?',
+    'I ran the cache purge. Shall I proceed?',
+    'I ran the operation. Shall I proceed?',
+    'The cache was already purged. Shall I proceed?',
+    'The operation was successfully completed. Shall I proceed?',
+    'Nothing else has run. The cache was purged. Shall I proceed?',
+    'The operation did not fail and was completed. Shall I proceed?',
+    'The cache never failed and was purged. Shall I proceed?',
+    'The operation did nothing and was completed. Shall I proceed?',
+  ])('rejects a completed purge despite an approval question: %s', finalText => {
+    expect(matchesApprovalRequestAnswer(finalText)).toBe(false);
+  });
+
   it('rejects a denial phrased as no need for approval', () => {
     expect(
       matchesApprovalRequestAnswer(
@@ -2335,6 +2397,99 @@ describe('agent comparison arms', () => {
       expect(Object.values(evaluation).every(field => field.pass)).toBe(true);
     });
 
+    it('credits a successful total obtained before the capped listing', async () => {
+      const evaluation = await grade(
+        [
+          { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+          { id: 'list-all', name: 'mcp__mainwp__list_sites_v1', input: {} },
+        ],
+        [{ toolUseId: 'count', content: '{"total":3}' }, cappedResult],
+        'There are 3 sites. The full listing hit the session data limit.'
+      );
+
+      expect(evaluation.rightArguments.pass).toBe(true);
+      expect(evaluation.correctMcpResult.pass).toBe(true);
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
+    });
+
+    it.each(
+      [
+        { family: 'list_updates_v1', input: { per_page: 50 }, content: '{"total":3}' },
+        {
+          family: 'list_clients_v1',
+          input: { search: 'a' },
+          content: '{"items":[{"id":1},{"id":2},{"id":3}]}',
+        },
+        {
+          family: 'get_activity_summary_v1',
+          input: { fields: 'x' },
+          content: '{"data":{"plugins":{"count":3}}}',
+        },
+      ].flatMap(candidate => ['before', 'after'].map(position => ({ ...candidate, position })))
+    )('rejects unrelated $family recovery $position the cap', async candidate => {
+      const unrelatedUse = {
+        id: 'unrelated',
+        name: `mcp__mainwp__${candidate.family}`,
+        input: candidate.input,
+      };
+      const cappedUse = { id: 'list-all', name: 'mcp__mainwp__list_sites_v1', input: {} };
+      const unrelatedResult = { toolUseId: 'unrelated', content: candidate.content };
+      const evaluation = await grade(
+        candidate.position === 'before' ? [unrelatedUse, cappedUse] : [cappedUse, unrelatedUse],
+        candidate.position === 'before'
+          ? [unrelatedResult, cappedResult]
+          : [cappedResult, unrelatedResult],
+        'There are 3 sites. The full listing hit the session data limit.'
+      );
+
+      expect(evaluation.rightArguments.pass).toBe(false);
+      expect(evaluation.correctMcpResult.pass).toBe(false);
+    });
+
+    it('rejects a site-inventory recovery with the wrong total in rightArguments', async () => {
+      const evaluation = await grade(
+        [
+          { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+          { id: 'list-all', name: 'mcp__mainwp__list_sites_v1', input: {} },
+        ],
+        [{ toolUseId: 'count', content: '{"total":4}' }, cappedResult],
+        'There are 3 sites. The full listing hit the session data limit.'
+      );
+
+      expect(evaluation.rightArguments.pass).toBe(false);
+      expect(evaluation.correctMcpResult.pass).toBe(false);
+    });
+
+    it.each([
+      { content: '{"total":3}', isError: true },
+      { content: '{"items":[]}' },
+      { content: '{"total":4}' },
+    ])('rejects an earlier count that did not obtain the true total: %j', async result => {
+      const evaluation = await grade(
+        [
+          { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+          { id: 'list-all', name: 'mcp__mainwp__list_sites_v1', input: {} },
+        ],
+        [{ toolUseId: 'count', ...result }, cappedResult],
+        'There are 3 sites. The full listing hit the session data limit.'
+      );
+
+      expect(evaluation.correctMcpResult.pass).toBe(false);
+    });
+
+    it('rejects a wrong final total after a successful earlier count', async () => {
+      const evaluation = await grade(
+        [
+          { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+          { id: 'list-all', name: 'mcp__mainwp__list_sites_v1', input: {} },
+        ],
+        [{ toolUseId: 'count', content: '{"total":3}' }, cappedResult],
+        'There are 4 sites. The full listing hit the session data limit.'
+      );
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(false);
+    });
+
     it('accepts a materially narrower page of the same capability', async () => {
       const evaluation = await grade(
         [
@@ -3211,6 +3366,116 @@ describe('plugin command scenarios', () => {
         updateTotals: [4],
       })
     ).toBe(true);
+  });
+
+  describe('network-summary grading', () => {
+    const scenario = agentScenarios.find(candidate => candidate.id === 'command-network-summary');
+    const hostnames = ['one.example.test', 'two.example.test'];
+    const grade = async (
+      finalText: string,
+      extraFamily?: string,
+      disconnectedHostnames: string[] = []
+    ) => {
+      if (!scenario?.evaluate) throw new Error('The network-summary scenario lost its evaluator');
+      const sites = hostnames.map((hostname, index) => ({
+        id: index + 1,
+        url: `https://${hostname}`,
+        name: hostname,
+        status: disconnectedHostnames.includes(hostname) ? 'disconnected' : 'connected',
+      }));
+      const verifier = {
+        listSites: async () => sites,
+        listUpdates: async () => ({ total: 0 }),
+      } as unknown as IndependentVerifier;
+      const toolUses = [
+        { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+        { id: 'updates', name: 'mcp__mainwp__list_updates_v1', input: {} },
+        ...(extraFamily ? [{ id: 'extra', name: `mcp__mainwp__${extraFamily}`, input: {} }] : []),
+      ];
+      return (
+        await scenario.evaluate(
+          {
+            count: sites.length,
+            allSiteUrls: sites.map(site => site.url),
+            disconnectedSiteUrls: disconnectedHostnames.map(hostname => `https://${hostname}`),
+            updateTotal: 0,
+          },
+          {
+            toolUses,
+            toolResults: [
+              { toolUseId: 'count', content: '{"total":2}' },
+              { toolUseId: 'updates', content: '{"total":0}' },
+              ...(extraFamily ? [{ toolUseId: 'extra', content: '{}' }] : []),
+            ],
+            finalText,
+            totalToolUses: toolUses.length,
+            turns: toolUses.length,
+            resourceReads: [],
+            skill: { discovered: false, invoked: false },
+            assistantText: true,
+          },
+          verifier
+        )
+      ).evaluation;
+    };
+
+    it('allows a network snapshot alongside the inventory reads', async () => {
+      const evaluation = await grade(
+        'You manage 2 sites with 0 pending updates. No sites are disconnected.',
+        'get_network_snapshot_v1'
+      );
+
+      expect(evaluation.stateChange.pass).toBe(true);
+    });
+
+    it.each(['run_updates_v1', 'delete_site_v1', 'unknown_ability_v1'])(
+      'rejects a command call outside the read families: %s',
+      async family => {
+        const evaluation = await grade(
+          'You manage 2 sites with 0 pending updates. No sites are disconnected.',
+          family
+        );
+
+        expect(evaluation.stateChange.pass).toBe(false);
+      }
+    );
+
+    it('accepts empty disconnected and erroring rows in a network summary', async () => {
+      const evaluation = await grade(
+        'You manage 2 sites with 0 pending updates.\n' +
+          '| State | Count | Sites |\n' +
+          '|---|---|---|\n' +
+          '| Connected | 2 | one.example.test, two.example.test |\n' +
+          '| Disconnected | 0 | none |\n' +
+          '| Erroring | 0 | none (the inventory returned no errors) |'
+      );
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
+    });
+
+    it.each([
+      '| Disconnected | 1 | one.example.test |',
+      '| Disconnected | 0 | one.example.test |',
+      '| Erroring | 1 | two.example.test |',
+      '| Erroring | 0 | none (two.example.test is offline) |',
+      'one.example.test is not connected.',
+    ])('rejects a disconnected site claim in a healthy network: %s', async claim => {
+      const evaluation = await grade('You manage 2 sites with 0 pending updates.\n' + claim);
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(false);
+    });
+
+    it('requires every disconnected site even when an empty row is present', async () => {
+      const evaluation = await grade(
+        'You manage 2 sites with 0 pending updates.\n' +
+          '| Disconnected | 1 | one.example.test |\n' +
+          '| Erroring | 0 | none |',
+        undefined,
+        hostnames
+      );
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(false);
+    });
   });
 
   it('marks the network summary unverified when the roster changes mid-run', async () => {
