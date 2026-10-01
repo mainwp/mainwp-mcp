@@ -857,6 +857,27 @@ const UPDATE_TALLY_LABEL_BEFORE =
 const LINE_ORDINAL_AFTER = /^\.\s/;
 const LINE_ORDINAL_BEFORE = /(?:^|\n)[\s*+-]*$/;
 
+/** Table boundaries stop an unrelated total from borrowing another table's categories. */
+const UPDATE_BREAKDOWN_TABLE = /^(?:[^\n]*\|[^\n]*(?:\n|$))+/gm;
+/** Rows and cells retain their offsets so the total replaces the same window token. */
+const UPDATE_BREAKDOWN_ROW = /[^\n]+/g;
+const UPDATE_BREAKDOWN_CELL = /[^|]+/g;
+/** Type labels distinguish an update breakdown from a count of affected sites. */
+const UPDATE_BREAKDOWN_CATEGORY = /^(?:core|plugins?|themes?|translations?)$/;
+/** A category count cannot stand in for the breakdown's explicit total. */
+const UPDATE_BREAKDOWN_TOTAL = /^(?:total|overall)$/;
+/** Descriptions and version strings do not supply numeric count cells. */
+const UPDATE_BREAKDOWN_COUNT = new RegExp(`^${NUMBER_TOKEN.source}$`);
+/** Emphasis presents the same label or count without changing its meaning. */
+const UPDATE_BREAKDOWN_EMPHASIS = /[*_]/g;
+/** Installed items and affected sites are different inventories despite sharing type labels. */
+const UPDATE_BREAKDOWN_COUNT_HEADER = /^(?:count|updates|pending|total|number)$/i;
+/** A site identifier can carry a note without becoming a network heading. */
+const UPDATE_BREAKDOWN_SITE_HEADING = /^(?=\S*[\d.])\S+$|^(?=\S*[a-z])(?=\S*[\d.])\S+\s+[(—–-].*$/;
+/** Opening and closing heading marks, list marks and a colon present the same identifier. */
+const UPDATE_BREAKDOWN_HEADING_MARKS =
+  /^#+\s*(?:(?:[-*+•]|\d+[.)])\s+)?|^(?:[-*+•]|\d+[.)])\s+|[:#\s]+$/g;
+
 interface UpdateCountMention {
   value: number;
   /** Offered as the whole inventory ("4 pending updates in total"). */
@@ -867,13 +888,102 @@ interface UpdateCountMention {
   labelled: boolean;
 }
 
+/**
+ * The nearest non-blank line above a table scopes it to one site only when,
+ * after presentation, heading marks at either end, a list marker and a trailing
+ * colon are stripped, it is a single token containing a digit or a dot. A note
+ * starting with a parenthesis or dash may follow a token containing a letter
+ * as well. Heading and list marks may appear together. A hostname mentioned in
+ * prose cannot hide a network breakdown.
+ */
+function isPerSiteUpdateBreakdown(answer: string, index: number): boolean {
+  const heading = answer.slice(0, index).trimEnd().split('\n').pop() ?? '';
+  const label = stripDownClaimPresentation(heading)
+    .replace(UPDATE_BREAKDOWN_HEADING_MARKS, '')
+    .trim();
+  return UPDATE_BREAKDOWN_SITE_HEADING.test(label);
+}
+
+/**
+ * Reads a total row only when it agrees with the category counts. For either
+ * reading, a header must say count, updates, pending, total or number above
+ * each count, ignoring case and emphasis. Headerless tables are unrestricted.
+ */
+function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMention> {
+  const mentions = new Map<number, UpdateCountMention>();
+  for (const table of answer.matchAll(UPDATE_BREAKDOWN_TABLE)) {
+    if (isPerSiteUpdateBreakdown(answer, table.index)) continue;
+    const categories: { value: number; index: number }[] = [];
+    const totals: { value: number; index: number }[] = [];
+    let valid = true;
+    for (const row of table[0].matchAll(UPDATE_BREAKDOWN_ROW)) {
+      const cells = [...row[0].matchAll(UPDATE_BREAKDOWN_CELL)];
+      const label = cells[0]?.[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim() ?? '';
+      const category = UPDATE_BREAKDOWN_CATEGORY.test(label);
+      if (!category && !UPDATE_BREAKDOWN_TOTAL.test(label)) continue;
+      const counts = cells.slice(1).flatMap(cell => {
+        const count = cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim();
+        if (!UPDATE_BREAKDOWN_COUNT.test(count)) return [];
+        const token = [...cell[0].matchAll(NUMBER_TOKEN)][0];
+        const value = numericValue(count);
+        if (!token || value === undefined) return [];
+        return [{ value, index: table.index + row.index + cell.index + token.index }];
+      });
+      if (counts.length !== 1) {
+        valid = false;
+        continue;
+      }
+      (category ? categories : totals).push(counts[0]);
+    }
+    if (!valid || categories.length === 0 || totals.length !== 1) continue;
+    const rows = [...table[0].matchAll(UPDATE_BREAKDOWN_ROW)];
+    const header = [...rows[0][0].matchAll(UPDATE_BREAKDOWN_CELL)].map(cell =>
+      cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim()
+    );
+    if (
+      !UPDATE_BREAKDOWN_CATEGORY.test(header[0] ?? '') &&
+      !UPDATE_BREAKDOWN_TOTAL.test(header[0] ?? '') &&
+      [...categories, ...totals].some(count => {
+        const row = rows.find(
+          row =>
+            count.index >= table.index + row.index &&
+            count.index < table.index + row.index + row[0].length
+        );
+        if (!row) return true;
+        const column = [...row[0].matchAll(UPDATE_BREAKDOWN_CELL)].findIndex(cell => {
+          const start = table.index + row.index + cell.index;
+          return count.index >= start && count.index < start + cell[0].length;
+        });
+        return !UPDATE_BREAKDOWN_COUNT_HEADER.test(header[column] ?? '');
+      })
+    ) {
+      continue;
+    }
+    const total = totals[0];
+    if (categories.reduce((sum, count) => sum + count.value, 0) !== total.value) continue;
+    mentions.set(total.index, {
+      value: total.value,
+      explicitTotal: true,
+      categoryScoped: false,
+      labelled: true,
+    });
+  }
+  return mentions;
+}
+
 function updateCountMentions(answer: string): UpdateCountMention[] {
+  const tableMentions = breakdownTableUpdateCounts(answer);
   const mentions: UpdateCountMention[] = [];
   for (const match of answer.matchAll(NUMBER_TOKEN)) {
     const token = match[0];
     const value = numericValue(token);
     if (value === undefined) continue;
     const index = match.index ?? 0;
+    const tableMention = tableMentions.get(index);
+    if (tableMention) {
+      mentions.push(tableMention);
+      continue;
+    }
     const before = answer.slice(Math.max(0, index - 40), index);
     const after = answer.slice(index + token.length, index + token.length + 40);
     if (NEGATED_NUMBER.test(before)) continue;

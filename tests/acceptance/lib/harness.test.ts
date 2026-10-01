@@ -3405,6 +3405,263 @@ describe('plugin command scenarios', () => {
     ).toBe(true);
   });
 
+  describe('network-summary breakdown tables', () => {
+    const affectedSitesTable =
+      '**Sites with pending updates:**\n' +
+      '| Site | Updates |\n' +
+      '|---|---|\n' +
+      '| site1.example.test | 1 |\n' +
+      '| site2.example.test | 1 |\n' +
+      '| site3.example.test | 1 |\n' +
+      '| Total | 3 |';
+
+    it.each([
+      ['archived answer at 6', FULLY_CONNECTED_NETWORK_SUMMARY, 6, true],
+      ['archived answer at 5', FULLY_CONNECTED_NETWORK_SUMMARY, 5, false],
+      ['affected sites without an update total', 'Sites: 10.\n' + affectedSitesTable, 3, false],
+      [
+        'affected sites beside the correct update headline',
+        'Sites: 10. Pending updates: 6.\n' + affectedSitesTable,
+        6,
+        true,
+      ],
+      [
+        'affected sites beside a different update headline',
+        'Sites: 10. Pending updates: 6.\n' + affectedSitesTable,
+        3,
+        false,
+      ],
+      [
+        'plugin heading without category rows',
+        'Sites: 10.\nPending plugin updates:\n| Site | Count |\n|---|---|\n' +
+          '| site1.example.test | 3 |\n| Total | 3 |',
+        3,
+        false,
+      ],
+      [
+        'breakdown whose total disagrees with its rows',
+        'Sites: 10.\n| Type | Count |\n|---|---|\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 4 |',
+        4,
+        false,
+      ],
+      [
+        'category rows without a total',
+        'Sites: 10.\n| Type | Count |\n|---|---|\n| Plugins | 3 |\n| Themes | 2 |',
+        3,
+        false,
+      ],
+      [
+        'singular categories with an overall total',
+        'Sites: 10.\n| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugin | 3 |\n' +
+          '| Theme | 2 |\n| Translation | 0 |\n| **Overall** | **6** |',
+        6,
+        true,
+      ],
+      [
+        'category row without a numeric count',
+        'Sites: 10.\n| Type | Count |\n|---|---|\n| Plugins | 3 |\n| Themes | n/a |\n| Total | 3 |',
+        3,
+        false,
+      ],
+      [
+        'breakdown with two total rows',
+        'Sites: 10.\n| Type | Count |\n|---|---|\n| Plugins | 3 |\n| Total | 3 |\n| Overall | 3 |',
+        3,
+        false,
+      ],
+      [
+        'category row with two numeric count cells',
+        'Sites: 10.\n| Type | Count | Other |\n|---|---|---|\n' +
+          '| Plugins | 3 | 1 |\n| Total | 3 | |',
+        3,
+        false,
+      ],
+      [
+        'installed total beside the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n' +
+          '| Type | Installed |\n|---|---|\n| Core | 10 |\n| Plugins | 120 |\n' +
+          '| Themes | 30 |\n| Total | 160 |',
+        6,
+        true,
+      ],
+      [
+        'affected site total beside the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n' +
+          '| Type | Sites affected |\n|---|---|\n| Core | 1 |\n| Plugins | 1 |\n' +
+          '| Themes | 1 |\n| Total | 3 |',
+        6,
+        true,
+      ],
+      [
+        'count header with a matching total row',
+        'You manage 10 sites.\n\n| Type | Count |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+        6,
+        true,
+      ],
+      [
+        'total header with an emphasized total row',
+        'You manage 10 sites.\n\n| Type | Total |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| **Total** | **6** |',
+        6,
+        true,
+      ],
+      [
+        'count header with a conflicting total row',
+        'You manage 10 sites.\n\n| Type | Count |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+        5,
+        false,
+      ],
+      [
+        'total row conflicts with a matching stated prose total',
+        'You manage 10 sites. There are 5 pending updates in total.\n\n' +
+          '| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 3 |\n' +
+          '| Themes | 2 |\n| Total | 6 |',
+        5,
+        false,
+      ],
+    ])(
+      'reads a network update total from a type breakdown: %s',
+      (_name, answer, total, expected) => {
+        expect(
+          matchesNetworkSummaryAnswer(answer, { siteTotals: [10], updateTotals: [total] })
+        ).toBe(expected);
+      }
+    );
+
+    const siteBreakdown = (hostname: string, plugins: number, themes: number) =>
+      `${hostname}:\n| Type | Count |\n|---|---|\n| Plugins | ${plugins} |\n` +
+      `| Themes | ${themes} |\n| Total | ${plugins + themes} |`;
+
+    it.each([
+      [
+        'one site beside the network total',
+        'Sites: 10. Pending updates: 6 in total.\n\n' + siteBreakdown('site4.example.test', 3, 0),
+        6,
+        true,
+      ],
+      [
+        'one site read as the network total',
+        'Sites: 10.\n\n' + siteBreakdown('site4.example.test', 3, 0),
+        3,
+        false,
+      ],
+      [
+        'two sites without a network table',
+        'Sites: 10. Pending updates: 6.\n\n' +
+          siteBreakdown('site4.example.test', 3, 0) +
+          '\n\n' +
+          siteBreakdown('site6.example.test', 0, 3),
+        6,
+        true,
+      ],
+    ])(
+      'does not read a per-site type breakdown as the network total: %s',
+      (_name, answer, total, expected) => {
+        expect(
+          matchesNetworkSummaryAnswer(answer, { siteTotals: [10], updateTotals: [total] })
+        ).toBe(expected);
+      }
+    );
+
+    it.each([
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' + siteBreakdown('site4.example.test', 3, 0),
+        6,
+        true,
+      ],
+      ['Sites: 10. Pending updates: 6 in total.\n\n' + siteBreakdown('site4', 3, 0), 6, true],
+      ['Sites: 10.\n\n' + siteBreakdown('site4.example.test', 3, 0), 3, false],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('Network updates (including site4.example.test)', 3, 0),
+        6,
+        false,
+      ],
+      [
+        'Sites: 10.\n\n' +
+          siteBreakdown(
+            '**Pending updates** across site4.example.test and site6.example.test',
+            3,
+            3
+          ),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n1. ' +
+          siteBreakdown('site4.example.test', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n- ' +
+          siteBreakdown('site4.example.test', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n### 1. ' +
+          siteBreakdown('site4.example.test', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n## 1. ' +
+          siteBreakdown('site4', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n### - ' +
+          siteBreakdown('site4.example.test', 3, 0),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('### site4 — 3 updates', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('**site4** (health 87)', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('site4.example.test (3 updates)', 3, 0),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('### 1. site4.example.test ###', 3, 0).replace(':\n', '\n'),
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n## Pending updates (6)\n' +
+          '| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+        6,
+        true,
+      ],
+      [
+        'Sites: 10. Pending updates: 6 in total.\n\n' +
+          siteBreakdown('Network updates (including site4.example.test)', 3, 0),
+        6,
+        false,
+      ],
+    ])('scopes breakdown totals by a single site heading: %s', (answer, total, expected) => {
+      expect(matchesNetworkSummaryAnswer(answer, { siteTotals: [10], updateTotals: [total] })).toBe(
+        expected
+      );
+    });
+  });
+
   describe('network-summary grading', () => {
     const scenario = agentScenarios.find(candidate => candidate.id === 'command-network-summary');
     const hostnames = ['one.example.test', 'two.example.test'];
@@ -3455,6 +3712,52 @@ describe('plugin command scenarios', () => {
         )
       ).evaluation;
     };
+
+    it('accepts the full summary with the update total in a breakdown table', async () => {
+      if (!scenario?.evaluate) throw new Error('The network-summary scenario lost its evaluator');
+      const sites = Array.from({ length: 10 }, (_, index) => ({
+        id: index + 1,
+        url: `https://site${index + 1}.example.test`,
+        name: `site${index + 1}.example.test`,
+        status: 'connected',
+      }));
+      const verifier = {
+        listSites: async () => sites,
+        listUpdates: async () => ({ total: 6 }),
+      } as unknown as IndependentVerifier;
+      const toolUses = [
+        { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+        { id: 'updates', name: 'mcp__mainwp__list_updates_v1', input: {} },
+      ];
+      const grade = async (finalText: string) =>
+        (
+          await scenario.evaluate!(
+            {
+              count: sites.length,
+              allSiteUrls: sites.map(site => site.url).sort(),
+              disconnectedSiteUrls: [],
+              updateTotal: 6,
+            },
+            {
+              toolUses,
+              toolResults: [
+                { toolUseId: 'count', content: '{"total":10}' },
+                { toolUseId: 'updates', content: '{"total":6}' },
+              ],
+              finalText,
+              totalToolUses: toolUses.length,
+              turns: toolUses.length,
+              resourceReads: [],
+              skill: { discovered: false, invoked: false },
+              assistantText: true,
+            },
+            verifier
+          )
+        ).evaluation;
+      const evaluation = await grade(FULLY_CONNECTED_NETWORK_SUMMARY);
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
+    });
 
     it('allows a network snapshot alongside the inventory reads', async () => {
       const evaluation = await grade(
@@ -3626,6 +3929,14 @@ describe('plugin command scenarios', () => {
         2
       )
     ).toBe(true);
+  });
+
+  it('ignores an installed total when checking site update conflicts', () => {
+    const answer =
+      'There are 6 pending updates.\n\n| Type | Installed |\n|---|---|\n' +
+      '| Core | 10 |\n| Plugins | 120 |\n| Themes | 30 |\n| Total | 160 |';
+
+    expect(statedUpdateTotalConflicts(answer, 6)).toBe(false);
   });
 
   it('reads numbered update items as list numbering, not as a count', () => {
