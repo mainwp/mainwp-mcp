@@ -2407,6 +2407,90 @@ describe('confirmation flow - full cycle', () => {
   );
 
   it.each([
+    { label: 'a preview', callArgs: { confirm: true } },
+    { label: 'an explicit dry run', callArgs: { dry_run: true } },
+    { label: 'an explicit dry run with confirm', callArgs: { confirm: true, dry_run: true } },
+  ])('keeps user_confirmed and confirmation_token out of $label', async ({ callArgs }) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true, deleted: false }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, ...callArgs, user_confirmed: false, confirmation_token: 'stale-token' },
+      mockLogger
+    );
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual({
+      input: { site_id: 1, dry_run: true },
+    });
+  });
+
+  it('keeps user_confirmed and confirmation_token out of a call made with confirmation disabled', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      makeBaseConfig({ requireUserConfirmation: false }),
+      'delete_site_v1',
+      { site_id: 1, confirm: true, user_confirmed: true, confirmation_token: 'stale-token' },
+      mockLogger
+    );
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual({
+      input: { site_id: 1, confirm: true },
+    });
+  });
+
+  it('forwards both keys to a tool that is not given them', async () => {
+    // Only destructive tools with a confirm channel get user_confirmed and
+    // confirmation_token added to their schema. Anywhere else the names belong
+    // to the ability, which may declare an input of its own under either one.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ updated: true }),
+      headers: new Headers(),
+    });
+
+    const result = await executeTool(
+      baseConfig,
+      'update_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: 'ability-owned' },
+      mockLogger
+    );
+    expect(result.isError).toBeUndefined();
+    const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual({
+      input: { site_id: 1, user_confirmed: true, confirmation_token: 'ability-owned' },
+    });
+  });
+
+  it.each([
     { type: 'boolean', const: true },
     { type: 'boolean', enum: [true] },
   ])(

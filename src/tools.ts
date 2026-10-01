@@ -31,6 +31,7 @@ import {
   classifyDestructive,
   isToolAllowed,
   pinnedConfirmationParams,
+  resolveConfirmationParam,
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
@@ -280,6 +281,21 @@ export async function executeTool(
         ],
         isError: true,
       };
+    }
+
+    // user_confirmed and confirmation_token are this server's inputs, added to
+    // the schema of every destructive tool with a confirm channel. The ability
+    // never declared them, and one that rejects unknown keys fails the whole
+    // call, so they are dropped from every upstream input, including calls
+    // made with confirmation disabled. The confirmation flow reads them from
+    // the original args.
+    if (isDestructive && resolveConfirmationParam(ability.input_schema) !== undefined) {
+      const {
+        user_confirmed: _userConfirmed,
+        confirmation_token: _confirmationToken,
+        ...upstreamArgs
+      } = effectiveArgs;
+      effectiveArgs = upstreamArgs;
     }
 
     // Two-phase confirmation flow for destructive operations
