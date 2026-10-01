@@ -11,7 +11,11 @@ import type { TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { configIdentityHash, executeAbility, type Ability } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
-import { declaresUsableBooleanParam, resolveConfirmationParam } from './policy.js';
+import {
+  declaresUsableBooleanParam,
+  requiresUsableFalseParam,
+  resolveConfirmationParam,
+} from './policy.js';
 import { trackSessionData } from './session.js';
 import {
   buildConfirmationUnsupportedResponse,
@@ -249,12 +253,14 @@ export async function handleConfirmationFlow(
       };
     }
     logger.debug('Explicit dry_run bypasses confirmation flow', { toolName });
-    // Strip confirm so upstream never sees the ambiguous confirm+dry_run
-    // combination — mirrors the Case 2 preview call, which sends dry_run
-    // with confirm removed.
+    // An ability that requires confirm gets an explicit false. Optional keys
+    // stay absent, see requiresUsableFalseParam.
     const dryRunArgs = { ...effectiveArgs };
     delete dryRunArgs.confirm;
     delete dryRunArgs[confirmationParam!];
+    if (requiresUsableFalseParam(ability.input_schema, 'confirm')) {
+      dryRunArgs.confirm = false;
+    }
     return { action: 'execute', effectiveArgs: dryRunArgs };
   }
 
@@ -267,9 +273,13 @@ export async function handleConfirmationFlow(
     // they use the token-only path even if dry_run is declared.
     let previewResult: unknown = null;
     if (canPreview) {
-      // Execute preview with dry_run: true and the confirm flag removed
+      // An ability that requires confirm gets an explicit false. Optional keys
+      // stay absent, see requiresUsableFalseParam.
       const previewArgs: Record<string, unknown> = { ...effectiveArgs, dry_run: true };
       delete previewArgs[confirmationParam!];
+      if (requiresUsableFalseParam(ability.input_schema, 'confirm')) {
+        previewArgs.confirm = false;
+      }
       previewResult = await executeAbility(
         config,
         abilityName,
@@ -434,7 +444,7 @@ export async function handleConfirmationFlow(
     const previewAge = Date.now() - previewTimestamp;
     logger.info('User confirmation validated', { toolName, previewAge });
 
-    // Remove user_confirmed and confirmation_token flags, keep confirm: true for the actual execution
+    // Confirmation credentials belong to this server, not the upstream ability.
     const {
       user_confirmed: _user_confirmed,
       confirmation_token: _confirmation_token,
@@ -442,6 +452,14 @@ export async function handleConfirmationFlow(
     } = effectiveArgs;
     delete confirmedArgs.confirm;
     delete confirmedArgs[confirmationParam!];
+    if (
+      confirmationParam === 'confirm' &&
+      requiresUsableFalseParam(ability.input_schema, 'dry_run')
+    ) {
+      // An ability that requires dry_run gets an explicit false. Optional keys
+      // stay absent, see requiresUsableFalseParam.
+      confirmedArgs.dry_run = false;
+    }
 
     return {
       action: 'execute',

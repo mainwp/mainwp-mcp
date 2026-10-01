@@ -11,6 +11,7 @@ import {
   decidePolicy,
   classifyDestructive,
   declaresUsableBooleanParam,
+  requiresUsableFalseParam,
   resolveConfirmationParam,
   isToolAllowed,
   type PolicyDecision,
@@ -227,6 +228,31 @@ describe('declaresUsableBooleanParam', () => {
     expect(declaresUsableBooleanParam(properties, 'confirm')).toBe(expected);
   });
 
+  it.each([
+    ['enum containing only true rejects false', { confirm: { enum: [true] } }, false],
+    ['enum containing only false accepts false', { confirm: { enum: [false] } }, true],
+    ['const true rejects false', { confirm: { const: true } }, false],
+    ['const false accepts false', { confirm: { const: false } }, true],
+    ['enum containing both accepts false', { confirm: { enum: [true, false] } }, true],
+    ['boolean-true subschema accepts false', { confirm: true }, true],
+    ['boolean-false subschema rejects false', { confirm: false }, false],
+    ['empty object accepts false', { confirm: {} }, true],
+    ['boolean type accepts false', { confirm: { type: 'boolean' } }, true],
+    ['string type rejects false', { confirm: { type: 'string' } }, false],
+    ['union including boolean accepts false', { confirm: { type: ['boolean', 'null'] } }, true],
+    ['union excluding boolean rejects false', { confirm: { type: ['string', 'null'] } }, false],
+    [
+      'type still rejects false despite enum',
+      { confirm: { type: 'string', enum: [false] } },
+      false,
+    ],
+    ['const still rejects false despite enum', { confirm: { enum: [false], const: true } }, false],
+    ['enum still rejects false despite const', { confirm: { enum: [true], const: false } }, false],
+    ['inherited declaration rejects false', Object.create({ confirm: { type: 'boolean' } }), false],
+  ] as const)('%s', (_label, properties, expected) => {
+    expect(declaresUsableBooleanParam(properties, 'confirm', false)).toBe(expected);
+  });
+
   it('returns false for non-object property maps', () => {
     expect(declaresUsableBooleanParam(undefined, 'confirm')).toBe(false);
     expect(declaresUsableBooleanParam(null, 'confirm')).toBe(false);
@@ -236,6 +262,97 @@ describe('declaresUsableBooleanParam', () => {
 
   it('does not read inherited keys as declared parameters', () => {
     expect(declaresUsableBooleanParam({}, 'constructor')).toBe(false);
+  });
+});
+
+describe('requiresUsableFalseParam', () => {
+  const properties = {
+    confirm: { type: 'boolean' },
+    dry_run: { type: 'boolean' },
+  };
+
+  it.each([
+    ['required confirm', { properties, required: ['confirm', 'dry_run'] }, 'confirm', true],
+    ['required dry_run', { properties, required: ['dry_run'] }, 'dry_run', true],
+    [
+      'optional confirm next to required dry_run',
+      { properties, required: ['dry_run'] },
+      'confirm',
+      false,
+    ],
+    [
+      'optional dry_run next to required confirm',
+      { properties, required: ['confirm'] },
+      'dry_run',
+      false,
+    ],
+    ['absent required', { properties }, 'confirm', false],
+    ['empty required', { properties, required: [] }, 'confirm', false],
+    ['different required key', { properties, required: ['confirm_other'] }, 'confirm', false],
+    ['string required', { properties, required: 'confirm' }, 'confirm', false],
+    ['object required', { properties, required: { 0: 'confirm' } }, 'confirm', false],
+    ['nested required', { properties, required: [['confirm']] }, 'confirm', false],
+    ['null required', { properties, required: null }, 'confirm', false],
+    [
+      'inherited required',
+      Object.assign(Object.create({ required: ['confirm'] }), { properties }),
+      'confirm',
+      false,
+    ],
+    ['absent declaration', { properties: {}, required: ['confirm'] }, 'confirm', false],
+    [
+      'inherited declaration',
+      { properties: Object.create(properties), required: ['confirm'] },
+      'confirm',
+      false,
+    ],
+    [
+      'true-only const',
+      { properties: { confirm: { const: true } }, required: ['confirm'] },
+      'confirm',
+      false,
+    ],
+    [
+      'true-only enum',
+      { properties: { confirm: { enum: [true] } }, required: ['confirm'] },
+      'confirm',
+      false,
+    ],
+    [
+      'false-only const',
+      { properties: { dry_run: { const: false } }, required: ['dry_run'] },
+      'dry_run',
+      true,
+    ],
+    [
+      'false-only enum',
+      { properties: { dry_run: { enum: [false] } }, required: ['dry_run'] },
+      'dry_run',
+      true,
+    ],
+    [
+      'boolean-true declaration',
+      { properties: { confirm: true }, required: ['confirm'] },
+      'confirm',
+      true,
+    ],
+    [
+      'boolean-false declaration',
+      { properties: { confirm: false }, required: ['confirm'] },
+      'confirm',
+      false,
+    ],
+    [
+      'string declaration',
+      { properties: { confirm: { type: 'string' } }, required: ['confirm'] },
+      'confirm',
+      false,
+    ],
+    ['null schema', null, 'confirm', false],
+    ['string schema', 'confirm', 'confirm', false],
+    ['array schema', [], 'confirm', false],
+  ] as const)('%s', (_label, schema, name, expected) => {
+    expect(requiresUsableFalseParam(schema, name)).toBe(expected);
   });
 });
 

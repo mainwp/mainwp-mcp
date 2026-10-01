@@ -2243,6 +2243,418 @@ describe('confirmation flow - full cycle', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    {
+      label: 'required confirm and dry_run',
+      required: ['site_id', 'confirm', 'dry_run'],
+      previewInput: { site_id: 1, dry_run: true, confirm: false },
+      confirmedInput: { site_id: 1, confirm: true, dry_run: false },
+      confirmationArgs: {},
+    },
+    {
+      label: 'declared but optional confirm and dry_run',
+      required: ['site_id'],
+      previewInput: { site_id: 1, dry_run: true },
+      confirmedInput: { site_id: 1, confirm: true },
+      confirmationArgs: {},
+    },
+    {
+      label: 'required dry_run and optional confirm',
+      required: ['site_id', 'dry_run'],
+      previewInput: { site_id: 1, dry_run: true },
+      confirmedInput: { site_id: 1, confirm: true, dry_run: false },
+      confirmationArgs: { dry_run: 'caller-value' },
+    },
+    {
+      label: 'required confirm and optional dry_run',
+      required: ['site_id', 'confirm'],
+      previewInput: { site_id: 1, dry_run: true, confirm: false },
+      confirmedInput: { site_id: 1, confirm: true },
+      confirmationArgs: {},
+    },
+    {
+      label: 'hostile string required',
+      required: 'confirm,dry_run',
+      previewInput: { site_id: 1, dry_run: true },
+      confirmedInput: { site_id: 1, confirm: true },
+      confirmationArgs: {},
+    },
+    {
+      label: 'hostile object required',
+      required: { 0: 'confirm', 1: 'dry_run' },
+      previewInput: { site_id: 1, dry_run: true },
+      confirmedInput: { site_id: 1, confirm: true },
+      confirmationArgs: {},
+    },
+    {
+      label: 'hostile nested required',
+      required: [['confirm', 'dry_run']],
+      previewInput: { site_id: 1, dry_run: true },
+      confirmedInput: { site_id: 1, confirm: true },
+      confirmationArgs: {},
+    },
+  ])(
+    'forwards the expected payloads for $label',
+    async ({ required, previewInput, confirmedInput, confirmationArgs }) => {
+      const ability: Ability = {
+        ...sampleAbilities[1],
+        input_schema: { ...sampleAbilities[1].input_schema, required },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [ability],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ preview: { site_id: 1, will_delete: true } }),
+        headers: new Headers(),
+      });
+
+      const preview = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm: true },
+        mockLogger
+      );
+      expect(preview.isError).toBeUndefined();
+      const previewData = JSON.parse(preview.content[0].text);
+      expect(previewData.status).toBe('CONFIRMATION_REQUIRED');
+      expect(typeof previewData.confirmation_token).toBe('string');
+      const [, previewOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect.soft(JSON.parse(String(previewOptions.body))).toEqual({
+        input: previewInput,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
+      const confirmed = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        {
+          site_id: 1,
+          user_confirmed: true,
+          confirmation_token: previewData.confirmation_token,
+          ...confirmationArgs,
+        },
+        mockLogger
+      );
+      expect(confirmed.isError).toBeUndefined();
+      expect(JSON.parse(confirmed.content[0].text)).toEqual({ deleted: true });
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const [, confirmedOptions] = mockFetch.mock.calls[2] as [string, RequestInit];
+      expect(JSON.parse(String(confirmedOptions.body))).toEqual({
+        input: confirmedInput,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: false }),
+        headers: new Headers(),
+      });
+      const dryRun = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm: true, dry_run: true },
+        mockLogger
+      );
+      expect(dryRun.isError).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      const [, dryRunOptions] = mockFetch.mock.calls[3] as [string, RequestInit];
+      expect(JSON.parse(String(dryRunOptions.body))).toEqual({
+        input: previewInput,
+      });
+    }
+  );
+
+  it.each([{}, { confirm: true }])(
+    'forwards confirm false on an explicit dry_run call with %j',
+    async extraArgs => {
+      const ability: Ability = {
+        ...sampleAbilities[1],
+        input_schema: {
+          ...sampleAbilities[1].input_schema,
+          required: ['site_id', 'confirm', 'dry_run'],
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [ability],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ dry_run: true, deleted: false }),
+        headers: new Headers(),
+      });
+
+      const result = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, dry_run: true, ...extraArgs },
+        mockLogger
+      );
+      expect(result.isError).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(JSON.parse(String(options.body))).toEqual({
+        input: { site_id: 1, dry_run: true, confirm: false },
+      });
+    }
+  );
+
+  it.each([
+    { type: 'boolean', const: true },
+    { type: 'boolean', enum: [true] },
+  ])(
+    'omits a confirm declaration pinned to true on both preview paths: %j',
+    async confirmSchema => {
+      const ability: Ability = {
+        ...sampleAbilities[1],
+        input_schema: {
+          type: 'object',
+          required: ['site_id', 'confirm', 'dry_run'],
+          properties: {
+            site_id: { type: 'integer' },
+            confirm: confirmSchema,
+            dry_run: { type: 'boolean' },
+          },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [ability],
+        headers: new Headers(),
+      });
+      for (const args of [{ confirm: true }, { dry_run: true, confirm: true }]) {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ deleted: false }),
+          headers: new Headers(),
+        });
+        const result = await executeTool(
+          baseConfig,
+          'delete_site_v1',
+          { site_id: 1, ...args },
+          mockLogger
+        );
+        expect(result.isError).toBeUndefined();
+        const [, options] = mockFetch.mock.calls.at(-1) as [string, RequestInit];
+        expect(JSON.parse(String(options.body))).toEqual({
+          input: { site_id: 1, dry_run: true },
+        });
+      }
+    }
+  );
+
+  it.each([
+    { type: 'boolean', const: true },
+    { type: 'boolean', enum: [true] },
+    { type: 'string' },
+    false,
+  ])('does not add dry_run false when the declaration rejects it: %j', async dryRunSchema => {
+    const ability: Ability = {
+      ...sampleAbilities[1],
+      input_schema: {
+        type: 'object',
+        required: ['site_id', 'dry_run'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm: { type: 'boolean' },
+          dry_run: dryRunSchema,
+        },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [ability],
+      headers: new Headers(),
+    });
+    const canPreview = typeof dryRunSchema === 'object' && dryRunSchema.type === 'boolean';
+    if (canPreview) {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: false }),
+        headers: new Headers(),
+      });
+    }
+    const preview = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    expect(preview.isError).toBeUndefined();
+    const token = JSON.parse(preview.content[0].text).confirmation_token;
+    expect(typeof token).toBe('string');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmed = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+    expect(confirmed.isError).toBeUndefined();
+    const [, options] = mockFetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual({
+      input: { site_id: 1, confirm: true },
+    });
+  });
+
+  it('does not add dry_run to a confirm-only ability', async () => {
+    const ability: Ability = {
+      ...sampleAbilities[1],
+      input_schema: {
+        type: 'object',
+        properties: { site_id: { type: 'integer' }, confirm: { type: 'boolean' } },
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [ability],
+      headers: new Headers(),
+    });
+    const preview = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, confirm: true },
+      mockLogger
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const token = JSON.parse(preview.content[0].text).confirmation_token;
+    expect(typeof token).toBe('string');
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true }),
+      headers: new Headers(),
+    });
+    const confirmed = await executeTool(
+      baseConfig,
+      'delete_site_v1',
+      { site_id: 1, user_confirmed: true, confirmation_token: token },
+      mockLogger
+    );
+    expect(confirmed.isError).toBeUndefined();
+    const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual({ input: { site_id: 1, confirm: true } });
+  });
+
+  it.each([
+    ['optional', ['site_id', 'confirm_lockout_risk']],
+    ['required', ['site_id', 'confirm_lockout_risk', 'dry_run']],
+  ])(
+    'strips stray confirm and adds no %s dry_run for a named confirmation channel',
+    async (_label, required) => {
+      const ability: Ability = {
+        ...sampleAbilities[1],
+        input_schema: {
+          type: 'object',
+          required,
+          properties: {
+            site_id: { type: 'integer' },
+            confirm_lockout_risk: { type: 'boolean', enum: [true] },
+            dry_run: { type: 'boolean' },
+          },
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [ability],
+        headers: new Headers(),
+      });
+      const preview = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm_lockout_risk: true, confirm: true },
+        mockLogger
+      );
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const token = JSON.parse(preview.content[0].text).confirmation_token;
+      expect(typeof token).toBe('string');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
+      const confirmed = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm: true, user_confirmed: true, confirmation_token: token },
+        mockLogger
+      );
+      expect(confirmed.isError).toBeUndefined();
+      const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(JSON.parse(String(options.body))).toEqual({
+        input: { site_id: 1, confirm_lockout_risk: true },
+      });
+    }
+  );
+
+  it.each([{}, { confirm: true, dry_run: false }, { dry_run: 'caller-value' }])(
+    'confirms a preview made with dry_run false using %j',
+    async confirmationArgs => {
+      const ability: Ability = {
+        ...sampleAbilities[1],
+        input_schema: {
+          ...sampleAbilities[1].input_schema,
+          required: ['site_id', 'confirm', 'dry_run'],
+        },
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [ability],
+        headers: new Headers(),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: false }),
+        headers: new Headers(),
+      });
+      const preview = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        { site_id: 1, confirm: true, dry_run: false },
+        mockLogger
+      );
+      expect(preview.isError).toBeUndefined();
+      const token = JSON.parse(preview.content[0].text).confirmation_token;
+      expect(typeof token).toBe('string');
+      const [, previewOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect.soft(JSON.parse(String(previewOptions.body))).toEqual({
+        input: { site_id: 1, confirm: false, dry_run: true },
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deleted: true }),
+        headers: new Headers(),
+      });
+      const confirmed = await executeTool(
+        baseConfig,
+        'delete_site_v1',
+        {
+          site_id: 1,
+          user_confirmed: true,
+          confirmation_token: token,
+          ...confirmationArgs,
+        },
+        mockLogger
+      );
+      expect(confirmed.isError).toBeUndefined();
+      const [, confirmedOptions] = mockFetch.mock.calls[2] as [string, RequestInit];
+      expect(JSON.parse(String(confirmedOptions.body))).toEqual({
+        input: { site_id: 1, confirm: true, dry_run: false },
+      });
+    }
+  );
+
   it('should reject confirmation when preview has expired', async () => {
     vi.useFakeTimers();
     const startTime = Date.now();
