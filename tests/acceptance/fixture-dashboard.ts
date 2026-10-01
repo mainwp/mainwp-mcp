@@ -332,6 +332,12 @@ export const FIXTURE_ROUTED_ABILITIES = [
   FIXTURE_CONFIRM_ONLY_ABILITY,
 ] as const;
 
+/**
+ * Answer one ability execution from in-memory fixture state. Writes mutate
+ * the `sites` array in place, so scenarios can verify state before and after
+ * a call. An ability with no handler here answers 404 like an unregistered
+ * route.
+ */
 async function runAbility(
   abilityName: string,
   input: Record<string, unknown>,
@@ -666,6 +672,12 @@ async function runAbility(
   });
 }
 
+/**
+ * Start a loopback HTTP server that stands in for a Dashboard's Abilities API:
+ * Basic auth, the ability catalog, and ability execution against fixture
+ * sites. It lets the acceptance suite run the packed server end to end
+ * without a real Dashboard.
+ */
 export async function startFixtureDashboard(
   options: FixtureDashboardOptions = {}
 ): Promise<FixtureDashboard> {

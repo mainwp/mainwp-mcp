@@ -122,6 +122,10 @@ export const fixtureRequiredBooleanConfirmation: ScenarioDefinition = {
   purpose: 'Preview and confirm an ability that requires explicit confirm and dry_run booleans.',
   kind: 'write',
   targets: ['fixture'],
+  /**
+   * The fixture ability rejects a call that omits confirm or dry_run, so the
+   * preview and the confirmed call only succeed when the server sends both.
+   */
   async run(ctx) {
     const before = await ctx.verifier.listSites();
     if (before.length === 0)
