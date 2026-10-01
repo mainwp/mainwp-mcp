@@ -61,6 +61,14 @@ export function clearPendingPreviews(): void {
 }
 
 /**
+ * Sizes of the two preview maps (for testing only).
+ * @internal
+ */
+export function getPendingPreviewCounts(): { previews: number; tokens: number } {
+  return { previews: pendingPreviews.size, tokens: tokenIndex.size };
+}
+
+/**
  * Result of the confirmation flow evaluation.
  *
  * - `respond`: return the response directly to the client (preview, error, etc.)
@@ -197,13 +205,12 @@ function cleanupExpiredPreviews(): void {
     }
   }
 
-  // Second pass: Enforce max size limit by removing oldest entries
-  if (pendingPreviews.size > MAX_PENDING_PREVIEWS) {
-    const sortedEntries = Array.from(pendingPreviews.entries()).sort((a, b) => a[1].ts - b[1].ts);
-    const toRemove = sortedEntries.slice(0, pendingPreviews.size - MAX_PENDING_PREVIEWS);
-    for (const [key] of toRemove) {
-      pendingPreviews.delete(key);
-    }
+  // Second pass: Enforce the cap, oldest publication first. Map order is
+  // publication order because a repeat preview re-inserts its key, and unlike
+  // `ts` it still separates previews made in the same millisecond.
+  for (const key of pendingPreviews.keys()) {
+    if (pendingPreviews.size <= MAX_PENDING_PREVIEWS) break;
+    pendingPreviews.delete(key);
   }
 
   // Third pass: Clean up orphaned tokens whose preview keys no longer exist
@@ -310,8 +317,6 @@ export async function handleConfirmationFlow(
 
   // Case 2: Preview request (confirm: true without user_confirmed)
   if (args[confirmationParam!] === true && args.user_confirmed !== true) {
-    cleanupExpiredPreviews();
-
     // Only conventional confirm abilities with declared dry_run get an
     // upstream preview. Named confirm_* fields must stay true in input, so
     // they use the token-only path even if dry_run is declared.
@@ -366,7 +371,6 @@ export async function handleConfirmationFlow(
       );
     }
 
-    // Store preview for later validation
     const previewKey = getPreviewKey(
       configIdentityHash(config),
       toolName,
@@ -374,34 +378,42 @@ export async function handleConfirmationFlow(
       confirmationParam!,
       usesPreviewToken
     );
+    const token = crypto.randomUUID();
+    const confirmationResponse = canPreview
+      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
+      : buildNoPreviewAvailableResponse(ctx, token);
+    const previewResponse = formatJson(config, confirmationResponse);
+
+    // Accounting runs before anything is recorded. When it throws, the caller
+    // never receives this response, so both maps stay as they were and an
+    // earlier preview of the same key keeps its token.
+    trackSessionData(previewResponse, config, logger, 'during preview');
+
+    // Delete first: Map.set on an existing key keeps its old position, and
+    // the cap evicts in Map order.
+    pendingPreviews.delete(previewKey);
     pendingPreviews.set(previewKey, {
       ts: Date.now(),
       ...(upstreamToken === undefined ? {} : { upstreamToken }),
     });
 
-    // Clean up any existing token for this preview key before generating a new one
+    // The new token replaces any earlier one for this preview key
     for (const [existingToken, existingKey] of tokenIndex.entries()) {
       if (existingKey === previewKey) {
         tokenIndex.delete(existingToken);
         break;
       }
     }
-
-    // Generate confirmation token for secure token-based confirmation
-    const token = crypto.randomUUID();
     tokenIndex.set(token, previewKey);
+
+    // Runs after the insert so the cap holds on return. The entry just
+    // recorded is last in Map order and survives.
+    cleanupExpiredPreviews();
 
     logger.info(
       canPreview ? 'Preview generated for confirmation' : 'Confirmation required without preview',
       { toolName }
     );
-
-    const confirmationResponse = canPreview
-      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
-      : buildNoPreviewAvailableResponse(ctx, token);
-    const previewResponse = formatJson(config, confirmationResponse);
-
-    trackSessionData(previewResponse, config, logger, 'during preview');
 
     return {
       action: 'respond',
