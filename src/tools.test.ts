@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createServer } from './index.js';
 import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
@@ -2226,6 +2229,111 @@ describe('executeTool', () => {
     expect(mockFetch.mock.calls[1][0]).toContain('/abilities/acme-corp/do-thing-v1/run');
     expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
     expect(result.isError).toBeUndefined();
+  });
+});
+
+describe('query booleans through MCP request handlers', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearToolsCache();
+    clearPendingPreviews();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    {
+      label: 'GET false as 0',
+      phase: 'read',
+      query: '?input[flag]=0',
+      method: 'GET',
+    },
+    {
+      label: 'DELETE preview as 0/1',
+      phase: 'preview',
+      query: '?input[site_id]=1&input[dry_run]=1&input[confirm]=0',
+      method: 'DELETE',
+    },
+    {
+      label: 'DELETE confirmation as 1/0',
+      phase: 'confirmed',
+      query: '?input[site_id]=1&input[dry_run]=0&input[confirm]=1',
+      method: 'DELETE',
+    },
+  ])('sends $label through tools/call', async ({ phase, query, method }) => {
+    const ability: Ability =
+      phase === 'read'
+        ? {
+            ...sampleAbilities[0],
+            input_schema: { type: 'object', properties: { flag: { type: 'boolean' } } },
+          }
+        : {
+            ...sampleAbilities[1],
+            input_schema: {
+              ...sampleAbilities[1].input_schema,
+              required: ['site_id', 'confirm', 'dry_run'],
+            },
+            meta: { annotations: { readonly: false, destructive: true, idempotent: true } },
+          };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [ability],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ dry_run: true }),
+      headers: new Headers(),
+    });
+
+    const { server } = await createServer(baseConfig);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({
+        name: phase === 'read' ? 'list_sites_v1' : 'delete_site_v1',
+        arguments: phase === 'read' ? { flag: false } : { site_id: 1, confirm: true },
+      });
+      expect(result.isError).toBeUndefined();
+      if (phase === 'confirmed') {
+        const preview = JSON.parse((result.content as Array<{ text: string }>)[0].text) as {
+          status: string;
+          confirmation_token: string;
+        };
+        expect(preview.status).toBe('CONFIRMATION_REQUIRED');
+        expect(typeof preview.confirmation_token).toBe('string');
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ deleted: true }),
+          headers: new Headers(),
+        });
+        const confirmed = await client.callTool({
+          name: 'delete_site_v1',
+          arguments: {
+            site_id: 1,
+            user_confirmed: true,
+            confirmation_token: preview.confirmation_token,
+          },
+        });
+        expect(confirmed.isError).toBeUndefined();
+      }
+
+      expect(mockFetch).toHaveBeenCalledTimes(phase === 'confirmed' ? 3 : 2);
+      const [url, options] = mockFetch.mock.calls.at(-1) as [string, RequestInit];
+      expect(url.slice(url.indexOf('?'))).toBe(query);
+      expect(options.method).toBe(method);
+      expect(options.body).toBeUndefined();
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
 

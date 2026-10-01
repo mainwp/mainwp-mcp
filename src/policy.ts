@@ -123,8 +123,9 @@ export function declaresUsableBooleanParam(
  * Only required keys qualify: an ability that requires the key already rejects
  * a call without it, so sending `false` cannot break a call that worked before.
  * Optional keys stay absent because GET and DELETE abilities take query-string
- * input, where `false` travels as the string "false" and WordPress versions
- * before 7.1 pass it to the ability without converting it back to a boolean.
+ * input, where a boolean travels as a string (`0` or `false`, depending on the
+ * schema) and WordPress versions before 7.1 pass that string to the ability
+ * without converting it back to a boolean.
  */
 export function requiresUsableFalseParam(schema: unknown, name: string): boolean {
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;

@@ -20,9 +20,9 @@ Packed mode uses these stages:
 
 Each MCP launch gets a fresh empty working directory and a fresh `HOME`. The launch environment contains only the explicit runtime values needed by that scenario. `settings-file-config` is the deliberate exception: it writes fake fixture credentials to a mode-restricted temporary `settings.json` and passes no `MAINWP_*` credential variables.
 
-The fixture dashboard is a plain HTTP server on `127.0.0.1` with an operating-system-assigned port. It requires fake Basic authentication, serves `tests/evals/fixtures/abilities-full.json`, and reads deterministic site state from `tests/acceptance/fixtures/sites.json`.
+The fixture dashboard is a plain HTTP server on `127.0.0.1` with an operating-system-assigned port. It requires fake Basic authentication, serves `tests/evals/fixtures/abilities-full.json`, and reads deterministic site state from `tests/acceptance/fixtures/sites.json`. For GET and DELETE scalar input it reads `boolean`, `integer`, `number` and `string` types in declared order and uses the first that matches, as WordPress 7.1 does for those types. The boolean type matches `1`, `0`, `true` and `false` case-insensitively. A value that matches none of the declared types stays a string.
 
-`tests/acceptance/lib/verify.ts` reads the Abilities API directly with independent HTTP requests. It does not call through the MCP server. It mirrors the production request method and PHP-style `input[...]` query serialization.
+`tests/acceptance/lib/verify.ts` reads the Abilities API directly with independent HTTP requests. It does not call through the MCP server. It mirrors the production request method and the PHP-style `input[...]` query notation. None of its reads send a boolean, so it does not reproduce the server's `1`/`0` boolean spelling.
 
 ## Prerequisites
 

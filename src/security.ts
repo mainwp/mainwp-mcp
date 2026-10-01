@@ -59,7 +59,7 @@ function isSchemaObject(value: unknown): value is Record<string, unknown> {
 
 // Own properties only: bounded schemas are null-prototype, but a plain object
 // would otherwise resolve "constructor" or "toString" through its prototype.
-function ownSchema(schema: unknown, keyword: string): Record<string, unknown> | undefined {
+export function ownSchema(schema: unknown, keyword: string): Record<string, unknown> | undefined {
   if (!isSchemaObject(schema) || !Object.hasOwn(schema, keyword)) {
     return undefined;
   }
@@ -67,7 +67,7 @@ function ownSchema(schema: unknown, keyword: string): Record<string, unknown> | 
   return isSchemaObject(child) ? child : undefined;
 }
 
-function propertySchema(schema: unknown, key: string): Record<string, unknown> | undefined {
+export function propertySchema(schema: unknown, key: string): Record<string, unknown> | undefined {
   return ownSchema(ownSchema(schema, 'properties'), key);
 }
 
