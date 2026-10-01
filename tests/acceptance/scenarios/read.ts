@@ -144,6 +144,7 @@ export const sitePlugins: ScenarioDefinition = {
     const { site, plugins: direct } = await findSiteWithPlugins(ctx.verifier);
     const { result, data } = await ctx.client.callToolJson('get_site_plugins_v1', {
       site_id_or_domain: site.id,
+      has_update: false,
     });
     const actual = data as VerifiedPluginResponse;
     ctx.assert.equal('get_site_plugins_v1 succeeds', result.isError, undefined);

@@ -2103,9 +2103,404 @@ describe('executeAbility', () => {
     const url = calls[1][0] as string;
     // DELETE uses query string, not JSON body
     expect(url).toContain('input[site_id]=1');
-    expect(url).toContain('input[dry_run]=true');
+    expect(url).toContain('input[dry_run]=1');
     // Should not have a body
     expect(calls[1][1].body).toBeUndefined();
+  });
+
+  it.each([
+    ...[
+      { label: 'boolean', positionSchema: { type: 'boolean' }, numeric: true },
+      { label: 'boolean/null', positionSchema: { type: ['boolean', 'null'] }, numeric: true },
+      { label: 'boolean/string', positionSchema: { type: ['boolean', 'string'] }, numeric: true },
+      { label: 'object/boolean', positionSchema: { type: ['object', 'boolean'] }, numeric: true },
+      { label: 'undeclared property', positionSchema: undefined, numeric: false },
+      { label: 'missing schema', positionSchema: undefined, numeric: false },
+      { label: 'missing type', positionSchema: {}, numeric: false },
+      { label: 'malformed type', positionSchema: { type: 42 }, numeric: false },
+      { label: 'empty type list', positionSchema: { type: [] }, numeric: false },
+      { label: 'malformed type list', positionSchema: { type: [null] }, numeric: false },
+      { label: 'integer', positionSchema: { type: 'integer' }, numeric: false },
+      { label: 'string', positionSchema: { type: 'string' }, numeric: false },
+      { label: 'Boolean', positionSchema: { type: 'Boolean' }, numeric: false },
+      { label: 'integer/string', positionSchema: { type: ['integer', 'string'] }, numeric: false },
+      {
+        label: 'integer/boolean',
+        positionSchema: { type: ['integer', 'boolean'] },
+        numeric: false,
+      },
+      { label: 'string/boolean', positionSchema: { type: ['string', 'boolean'] }, numeric: false },
+      { label: 'number/boolean', positionSchema: { type: ['number', 'boolean'] }, numeric: false },
+      { label: 'array/boolean', positionSchema: { type: ['array', 'boolean'] }, numeric: false },
+      {
+        label: 'boolean/non-string entry',
+        positionSchema: { type: ['boolean', 42] },
+        numeric: false,
+      },
+      {
+        label: 'integer/non-string entry',
+        positionSchema: { type: ['integer', 42] },
+        numeric: false,
+      },
+      {
+        label: 'integer/null entry/boolean',
+        positionSchema: { type: ['integer', null, 'boolean'] },
+        numeric: false,
+      },
+      {
+        label: 'anyOf integer/boolean',
+        positionSchema: { anyOf: [{ type: 'integer' }, { type: 'boolean' }] },
+        numeric: false,
+      },
+      {
+        label: 'oneOf boolean/integer',
+        positionSchema: { oneOf: [{ type: 'boolean' }, { type: 'integer' }] },
+        numeric: false,
+      },
+      {
+        label: 'allOf boolean',
+        positionSchema: { type: 'boolean', allOf: [{ type: 'boolean' }] },
+        numeric: false,
+      },
+    ].flatMap(row =>
+      ['scalar', 'array item', 'nested value'].flatMap(position =>
+        [true, false].map(value => {
+          const property =
+            position === 'array item'
+              ? { type: 'array', items: row.positionSchema }
+              : position === 'nested value'
+                ? { type: 'object', properties: { flag: row.positionSchema } }
+                : row.positionSchema;
+          const key =
+            position === 'array item'
+              ? 'flag][]'
+              : position === 'nested value'
+                ? 'flag][flag]'
+                : 'flag]';
+          const spelling = row.numeric ? (value ? '1' : '0') : String(value);
+          return {
+            label: `${row.label} at ${position} (${value})`,
+            input_schema:
+              row.label === 'missing schema'
+                ? undefined
+                : {
+                    type: 'object',
+                    properties: row.label === 'undeclared property' ? {} : { flag: property },
+                  },
+            input: {
+              flag:
+                position === 'array item'
+                  ? [value]
+                  : position === 'nested value'
+                    ? { flag: value }
+                    : value,
+            },
+            query: `?input[${key}=${spelling}`,
+          };
+        })
+      )
+    ),
+    {
+      label: 'additionalProperties integer',
+      input_schema: { type: 'object', additionalProperties: { type: 'integer' } },
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'additionalProperties boolean',
+      input_schema: { type: 'object', additionalProperties: { type: 'boolean' } },
+      input: { flag: false },
+      query: '?input[flag]=false',
+    },
+    {
+      label: 'declared property over additionalProperties',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'boolean' } },
+        additionalProperties: { type: 'integer' },
+      },
+      input: { flag: true },
+      query: '?input[flag]=1',
+    },
+    {
+      label: 'patternProperties',
+      input_schema: { type: 'object', patternProperties: { '^f': { type: 'boolean' } } },
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'anyOf on the input object',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'boolean' } },
+        anyOf: [{ properties: { flag: { type: 'integer' } } }],
+      },
+      input: { flag: false },
+      query: '?input[flag]=false',
+    },
+    {
+      label: 'array items from additionalProperties',
+      input_schema: {
+        type: 'object',
+        additionalProperties: { type: 'array', items: { type: 'integer' } },
+      },
+      input: { flag: [true] },
+      query: '?input[flag][]=true',
+    },
+    {
+      label: 'oneOf on an array',
+      input_schema: {
+        type: 'object',
+        properties: {
+          flag: { type: 'array', items: { type: 'boolean' }, oneOf: [{ maxItems: 1 }] },
+        },
+      },
+      input: { flag: [true] },
+      query: '?input[flag][]=true',
+    },
+    {
+      label: 'nested additionalProperties boolean',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'object', additionalProperties: { type: 'boolean' } } },
+      },
+      input: { flag: { g: true } },
+      query: '?input[flag][g]=true',
+    },
+    {
+      label: 'nested patternProperties',
+      input_schema: {
+        type: 'object',
+        properties: {
+          flag: { type: 'object', patternProperties: { '^g': { type: 'boolean' } } },
+        },
+      },
+      input: { flag: { g: false } },
+      query: '?input[flag][g]=false',
+    },
+    {
+      label: 'anyOf on a nested object',
+      input_schema: {
+        type: 'object',
+        properties: {
+          flag: {
+            type: 'object',
+            properties: { g: { type: 'boolean' } },
+            anyOf: [{ required: ['g'] }],
+          },
+        },
+      },
+      input: { flag: { g: false } },
+      query: '?input[flag][g]=false',
+    },
+    {
+      label: 'null property schema',
+      input_schema: { type: 'object', properties: { flag: null } },
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'false property schema',
+      input_schema: { type: 'object', properties: { flag: false } },
+      input: { flag: false },
+      query: '?input[flag]=false',
+    },
+    {
+      label: 'array properties',
+      input_schema: { type: 'object', properties: [{ type: 'boolean' }] },
+      input: { 0: true },
+      query: '?input[0]=true',
+    },
+    {
+      label: 'untyped root object',
+      input_schema: { properties: { flag: { type: 'boolean' } } },
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'object/array root type',
+      input_schema: { type: ['object', 'array'], properties: { flag: { type: 'boolean' } } },
+      input: { flag: false },
+      query: '?input[flag]=false',
+    },
+    {
+      label: 'array schema for root object',
+      input_schema: { type: 'array', items: { type: 'boolean' } },
+      input: { 0: false },
+      query: '?input[0]=false',
+    },
+    {
+      label: 'tuple array items',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'array', items: [{ type: 'boolean' }] } },
+      },
+      input: { flag: [true] },
+      query: '?input[flag][]=true',
+    },
+    {
+      label: 'array/object container type',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: ['array', 'object'], items: { type: 'boolean' } } },
+      },
+      input: { flag: [false] },
+      query: '?input[flag][]=false',
+    },
+    {
+      label: 'string schema for nested object',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'string', properties: { g: { type: 'boolean' } } } },
+      },
+      input: { flag: { g: true } },
+      query: '?input[flag][g]=true',
+    },
+    {
+      label: 'untyped nested object',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { properties: { g: { type: 'boolean' } } } },
+      },
+      input: { flag: { g: false } },
+      query: '?input[flag][g]=false',
+    },
+    {
+      label: 'object/null root type',
+      input_schema: { type: ['object', 'null'], properties: { flag: { type: 'boolean' } } },
+      input: { flag: true },
+      query: '?input[flag]=1',
+    },
+    {
+      label: 'non-string root type entry',
+      input_schema: { type: ['object', 42], properties: { flag: { type: 'boolean' } } },
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'non-string array type entry',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: ['array', null], items: { type: 'boolean' } } },
+      },
+      input: { flag: [false] },
+      query: '?input[flag][]=false',
+    },
+    {
+      label: 'non-string nested object type entry',
+      input_schema: {
+        type: 'object',
+        properties: {
+          flag: { type: ['object', 42], properties: { g: { type: 'boolean' } } },
+        },
+      },
+      input: { flag: { g: true } },
+      query: '?input[flag][g]=true',
+    },
+    {
+      label: 'null root schema',
+      input_schema: null as unknown as Record<string, unknown>,
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'array root schema',
+      input_schema: [{ type: 'boolean' }] as unknown as Record<string, unknown>,
+      input: { flag: false },
+      query: '?input[flag]=false',
+    },
+    {
+      label: 'number root schema',
+      input_schema: 42 as unknown as Record<string, unknown>,
+      input: { flag: true },
+      query: '?input[flag]=true',
+    },
+    {
+      label: 'own prototype-named properties',
+      input_schema: {
+        type: 'object',
+        properties: JSON.parse('{"__proto__":{"type":"boolean"},"constructor":{"type":"boolean"}}'),
+      },
+      input: JSON.parse('{"__proto__":true,"constructor":false}') as Record<string, unknown>,
+      query: '?input[__proto__]=1&input[constructor]=0',
+    },
+    {
+      label: 'array with uniqueItems',
+      input_schema: {
+        type: 'object',
+        properties: {
+          flag: { type: 'array', items: { type: ['boolean', 'string'] }, uniqueItems: true },
+          other: { type: 'boolean' },
+        },
+      },
+      input: { flag: [false, 'false'], other: true },
+      query: '?input[flag][]=false&input[flag][]=false&input[other]=1',
+    },
+    {
+      label: 'array without uniqueItems',
+      input_schema: {
+        type: 'object',
+        properties: { flag: { type: 'array', items: { type: ['boolean', 'string'] } } },
+      },
+      input: { flag: [false, 'false'] },
+      query: '?input[flag][]=0&input[flag][]=false',
+    },
+    {
+      label: 'undeclared prototype-named properties',
+      input_schema: { type: 'object', properties: {} },
+      input: JSON.parse('{"__proto__":true,"constructor":false}') as Record<string, unknown>,
+      query: '?input[__proto__]=true&input[constructor]=false',
+    },
+  ])('serializes query booleans for $label', async ({ input_schema, input, query }) => {
+    const ability: Ability = { ...sampleAbilities[0], input_schema };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [], headers: new Headers() });
+
+    await executeAbility(baseConfig, ability.name, input, undefined, ability);
+
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url.slice(url.indexOf('?'))).toBe(query);
+    expect(options.method).toBe('GET');
+    expect(options.body).toBeUndefined();
+  });
+
+  it.each(
+    ['boolean', 'string'].flatMap(type =>
+      ['scalar', 'array item', 'nested value'].flatMap(position =>
+        ['true', 'false'].map(value => ({ type, position, value }))
+      )
+    )
+  )('preserves query string "$value" for $type at $position', async ({ type, position, value }) => {
+    const property =
+      position === 'array item'
+        ? { type: 'array', items: { type } }
+        : position === 'nested value'
+          ? { type: 'object', properties: { flag: { type } } }
+          : { type };
+    const ability: Ability = {
+      ...sampleAbilities[0],
+      input_schema: { type: 'object', properties: { flag: property } },
+    };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [], headers: new Headers() });
+
+    await executeAbility(
+      baseConfig,
+      ability.name,
+      {
+        flag:
+          position === 'array item'
+            ? [value]
+            : position === 'nested value'
+              ? { flag: value }
+              : value,
+      },
+      undefined,
+      ability
+    );
+
+    const url = mockFetch.mock.calls[0][0] as string;
+    const key =
+      position === 'array item' ? 'flag][]' : position === 'nested value' ? 'flag][flag]' : 'flag]';
+    expect(url.slice(url.indexOf('?'))).toBe(`?input[${key}=${value}`);
   });
 
   it('should throw when ability not found', async () => {

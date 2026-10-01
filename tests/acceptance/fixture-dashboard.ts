@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { ownSchema, propertySchema } from '../../src/security.js';
 
 export const FIXTURE_USERNAME = 'fixture-user';
 export const FIXTURE_APP_PASSWORD = 'fixture app password';
@@ -40,7 +41,7 @@ const requiredConfirmAbility = {
     },
   },
   meta: {
-    annotations: { readonly: false, destructive: true, idempotent: false },
+    annotations: { readonly: false, destructive: true, idempotent: true },
     show_in_rest: true,
   },
 };
@@ -143,14 +144,31 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(encoded);
 }
 
-function parseScalar(value: string): string | number | boolean {
+function parseScalar(value: string, schema?: Record<string, unknown>): string | number | boolean {
+  const type = schema && Object.hasOwn(schema, 'type') ? schema.type : undefined;
+  const types =
+    typeof type === 'string'
+      ? [type]
+      : Array.isArray(type)
+        ? type.filter(candidate => typeof candidate === 'string')
+        : [];
+  const lowerValue = value.toLowerCase();
+  for (const candidate of types) {
+    if (candidate === 'boolean' && ['1', '0', 'true', 'false'].includes(lowerValue)) {
+      return lowerValue !== 'false' && lowerValue !== '0';
+    }
+    if (candidate === 'integer' && /^-?\d+$/.test(value)) return Number(value);
+    if (candidate === 'number' && /^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+    if (candidate === 'string') return value;
+  }
+  if (types.length > 0) return value;
   if (/^-?\d+$/.test(value)) return Number(value);
   if (value === 'true') return true;
   if (value === 'false') return false;
   return value;
 }
 
-function parseQueryInput(url: URL): Record<string, unknown> | null {
+function parseQueryInput(url: URL, schema: unknown): Record<string, unknown> | null {
   const input: Record<string, unknown> = {};
   let hasInput = url.searchParams.has('input');
   for (const [rawKey, rawValue] of url.searchParams) {
@@ -159,21 +177,23 @@ function parseQueryInput(url: URL): Record<string, unknown> | null {
     if (arrayMatch) {
       const current = input[arrayMatch[1]];
       const values = Array.isArray(current) ? current : [];
-      values.push(parseScalar(rawValue));
+      values.push(parseScalar(rawValue, ownSchema(propertySchema(schema, arrayMatch[1]), 'items')));
       input[arrayMatch[1]] = values;
       continue;
     }
     const scalarMatch = rawKey.match(/^input\[([^\]]+)\]$/);
-    if (scalarMatch) input[scalarMatch[1]] = parseScalar(rawValue);
+    if (scalarMatch)
+      input[scalarMatch[1]] = parseScalar(rawValue, propertySchema(schema, scalarMatch[1]));
   }
   return hasInput ? input : null;
 }
 
 async function parseInput(
   request: IncomingMessage,
-  url: URL
+  url: URL,
+  schema: unknown
 ): Promise<Record<string, unknown> | null> {
-  if (request.method === 'GET' || request.method === 'DELETE') return parseQueryInput(url);
+  if (request.method === 'GET' || request.method === 'DELETE') return parseQueryInput(url, schema);
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -719,7 +739,6 @@ export async function startFixtureDashboard(
       const suffix = '/run';
       if (url.pathname.startsWith(prefix) && url.pathname.endsWith(suffix)) {
         const abilityName = decodeURIComponent(url.pathname.slice(prefix.length, -suffix.length));
-        const input = await parseInput(request, url);
         const ability = (
           abilities as Array<{
             name: string;
@@ -727,6 +746,7 @@ export async function startFixtureDashboard(
           }>
         ).find(candidate => candidate.name === abilityName);
         const schema = ability?.input_schema;
+        const input = await parseInput(request, url, schema);
         const schemaType = schema?.type;
         if (
           input === null &&

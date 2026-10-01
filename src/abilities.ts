@@ -16,6 +16,8 @@ import {
 import {
   RateLimiter,
   containsKnownSecret,
+  ownSchema,
+  propertySchema,
   redactKnownSecrets,
   redactKnownSecretsDeep,
   sanitizeError,
@@ -880,14 +882,70 @@ export async function getAbilityByToolName(
   return abilityIndexes.get(abilities)?.byToolName.get(toolName);
 }
 
+// With a key, the schema of that declared property of an object container;
+// without one, the items schema of an array container. Anything not plainly
+// declared returns undefined, so the boolean keeps its old spelling.
+function declaredChildSchema(schema: unknown, key?: string): Record<string, unknown> | undefined {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
+  if (['anyOf', 'oneOf', 'allOf'].some(keyword => Object.hasOwn(schema, keyword))) {
+    return undefined;
+  }
+  const type = Object.hasOwn(schema, 'type') ? (schema as Record<string, unknown>).type : undefined;
+  const containerType = key === undefined ? 'array' : 'object';
+  const otherContainerType = key === undefined ? 'object' : 'array';
+  if (
+    type !== containerType &&
+    !(
+      Array.isArray(type) &&
+      type.every(item => typeof item === 'string') &&
+      type.includes(containerType) &&
+      !type.includes(otherContainerType)
+    )
+  ) {
+    return undefined;
+  }
+  // WordPress checks uniqueItems on the raw strings and again after converting
+  // them. [false, "false"] sent as "0" and "false" passes the first check, then
+  // fails the second, and WordPress 7.1 falls back to the raw input for the
+  // whole call. Keeping true/false leaves that request rejected as before.
+  if (key === undefined && Object.hasOwn(schema, 'uniqueItems')) return undefined;
+  return key === undefined ? ownSchema(schema, 'items') : propertySchema(schema, key);
+}
+
+function readsAsBoolean(schema: unknown): boolean {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  if (['anyOf', 'oneOf', 'allOf'].some(keyword => Object.hasOwn(schema, keyword))) return false;
+  const type = Object.hasOwn(schema, 'type') ? (schema as Record<string, unknown>).type : undefined;
+  if (typeof type === 'string') return type === 'boolean';
+  if (!Array.isArray(type) || !type.every(item => typeof item === 'string')) return false;
+  const booleanIndex = type.indexOf('boolean');
+  return (
+    booleanIndex !== -1 &&
+    !type
+      .slice(0, booleanIndex)
+      .some(item => ['integer', 'number', 'string', 'array'].includes(item))
+  );
+}
+
 /**
- * Serialize input to PHP-style query string for GET requests.
- * WordPress REST API parses PHP array notation: input[key][]=value
+ * Serialize input to a PHP-style query string for GET and DELETE requests.
+ * WordPress parses PHP array notation: input[key][]=value
+ *
+ * Only plainly declared boolean paths use 1/0. WordPress before 7.1 passes
+ * query input as raw strings, and PHP truthiness treats "false" as true but
+ * "0" as false.
+ *
+ * WordPress 7.1 takes the first declared type that matches. Positions that
+ * are not plainly declared boolean through typed containers keep the old
+ * true/false spelling to avoid changing the type WordPress reads.
  */
-function serializeToPhpQueryString(input: Record<string, unknown>): string {
+function serializeToPhpQueryString(input: Record<string, unknown>, schema: unknown): string {
   const params: string[] = [];
+  const scalarString = (value: unknown, valueSchema: unknown): string =>
+    typeof value === 'boolean' && readsAsBoolean(valueSchema) ? (value ? '1' : '0') : String(value);
 
   for (const [key, value] of Object.entries(input)) {
+    const valueSchema = declaredChildSchema(schema, key);
     if (Array.isArray(value)) {
       // Arrays: input[key][]=val1&input[key][]=val2
       for (const item of value) {
@@ -896,7 +954,9 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
             `Unsupported nested query parameter at "${key}": arrays may contain only scalar values`
           );
         }
-        params.push(`input[${encodeURIComponent(key)}][]=${encodeURIComponent(String(item))}`);
+        params.push(
+          `input[${encodeURIComponent(key)}][]=${encodeURIComponent(scalarString(item, declaredChildSchema(valueSchema)))}`
+        );
       }
     } else if (typeof value === 'object' && value !== null) {
       // Nested objects: input[key][subkey]=val
@@ -907,12 +967,14 @@ function serializeToPhpQueryString(input: Record<string, unknown>): string {
           );
         }
         params.push(
-          `input[${encodeURIComponent(key)}][${encodeURIComponent(subKey)}]=${encodeURIComponent(String(subVal))}`
+          `input[${encodeURIComponent(key)}][${encodeURIComponent(subKey)}]=${encodeURIComponent(scalarString(subVal, declaredChildSchema(valueSchema, subKey)))}`
         );
       }
     } else if (value !== undefined && value !== null) {
       // Scalars: input[key]=val
-      params.push(`input[${encodeURIComponent(key)}]=${encodeURIComponent(String(value))}`);
+      params.push(
+        `input[${encodeURIComponent(key)}]=${encodeURIComponent(scalarString(value, valueSchema))}`
+      );
     }
   }
 
@@ -993,7 +1055,7 @@ export async function executeAbility(
       // GET or DELETE — both use query string params (WP Abilities API doesn't parse DELETE bodies)
       const method = isReadonly ? 'GET' : 'DELETE';
       const queryString =
-        serializeToPhpQueryString(input ?? {}) ||
+        serializeToPhpQueryString(input ?? {}, ability.input_schema) ||
         (hasInputSchema && !hasSchemaDefault ? '?input=' : '');
       const fullUrl = url + queryString;
       if (fullUrl.length > MAX_URL_LENGTH) {
