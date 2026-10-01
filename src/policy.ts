@@ -139,6 +139,26 @@ export function requiresUsableFalseParam(schema: unknown, name: string): boolean
 }
 
 /**
+ * Whether an ability declares `preview_token` as a string that may also be
+ * null. That shape marks an ability whose own dry run issues the token: null
+ * on the dry run, the issued string on the confirmed call. Only an explicit
+ * type list with both members qualifies. A plain `string` declaration takes
+ * its token from a separate preview ability, and a missing or looser type
+ * says nothing about the contract, so both keep the caller's value untouched.
+ */
+export function declaresNullablePreviewToken(properties: unknown): boolean {
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return false;
+  }
+  if (!Object.hasOwn(properties, 'preview_token')) return false;
+  const sub = (properties as Record<string, unknown>).preview_token;
+  if (sub === null || typeof sub !== 'object' || Array.isArray(sub)) return false;
+  if (!Object.hasOwn(sub, 'type')) return false;
+  const type = (sub as Record<string, unknown>).type;
+  return Array.isArray(type) && type.includes('string') && type.includes('null');
+}
+
+/**
  * List the required `confirm_*` properties whose schema pins them to literal
  * true with `const: true` or `enum: [true]`. Requiring both the naming
  * convention and membership in `required` avoids treating an optional domain

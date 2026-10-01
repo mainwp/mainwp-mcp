@@ -3267,6 +3267,20 @@ describe('confirmation flow - full cycle', () => {
 });
 
 describe('getPreviewKey', () => {
+  it('ignores preview_token only when explicitly eligible', () => {
+    const args = { request_id: 'request-1', preview_token: null };
+    const relayed = { ...args, preview_token: 'example_preview_token_0123456789' };
+    expect(getPreviewKey('scope', 'replace_example_settings_v1', args, 'confirm', true)).toBe(
+      getPreviewKey('scope', 'replace_example_settings_v1', relayed, 'confirm', true)
+    );
+    expect(getPreviewKey('scope', 'replace_example_settings_v1', args, 'confirm')).not.toBe(
+      getPreviewKey('scope', 'replace_example_settings_v1', relayed, 'confirm')
+    );
+    expect(getPreviewKey('scope', 'replace_example_settings_v1', args, 'confirm', false)).toBe(
+      getPreviewKey('scope', 'replace_example_settings_v1', args, 'confirm')
+    );
+  });
+
   it('keeps the key size fixed however large the arguments are', () => {
     const small = getPreviewKey('scope', 'upload_package_v1', { package_base64: 'A' }, 'confirm');
     const large = getPreviewKey(
