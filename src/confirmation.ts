@@ -13,6 +13,7 @@ import { Config, formatJson } from './config.js';
 import type { Logger } from './logging.js';
 import {
   declaresUsableBooleanParam,
+  declaresNullablePreviewToken,
   requiresUsableFalseParam,
   resolveConfirmationParam,
 } from './policy.js';
@@ -30,9 +31,13 @@ import {
 
 /**
  * Preview tracking for two-phase confirmation flow.
- * Maps preview keys to timestamps for validation and expiry.
+ * Maps preview keys to the time the preview was made, for validation and
+ * expiry. `upstreamToken` holds the `preview_token` an ability's own dry run
+ * issued, so the confirmed call can supply it when the caller sends none. It
+ * shares the entry's key, identity scope and expiry, and goes when the entry
+ * is consumed.
  */
-const pendingPreviews = new Map<string, number>();
+const pendingPreviews = new Map<string, { ts: number; upstreamToken?: string }>();
 
 /**
  * Token index for confirmation flow.
@@ -114,6 +119,9 @@ function canonicalize(value: unknown): unknown {
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, the resolved confirm_*,
  * user_confirmed, dry_run) from the key to ensure preview and execution calls match.
+ * With `usesPreviewToken`, `preview_token` is left out as well: the ability
+ * issues it in its own dry run, so it is null on the preview and a string on
+ * the confirmed call, and the Dashboard decides whether that string is valid.
  * Prefixed with the config identity hash: the preview maps are module-level,
  * so without the scope a token issued against one dashboard/principal could
  * confirm the same tool and arguments against another createServer(config)
@@ -126,7 +134,8 @@ export function getPreviewKey(
   scope: string,
   toolName: string,
   args: Record<string, unknown>,
-  confirmationParam: string
+  confirmationParam: string,
+  usesPreviewToken = false
 ): string {
   const relevantArgs = { ...args };
   delete relevantArgs.confirm;
@@ -134,11 +143,45 @@ export function getPreviewKey(
   delete relevantArgs.dry_run;
   delete relevantArgs.confirmation_token;
   delete relevantArgs[confirmationParam];
+  if (usesPreviewToken) delete relevantArgs.preview_token;
   const digest = crypto
     .createHash('sha256')
     .update(JSON.stringify(canonicalize(relevantArgs)))
     .digest('hex');
   return `${scope}:${toolName}:${digest}`;
+}
+
+/**
+ * Read the `preview_token` an ability's dry run issued, or undefined when the
+ * response carries none worth sending back. The response is remote input that
+ * has already been through secret redaction, so only an own top-level string
+ * in a narrow opaque-token shape is accepted. A redaction marker falls outside
+ * the character set and is dropped like any other malformed value. A dropped
+ * value is not an error: the caller can still relay the token itself.
+ * @internal exported for tests
+ */
+export function capturePreviewToken(
+  result: unknown,
+  tokenSchema: Record<string, unknown>
+): string | undefined {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  if (!Object.hasOwn(result, 'preview_token')) return undefined;
+  const token = (result as Record<string, unknown>).preview_token;
+  if (
+    typeof token !== 'string' ||
+    token.length < 16 ||
+    token.length > 256 ||
+    !/^[A-Za-z0-9._~-]+$/.test(token)
+  ) {
+    return undefined;
+  }
+  for (const bound of ['minLength', 'maxLength'] as const) {
+    if (!Object.hasOwn(tokenSchema, bound)) continue;
+    const limit = tokenSchema[bound];
+    if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0) continue;
+    if (bound === 'minLength' ? token.length < limit : token.length > limit) return undefined;
+  }
+  return token;
 }
 
 /**
@@ -148,15 +191,15 @@ function cleanupExpiredPreviews(): void {
   const now = Date.now();
 
   // First pass: Remove expired entries
-  for (const [key, timestamp] of pendingPreviews.entries()) {
-    if (now - timestamp > PREVIEW_EXPIRY_MS) {
+  for (const [key, entry] of pendingPreviews.entries()) {
+    if (now - entry.ts > PREVIEW_EXPIRY_MS) {
       pendingPreviews.delete(key);
     }
   }
 
   // Second pass: Enforce max size limit by removing oldest entries
   if (pendingPreviews.size > MAX_PENDING_PREVIEWS) {
-    const sortedEntries = Array.from(pendingPreviews.entries()).sort((a, b) => a[1] - b[1]);
+    const sortedEntries = Array.from(pendingPreviews.entries()).sort((a, b) => a[1].ts - b[1].ts);
     const toRemove = sortedEntries.slice(0, pendingPreviews.size - MAX_PENDING_PREVIEWS);
     for (const [key] of toRemove) {
       pendingPreviews.delete(key);
@@ -197,6 +240,7 @@ export async function handleConfirmationFlow(
   const hasConfirmParam = confirmationParam !== undefined;
   const canPreview =
     confirmationParam === 'confirm' && declaresUsableBooleanParam(schemaProps, 'dry_run');
+  const usesPreviewToken = canPreview && declaresNullablePreviewToken(schemaProps);
 
   // Fail closed: a destructive ability that declares no confirm parameter has
   // no confirmation channel, so while confirmation is required it can never
@@ -272,6 +316,7 @@ export async function handleConfirmationFlow(
     // upstream preview. Named confirm_* fields must stay true in input, so
     // they use the token-only path even if dry_run is declared.
     let previewResult: unknown = null;
+    let upstreamToken: string | undefined;
     if (canPreview) {
       // An ability that requires confirm gets an explicit false. Optional keys
       // stay absent, see requiresUsableFalseParam.
@@ -279,6 +324,21 @@ export async function handleConfirmationFlow(
       delete previewArgs[confirmationParam!];
       if (requiresUsableFalseParam(ability.input_schema, 'confirm')) {
         previewArgs.confirm = false;
+      }
+      // The dry run issues the token and rejects a call that already carries
+      // one, so the caller's value never goes out on the preview. Required
+      // keys get an explicit null and optional keys stay absent, as above.
+      if (usesPreviewToken) {
+        const schema = ability.input_schema!;
+        if (
+          Object.hasOwn(schema, 'required') &&
+          Array.isArray(schema.required) &&
+          schema.required.includes('preview_token')
+        ) {
+          previewArgs.preview_token = null;
+        } else {
+          delete previewArgs.preview_token;
+        }
       }
       previewResult = await executeAbility(
         config,
@@ -288,6 +348,12 @@ export async function handleConfirmationFlow(
         ability,
         signal
       );
+      if (usesPreviewToken) {
+        upstreamToken = capturePreviewToken(
+          previewResult,
+          (schemaProps as Record<string, Record<string, unknown>>).preview_token
+        );
+      }
     } else {
       logger.warning(
         confirmationParam === 'confirm'
@@ -305,9 +371,13 @@ export async function handleConfirmationFlow(
       configIdentityHash(config),
       toolName,
       args,
-      confirmationParam!
+      confirmationParam!,
+      usesPreviewToken
     );
-    pendingPreviews.set(previewKey, Date.now());
+    pendingPreviews.set(previewKey, {
+      ts: Date.now(),
+      ...(upstreamToken === undefined ? {} : { upstreamToken }),
+    });
 
     // Clean up any existing token for this preview key before generating a new one
     for (const [existingToken, existingKey] of tokenIndex.entries()) {
@@ -402,7 +472,8 @@ export async function handleConfirmationFlow(
       configIdentityHash(config),
       toolName,
       args,
-      confirmationParam!
+      confirmationParam!,
+      usesPreviewToken
     );
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
@@ -416,9 +487,9 @@ export async function handleConfirmationFlow(
     const previewKey = tokenPreviewKey;
 
     // Check preview expiry BEFORE running cleanup for more helpful error messages
-    const previewTimestamp = pendingPreviews.get(previewKey);
+    const previewEntry = pendingPreviews.get(previewKey);
 
-    if (previewTimestamp === undefined) {
+    if (previewEntry === undefined) {
       logger.warning('Confirmation failed - no preview found', { toolName });
       return {
         action: 'respond',
@@ -427,7 +498,7 @@ export async function handleConfirmationFlow(
       };
     }
 
-    if (Date.now() - previewTimestamp > PREVIEW_EXPIRY_MS) {
+    if (Date.now() - previewEntry.ts > PREVIEW_EXPIRY_MS) {
       pendingPreviews.delete(previewKey);
       tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - preview expired', { toolName });
@@ -439,9 +510,10 @@ export async function handleConfirmationFlow(
     }
 
     // Preview is valid - proceed with execution
+    const upstreamToken = previewEntry.upstreamToken;
     pendingPreviews.delete(previewKey);
     tokenIndex.delete(confirmationToken);
-    const previewAge = Date.now() - previewTimestamp;
+    const previewAge = Date.now() - previewEntry.ts;
     logger.info('User confirmation validated', { toolName, previewAge });
 
     // Confirmation credentials belong to this server, not the upstream ability.
@@ -452,6 +524,16 @@ export async function handleConfirmationFlow(
     } = effectiveArgs;
     delete confirmedArgs.confirm;
     delete confirmedArgs[confirmationParam!];
+    // A token string from the caller always wins: it may come from a later
+    // dry run that replaced the one stored here. The stored token only fills
+    // in for a caller that repeated the preview arguments.
+    if (
+      usesPreviewToken &&
+      (confirmedArgs.preview_token === null || confirmedArgs.preview_token === undefined) &&
+      upstreamToken !== undefined
+    ) {
+      confirmedArgs.preview_token = upstreamToken;
+    }
     if (
       confirmationParam === 'confirm' &&
       requiresUsableFalseParam(ability.input_schema, 'dry_run')

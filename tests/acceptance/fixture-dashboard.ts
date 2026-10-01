@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +38,34 @@ const requiredConfirmAbility = {
       note: { type: 'string', description: 'Replacement site note' },
       confirm: { type: 'boolean', description: 'Approve execution' },
       dry_run: { type: 'boolean', description: 'Preview the replacement' },
+    },
+  },
+  meta: {
+    annotations: { readonly: false, destructive: true, idempotent: false },
+    show_in_rest: true,
+  },
+};
+
+export const FIXTURE_PREVIEW_TOKEN_ABILITY = 'mainwp/clear-site-note-v1';
+export const FIXTURE_PREVIEW_TOKEN_TOOL = 'clear_site_note_v1';
+
+const previewTokenAbility = {
+  name: FIXTURE_PREVIEW_TOKEN_ABILITY,
+  label: 'Clear Site Note',
+  description: 'Clear a fixture site note using the token issued by its dry-run preview.',
+  category: 'mainwp-sites',
+  input_schema: {
+    type: 'object',
+    required: ['site_id_or_domain', 'request_id', 'confirm', 'dry_run', 'preview_token'],
+    properties: {
+      site_id_or_domain: { type: ['integer', 'string'], description: 'Site ID or domain' },
+      request_id: {
+        type: 'string',
+        description: 'Request identifier shared by preview and execution',
+      },
+      confirm: { type: 'boolean', description: 'Approve execution' },
+      dry_run: { type: 'boolean', description: 'Preview the note clear' },
+      preview_token: { type: ['string', 'null'], minLength: 43, maxLength: 128 },
     },
   },
   meta: {
@@ -342,6 +371,7 @@ async function runAbility(
   abilityName: string,
   input: Record<string, unknown>,
   sites: FixtureSite[],
+  previewTokens: Map<string, string>,
   response: ServerResponse
 ): Promise<void> {
   const faultMode = getFixtureFaultMode(abilityName, input);
@@ -665,6 +695,72 @@ async function runAbility(
     return;
   }
 
+  if (abilityName === FIXTURE_PREVIEW_TOKEN_ABILITY) {
+    for (const key of ['confirm', 'dry_run', 'preview_token']) {
+      if (!Object.hasOwn(input, key)) {
+        json(response, 400, {
+          code: 'ability_invalid_input',
+          message: `Ability "${abilityName}" has invalid input. Reason: ${key} is a required property of input.`,
+        });
+        return;
+      }
+    }
+    if (
+      typeof input.confirm !== 'boolean' ||
+      typeof input.dry_run !== 'boolean' ||
+      input.confirm === input.dry_run
+    ) {
+      json(response, 400, {
+        code: 'ability_invalid_input',
+        message: `Ability "${abilityName}" has invalid input. Reason: confirm and dry_run must be opposite booleans.`,
+      });
+      return;
+    }
+    if (typeof input.request_id !== 'string') {
+      json(response, 400, {
+        code: 'ability_invalid_input',
+        message: `Ability "${abilityName}" has invalid input. Reason: request_id is not of type string.`,
+      });
+      return;
+    }
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const tokenKey = JSON.stringify([site.id, input.request_id]);
+    if (input.dry_run === true) {
+      if (input.preview_token !== null) {
+        json(response, 400, {
+          code: 'ability_invalid_input',
+          message: `Ability "${abilityName}" has invalid input. Reason: preview_token must be null during a dry run.`,
+        });
+        return;
+      }
+      const token = randomBytes(32).toString('base64url');
+      previewTokens.set(tokenKey, token);
+      json(response, 200, {
+        dry_run: true,
+        updated: false,
+        would_affect: { site_id: site.id, notes: '' },
+        preview_token: token,
+      });
+      return;
+    }
+    if (
+      typeof input.preview_token !== 'string' ||
+      input.preview_token !== previewTokens.get(tokenKey)
+    ) {
+      json(response, 403, {
+        code: 'fixture_preview_token_invalid',
+        message: 'The preview token does not match an unused preview for this site and request.',
+        data: { status: 403 },
+      });
+      return;
+    }
+    previewTokens.delete(tokenKey);
+    site.notes = '';
+    json(response, 200, { dry_run: false, updated: true, site: publicSite(site) });
+    return;
+  }
+
   json(response, 404, {
     code: 'rest_no_route',
     message: `No route was found for ability ${abilityName}.`,
@@ -684,6 +780,7 @@ export async function startFixtureDashboard(
   const abilities = [
     ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[]),
     requiredConfirmAbility,
+    previewTokenAbility,
     ...(options.acceptanceOnlyAbilities
       ? (JSON.parse(fs.readFileSync(ACCEPTANCE_ABILITIES_PATH, 'utf8')) as unknown[])
       : []),
@@ -693,6 +790,7 @@ export async function startFixtureDashboard(
   // Reassignable so reset() can hand every run the same starting state; the
   // request handler reads this binding at call time.
   let sites = loadSites();
+  const previewTokens = new Map<string, string>();
   const expectedAuthorization = `Basic ${Buffer.from(
     `${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`
   ).toString('base64')}`;
@@ -742,7 +840,7 @@ export async function startFixtureDashboard(
           });
           return;
         }
-        await runAbility(abilityName, input ?? {}, sites, response);
+        await runAbility(abilityName, input ?? {}, sites, previewTokens, response);
         return;
       }
 
@@ -774,6 +872,7 @@ export async function startFixtureDashboard(
     url: `http://127.0.0.1:${address.port}`,
     reset: () => {
       sites = loadSites();
+      previewTokens.clear();
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

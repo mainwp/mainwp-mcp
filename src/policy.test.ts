@@ -12,6 +12,7 @@ import {
   classifyDestructive,
   declaresUsableBooleanParam,
   requiresUsableFalseParam,
+  declaresNullablePreviewToken,
   resolveConfirmationParam,
   isToolAllowed,
   type PolicyDecision,
@@ -353,6 +354,43 @@ describe('requiresUsableFalseParam', () => {
     ['array schema', [], 'confirm', false],
   ] as const)('%s', (_label, schema, name, expected) => {
     expect(requiresUsableFalseParam(schema, name)).toBe(expected);
+  });
+});
+
+describe('declaresNullablePreviewToken', () => {
+  it.each([
+    ['nullable string', { preview_token: { type: ['string', 'null'] } }, true],
+    ['reversed types', { preview_token: { type: ['null', 'string'] } }, true],
+    ['additional type', { preview_token: { type: ['string', 'null', 'number'] } }, true],
+    [
+      'null prototype subschema',
+      { preview_token: Object.assign(Object.create(null), { type: ['string', 'null'] }) },
+      true,
+    ],
+    ['string only', { preview_token: { type: 'string' } }, false],
+    ['string array only', { preview_token: { type: ['string'] } }, false],
+    ['null only', { preview_token: { type: ['null'] } }, false],
+    ['missing type', { preview_token: { description: 'Preview token' } }, false],
+    ['empty subschema', { preview_token: {} }, false],
+    ['true schema', { preview_token: true }, false],
+    ['false schema', { preview_token: false }, false],
+    ['null subschema', { preview_token: null }, false],
+    ['array subschema', { preview_token: ['string', 'null'] }, false],
+    ['string subschema', { preview_token: 'string' }, false],
+    ['number subschema', { preview_token: 1 }, false],
+    ['anyOf types', { preview_token: { anyOf: [{ type: 'string' }, { type: 'null' }] } }, false],
+    ['oneOf types', { preview_token: { oneOf: [{ type: 'string' }, { type: 'null' }] } }, false],
+    ['missing property', {}, false],
+    ['null properties', null, false],
+    ['undefined properties', undefined, false],
+    ['array properties', [], false],
+    ['string properties', 'preview_token', false],
+    ['number properties', 1, false],
+    ['boolean properties', true, false],
+    ['inherited property', Object.create({ preview_token: { type: ['string', 'null'] } }), false],
+    ['inherited type', { preview_token: Object.create({ type: ['string', 'null'] }) }, false],
+  ] as const)('%s', (_label, properties, expected) => {
+    expect(declaresNullablePreviewToken(properties)).toBe(expected);
   });
 });
 
