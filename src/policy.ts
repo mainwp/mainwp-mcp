@@ -84,19 +84,23 @@ export function isToolAllowed(config: PolicyGateConfig, toolName: string): boole
 
 /**
  * Whether an ability's input-schema properties declare a parameter that can
- * actually accept the literal `true` this server sends for it (confirm,
- * dry_run). Presence alone is not capability: a `false` boolean subschema or
- * `{type: "string"}` provably rejects `true`, so the declared channel is
- * unusable and callers must treat it exactly like an absent key (fail closed
- * for confirm, reject fabricated dry_run). Deliberately permissive otherwise —
- * `{}`, a description-only subschema, or a missing `type` all accept `true`,
- * and rejecting those would break legitimately sloppy abilities.
+ * accept the requested boolean literal (true by default). Presence alone is
+ * not capability: a `false` boolean subschema or `{type: "string"}` rejects
+ * both literals, so the declared channel is unusable and callers must treat it
+ * exactly like an absent key (fail closed for confirm, reject fabricated
+ * dry_run). Deliberately permissive otherwise: `{}`, a description-only
+ * subschema, or a missing `type` accept either literal, and rejecting those
+ * would break abilities with loosely written schemas.
  *
  * Takes the RAW fetched properties, not a presentation-coerced copy: tool
  * conversion rewrites non-object property values to `{}`, which would make an
  * unusable channel look usable and split discovery from execution.
  */
-export function declaresUsableBooleanParam(properties: unknown, name: string): boolean {
+export function declaresUsableBooleanParam(
+  properties: unknown,
+  name: string,
+  value: boolean = true
+): boolean {
   if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
     return false;
   }
@@ -109,9 +113,28 @@ export function declaresUsableBooleanParam(properties: unknown, name: string): b
   const type: unknown = schema.type;
   if (typeof type === 'string' && type !== 'boolean') return false;
   if (Array.isArray(type) && !type.includes('boolean')) return false;
-  if (Array.isArray(schema.enum) && !schema.enum.includes(true)) return false;
-  if (Object.hasOwn(schema, 'const') && schema.const !== true) return false;
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) return false;
+  if (Object.hasOwn(schema, 'const') && schema.const !== value) return false;
   return true;
+}
+
+/**
+ * Whether the confirmation flow should send an explicit `false` for this key.
+ * Only required keys qualify: an ability that requires the key already rejects
+ * a call without it, so sending `false` cannot break a call that worked before.
+ * Optional keys stay absent because GET and DELETE abilities take query-string
+ * input, where `false` travels as the string "false" and WordPress versions
+ * before 7.1 pass it to the ability without converting it back to a boolean.
+ */
+export function requiresUsableFalseParam(schema: unknown, name: string): boolean {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  if (!Object.hasOwn(schema, 'required')) return false;
+  const record = schema as Record<string, unknown>;
+  return (
+    Array.isArray(record.required) &&
+    record.required.includes(name) &&
+    declaresUsableBooleanParam(record.properties, name, false)
+  );
 }
 
 /**

@@ -20,6 +20,31 @@ export const FIXTURE_CONFIRM_ONLY_TOOL = 'purge_site_cache_v1';
 /** Oracle marker the confirm-only ability writes on the site it purges. */
 export const FIXTURE_CACHE_PURGED_NOTE = 'Cache purged by the acceptance fixture.';
 
+export const FIXTURE_REQUIRED_CONFIRM_ABILITY = 'mainwp/replace-site-note-v1';
+export const FIXTURE_REQUIRED_CONFIRM_TOOL = 'replace_site_note_v1';
+
+// The standard acceptance runner needs this strict schema without changing the eval catalog.
+const requiredConfirmAbility = {
+  name: FIXTURE_REQUIRED_CONFIRM_ABILITY,
+  label: 'Replace Site Note',
+  description: 'Replace a fixture site note after a dry-run preview and confirmation.',
+  category: 'mainwp-sites',
+  input_schema: {
+    type: 'object',
+    required: ['site_id_or_domain', 'note', 'confirm', 'dry_run'],
+    properties: {
+      site_id_or_domain: { type: ['integer', 'string'], description: 'Site ID or domain' },
+      note: { type: 'string', description: 'Replacement site note' },
+      confirm: { type: 'boolean', description: 'Approve execution' },
+      dry_run: { type: 'boolean', description: 'Preview the replacement' },
+    },
+  },
+  meta: {
+    annotations: { readonly: false, destructive: true, idempotent: false },
+    show_in_rest: true,
+  },
+};
+
 const FIXTURE_OVERSIZED_BYTES = 256 * 1024;
 const FIXTURE_DELAY_MS = 750;
 
@@ -284,7 +309,7 @@ export function getFixtureFaultMode(
 }
 
 /**
- * Every ability `runAbility` executes. The catalog deliberately advertises far
+ * Abilities available to fixture agent passes. The catalog advertises far
  * more (the full eval catalog, for parity with what a real Dashboard lists),
  * so agent passes hide everything else behind MAINWP_ALLOWED_TOOLS and the
  * advertised-routes-resolve scenario holds this list to what really routes.
@@ -307,6 +332,12 @@ export const FIXTURE_ROUTED_ABILITIES = [
   FIXTURE_CONFIRM_ONLY_ABILITY,
 ] as const;
 
+/**
+ * Answer one ability execution from in-memory fixture state. Writes mutate
+ * the `sites` array in place, so scenarios can verify state before and after
+ * a call. An ability with no handler here answers 404 like an unregistered
+ * route.
+ */
 async function runAbility(
   abilityName: string,
   input: Record<string, unknown>,
@@ -591,6 +622,49 @@ async function runAbility(
     return;
   }
 
+  if (abilityName === FIXTURE_REQUIRED_CONFIRM_ABILITY) {
+    for (const key of ['confirm', 'dry_run']) {
+      if (!Object.hasOwn(input, key)) {
+        json(response, 400, {
+          code: 'ability_invalid_input',
+          message: `Ability "${abilityName}" has invalid input. Reason: ${key} is a required property of input.`,
+        });
+        return;
+      }
+    }
+    if (
+      typeof input.confirm !== 'boolean' ||
+      typeof input.dry_run !== 'boolean' ||
+      input.confirm === input.dry_run
+    ) {
+      json(response, 400, {
+        code: 'ability_invalid_input',
+        message: `Ability "${abilityName}" has invalid input. Reason: confirm and dry_run must be opposite booleans.`,
+      });
+      return;
+    }
+    if (typeof input.note !== 'string') {
+      json(response, 400, {
+        code: 'ability_invalid_input',
+        message: `Ability "${abilityName}" has invalid input. Reason: note is not of type string.`,
+      });
+      return;
+    }
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    if (input.dry_run === true) {
+      json(response, 200, {
+        dry_run: true,
+        updated: false,
+        would_affect: { site_id: site.id, notes: input.note },
+      });
+      return;
+    }
+    site.notes = input.note;
+    json(response, 200, { dry_run: false, updated: true, site: publicSite(site) });
+    return;
+  }
+
   json(response, 404, {
     code: 'rest_no_route',
     message: `No route was found for ability ${abilityName}.`,
@@ -598,11 +672,18 @@ async function runAbility(
   });
 }
 
+/**
+ * Start a loopback HTTP server that stands in for a Dashboard's Abilities API:
+ * Basic auth, the ability catalog, and ability execution against fixture
+ * sites. It lets the acceptance suite run the packed server end to end
+ * without a real Dashboard.
+ */
 export async function startFixtureDashboard(
   options: FixtureDashboardOptions = {}
 ): Promise<FixtureDashboard> {
   const abilities = [
     ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[]),
+    requiredConfirmAbility,
     ...(options.acceptanceOnlyAbilities
       ? (JSON.parse(fs.readFileSync(ACCEPTANCE_ABILITIES_PATH, 'utf8')) as unknown[])
       : []),
