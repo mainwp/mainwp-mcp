@@ -32,6 +32,7 @@ const requiredConfirmAbility = {
   input_schema: {
     type: 'object',
     required: ['site_id_or_domain', 'note', 'confirm', 'dry_run'],
+    additionalProperties: false,
     properties: {
       site_id_or_domain: { type: ['integer', 'string'], description: 'Site ID or domain' },
       note: { type: 'string', description: 'Replacement site note' },
@@ -623,6 +624,17 @@ async function runAbility(
   }
 
   if (abilityName === FIXTURE_REQUIRED_CONFIRM_ABILITY) {
+    // additionalProperties: false, as WordPress enforces it: the server's own
+    // user_confirmed and confirmation_token must never arrive here.
+    const declared = Object.keys(requiredConfirmAbility.input_schema.properties);
+    const undeclared = Object.keys(input).find(key => !declared.includes(key));
+    if (undeclared !== undefined) {
+      json(response, 400, {
+        code: 'ability_invalid_input',
+        message: `Ability "${abilityName}" has invalid input. Reason: ${undeclared} is not a valid property of Object.`,
+      });
+      return;
+    }
     for (const key of ['confirm', 'dry_run']) {
       if (!Object.hasOwn(input, key)) {
         json(response, 400, {

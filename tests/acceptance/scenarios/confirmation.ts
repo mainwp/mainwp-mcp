@@ -119,12 +119,15 @@ export const fixtureConfirmationFlow: ScenarioDefinition = {
 
 export const fixtureRequiredBooleanConfirmation: ScenarioDefinition = {
   id: 'fixture-required-boolean-confirmation',
-  purpose: 'Preview and confirm an ability that requires explicit confirm and dry_run booleans.',
+  purpose:
+    'Preview and confirm an ability that requires explicit confirm and dry_run booleans and rejects undeclared keys.',
   kind: 'write',
   targets: ['fixture'],
   /**
    * The fixture ability rejects a call that omits confirm or dry_run, so the
    * preview and the confirmed call only succeed when the server sends both.
+   * It also rejects keys it does not declare, so both calls only succeed when
+   * the server keeps user_confirmed and confirmation_token to itself.
    */
   async run(ctx) {
     const before = await ctx.verifier.listSites();
@@ -139,6 +142,7 @@ export const fixtureRequiredBooleanConfirmation: ScenarioDefinition = {
     const preview = await ctx.client.callTool(FIXTURE_REQUIRED_CONFIRM_TOOL, {
       ...args,
       confirm: true,
+      user_confirmed: false,
     });
     const previewData = parseToolJson(preview) as {
       status?: string;
