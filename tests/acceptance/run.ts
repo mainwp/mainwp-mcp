@@ -365,29 +365,33 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
   } else {
     resolvedCredentials = resolveAcceptanceCredentials();
   }
-  const redactor = new Redactor({
-    username: resolvedCredentials.username,
-    appPassword: resolvedCredentials.appPassword,
-    dashboardUrl: resolvedCredentials.dashboardUrl,
-    authorization: basicAuthorization(resolvedCredentials),
-  });
-  const runner = new CommandRunner();
-  const artifacts = await createArtifacts(
-    REPO_ROOT,
-    redactor,
-    runner,
-    options.mode,
-    options.target,
-    {
+  let redactor: Redactor;
+  let runner: CommandRunner;
+  let artifacts: Artifacts;
+  let verifier: IndependentVerifier;
+  try {
+    redactor = new Redactor({
+      username: resolvedCredentials.username,
+      appPassword: resolvedCredentials.appPassword,
+      dashboardUrl: resolvedCredentials.dashboardUrl,
+      authorization: basicAuthorization(resolvedCredentials),
+    });
+    runner = new CommandRunner();
+    artifacts = await createArtifacts(REPO_ROOT, redactor, runner, options.mode, options.target, {
       scenarios: options.scenarioIds,
       writes: options.writes,
       keepConsumer: options.keepConsumer,
-    }
-  );
-  const verifier = new IndependentVerifier(
-    resolvedCredentials,
-    options.target === 'live' && process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true'
-  );
+    });
+    verifier = new IndependentVerifier(
+      resolvedCredentials,
+      options.target === 'live' && process.env.MAINWP_MCP_ACCEPTANCE_SKIP_SSL_VERIFY === 'true'
+    );
+  } catch (error) {
+    // The finally below is not in reach yet, and a fixture left listening
+    // keeps the process alive after the error is reported.
+    await fixture?.close();
+    throw error;
+  }
   let packedPackage: PackedPackage | null = null;
   let runResults: RunResults | undefined;
 
@@ -398,6 +402,8 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
     const entry = packedPackage?.installedEntry ?? path.join(REPO_ROOT, 'dist', 'index.js');
     const results: ScenarioResult[] = [];
     for (const scenario of selected) {
+      // Scenarios that change fixture state must not decide what later ones see.
+      if (options.target === 'fixture') fixture?.reset();
       const result = await runScenario(
         scenario,
         options,
