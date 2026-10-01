@@ -96,6 +96,43 @@ import { launchServer, type ServerConnection } from './server.js';
 
 vi.mock('./server.js', () => ({ launchServer: vi.fn() }));
 
+const FULLY_CONNECTED_NETWORK_SUMMARY = `Here's the network summary. It's read-only and covers all 10 sites.
+
+## Network summary (2026-10-01, 11:49 UTC)
+
+**Connection state**
+| State | Count | Sites |
+|---|---|---|
+| Connected | 10 | site1 to site10 |
+| Disconnected | 0 | none |
+| Erroring | 0 found | none |
+
+The Dashboard gives each site a connection status but has no separate error field. So "erroring" means only that no site came back with a non-connected status.
+
+**Pending updates**
+| Type | Count | Where |
+|---|---|---|
+| Core | 1 | site5 (WordPress 6.8.3 → 7.1.2) |
+| Plugins | 3 | site4: Akismet 5.4 → 5.7.2, Contact Form 7 6.1.3 → 6.1.7, Yoast SEO 28.1 → 28.6 |
+| Themes | 2 | site6: Twenty Twenty-Four 1.0 → 1.6, Twenty Twenty-Three 1.0 → 1.7 |
+| Translations | 0 | |
+| **Total** | **6** | |
+
+**7 of 10 sites have no pending updates:** site1, 2, 3, 7, 8, 9 and 10.
+
+**Sync freshness**
+- All 10 sites last synced between 01:28 and 01:56 UTC today, about 10 hours ago.
+- None of them is behind the others. site5 is the newest (01:56); the rest synced within about two minutes of each other between 01:28 and 01:30.
+- Every update count above comes from that sync, so anything released since then won't show up yet.
+
+## Needs attention now
+1. **site5: WordPress core is a major version behind** (6.8.3, while the other nine sites run 7.1.2).
+2. **site10: PHP 7.4.30.** That version is end-of-life, and every other site runs 8.2.29.
+3. **site4: three plugin updates.** Akismet is the furthest behind (5.4 → 5.7.2).
+4. **site6: two default themes still at 1.0.** If neither is the active theme, removing them may be better than updating.
+
+The summary is complete. All three capabilities I needed (listing sites, the update inventory, and per-site detail with sync times) are available on this Dashboard.`;
+
 describe('acceptance harness primitives', () => {
   it('redacts credentials, compact application passwords, authorization, and dashboard origins', () => {
     const redactor = new Redactor({
@@ -3652,6 +3689,732 @@ describe('plugin command scenarios', () => {
     expect(claimsNoPendingUpdates('No pending updates anywhere.')).toBe(true);
     expect(claimsNoPendingUpdates('7 pending updates are waiting on this site.')).toBe(false);
     expect(claimsNoPendingUpdates('This site is not up to date.')).toBe(false);
+  });
+
+  it.each([
+    '| Erroring | 0 found | none |',
+    'So "erroring" means only that no site came back with a non-connected status.',
+    'Erroring: n/a (the Dashboard has no error field)',
+    'If a site goes offline, run a reconnect.',
+    '0 of 10 sites are disconnected.',
+    '0/10 sites are disconnected.',
+    'cedar.example.test is connected but the offline category is empty.',
+    'I checked 10 sites for disconnected status and found none.',
+    'All 4 sites are connected, no outages. 0 disconnected.',
+    'Sites: 4. Connected: 4. Disconnected: 0.',
+    'No sites are disconnected or down.',
+    'All 3 sites are connected. Disconnected sites (0).',
+    "Cedar.example.test isn't offline; it is connected.",
+    'Cedar.example.test is never offline.',
+    'All 3 sites are connected, none erroring.',
+    'All sites are connected. If a site is not responding, run a reconnect.',
+    'Apart from a sync warning on alpine.example.test, all sites are connected.',
+    '| Disconnected | 0 | none |',
+    '| Erroring | 0 | none (the inventory returned no errors) |',
+  ])('accepts an empty disconnected oracle without a down assertion: %s', answer => {
+    expect(
+      answerLabelsDisconnectedSites(answer, [], ['cedar.example.test', 'alpine.example.test'])
+    ).toBe(true);
+  });
+
+  it('accepts the full summary of a fully connected network', () => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(FULLY_CONNECTED_NETWORK_SUMMARY, [], hostnames)).toBe(
+      true
+    );
+  });
+
+  it.each([
+    'You manage 4 sites, 2 sites are down.',
+    'One site is no longer connected.',
+    'cedar.example.test is not responding.',
+    'one.example.test is not connected.',
+    '| Disconnected | 1 | one.example.test |',
+    '| Erroring | 1 | two.example.test |',
+    '| Disconnected | 0 | one.example.test |',
+    '| Erroring | 0 | none (two.example.test is offline) |',
+    'site5 is offline.',
+    'staging.other.test is unreachable.',
+    '| Disconnected | 3 | |',
+    'Some sites are offline.',
+    'Sites are offline.',
+    'At least 2 disconnected sites need attention.',
+    'Disconnected:\n- cedar.example.test',
+    'cedar.example.test is offline and should be reconnected.',
+    'cedar.example.test was offline when last checked.',
+    'No updates but one site is not responding.',
+    'No updates but one site is offline.',
+  ])('rejects a linked down assertion against an empty oracle: %s', answer => {
+    expect(
+      answerLabelsDisconnectedSites(
+        answer,
+        [],
+        ['one.example.test', 'two.example.test', 'cedar.example.test', 'site5.example.test']
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    '| Disconnected | 0 | none |',
+    '| Site | Status |',
+    '### Disconnected sites (0)',
+    '### Disconnected sites\nNone.',
+    'None of the 10 sites are offline.',
+    'None of the sites are disconnected.',
+    'None of 10 sites are offline.',
+    'Neither of the 10 sites are offline.',
+    'Neither of the sites are disconnected.',
+    'Neither of 10 sites are offline.',
+    '**Disconnected sites:** none',
+    '**Disconnected / erroring sites:** none',
+    'Disconnected sites would appear here; there are none.',
+    '| Erroring | 0 | none (PHP 8.1 inventory returned no errors) |',
+  ])('accepts healthy site labels and negated quantities: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(true);
+  });
+
+  it.each([
+    '| site3.example.test | Disconnected |',
+    '| Site | Status |\n| site3.example.test | Offline |',
+    '## Disconnected\n- site3.example.test',
+    '## Disconnected\n\n- site3.example.test',
+    'site3.example.test: disconnected',
+    'site3.example.test (offline)',
+    'site3.example.test — disconnected',
+    '| Disconnected | 0 | one.example.test |',
+    'Sites are offline.',
+    'Disconnected sites: 2',
+    'There are 2 disconnected sites.',
+    'Disconnected sites (2): site3.example.test, site4.example.test',
+    'staging.other.test is unreachable.',
+    'site3.example.test is currently offline.',
+    'site3.example.test is still not responding.',
+    'site3.example.test has been offline since Monday.',
+    '2 sites are currently down.',
+    'site3.example.test is now disconnected.',
+    '| site3.example.test | Currently offline |',
+    'site3.example.test is unfortunately completely offline.',
+    'Some sites are sadly unreachable.',
+    'Currently offline: site3.example.test',
+    'site3 is still offline.',
+    'One site is currently unreachable.',
+  ])('rejects named sites under down labels and positive quantities: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(false);
+  });
+
+  it.each([
+    '**Disconnected / erroring:**\n- site3.example.test',
+    '## Disconnected / erroring\n- site3.example.test',
+    '| Disconnected / erroring | 1 | site3.example.test |',
+    '| Disconnected or erroring | 2 | |',
+    'site3.example.test is listed as disconnected.',
+    'site3.example.test is marked as offline.',
+  ])('rejects combined down labels and listed-as links: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(false);
+  });
+
+  it.each([
+    '| Disconnected / erroring | 0 | none |',
+    '**Disconnected / erroring:** none',
+    'Erroring (i.e. a non-connected status): none',
+    'Offline (e.g. unreachable): none',
+  ])('accepts combined empty labels and abbreviations: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(true);
+  });
+
+  it.each([
+    'If you want me to reconnect them, site3.example.test and site4.example.test are offline.',
+    'Let me know if you want details: site3.example.test is offline.',
+    'Offline: https://site3.example.test',
+    'site3.example.test/ is offline.',
+    'Disconnected: https://site3.example.test/',
+    'https://site3.example.test is offline.',
+    '| Disconnected | 1 | https://site3.example.test |',
+  ])('rejects down claims after separate hypotheticals and with site URLs: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(false);
+  });
+
+  it.each([
+    'If a site goes offline, run a reconnect.',
+    'All sites are connected. If a site is not responding, run a reconnect.',
+    'If site3.example.test goes offline, reconnect it.',
+    'Disconnected: none (see https://site3.example.test/wp-admin for details)',
+    'All 10 sites are connected, including https://site3.example.test/.',
+  ])('accepts scoped hypothetical down claims and healthy site URLs: %s', answer => {
+    const hostnames = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+    expect(answerLabelsDisconnectedSites(answer, [], hostnames)).toBe(true);
+  });
+
+  const connectedRoster = Array.from({ length: 10 }, (_, index) => `site${index + 1}.example.test`);
+
+  it.each([
+    ['Offline: https://site3.example.test', connectedRoster, false],
+    ['Disconnected: https://site3.example.test/', connectedRoster, false],
+    ['site3.example.test/ is offline.', connectedRoster, false],
+    ['https://site3.example.test/wp-admin is offline.', connectedRoster, false],
+    ['Disconnected: [site3.example.test](https://site3.example.test)', connectedRoster, false],
+    ['[site3.example.test](https://site3.example.test) is offline.', connectedRoster, false],
+    ['<https://site3.example.test> is offline.', connectedRoster, false],
+    [
+      'All sites are connected. See https://site3.example.test/offline for documentation.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'Disconnected: none (see https://site3.example.test/wp-admin for details)',
+      connectedRoster,
+      true,
+    ],
+    ['All 10 sites are connected, including https://site3.example.test/.', connectedRoster, true],
+    ['site3.example.t is offline.', ['site3.example.t'], false],
+    ['Erroring (i.e. a non-connected status): none', connectedRoster, true],
+    ['[site3.example.test admin](https://site3.example.test) is offline.', connectedRoster, false],
+    ['No site is offline.', ['site.example.test'], true],
+    ['site.example.test is offline.', ['site.example.test'], false],
+    ['No sites are offline.', ['sites.example.test'], true],
+    ['sites.example.test is offline.', ['sites.example.test'], false],
+    ['No website is offline.', ['website.example.test'], true],
+    ['website.example.test is offline.', ['website.example.test'], false],
+    ['No websites are offline.', ['websites.example.test'], true],
+    ['websites.example.test is offline.', ['websites.example.test'], false],
+    [
+      'cedar.example.test is connected but the offline category is empty.',
+      [...connectedRoster, 'cedar.example.test'],
+      true,
+    ],
+    [
+      "cedar.example.test isn't offline; it is connected.",
+      [...connectedRoster, 'cedar.example.test'],
+      true,
+    ],
+    ['cedar.example.test is never offline.', [...connectedRoster, 'cedar.example.test'], true],
+    ['site3.example.test is online, none offline.', connectedRoster, true],
+    ['site3.example.test is up and no site is down.', connectedRoster, true],
+    ['All 10 sites are currently connected.', connectedRoster, true],
+    ['No site is currently offline.', connectedRoster, true],
+    ['None of the sites are currently down.', connectedRoster, true],
+    ['site3.example.test is not currently offline.', connectedRoster, true],
+    ['site3.example.test is back online and nothing is offline.', connectedRoster, true],
+    [
+      'site5.example.test is the only site with a core update; no site is offline.',
+      connectedRoster,
+      true,
+    ],
+  ])(
+    'canonicalizes site mentions for an empty disconnected oracle: %s',
+    (answer, roster, expected) => {
+      expect(answerLabelsDisconnectedSites(answer, [], roster)).toBe(expected);
+    }
+  );
+
+  it.each<[string, boolean, string[]?]>([
+    ['If a site goes offline, run a reconnect.', true],
+    ['If site3.example.test goes offline, reconnect it.', true],
+    ['If https://site3.example.test and site4.example.test are offline, reconnect them.', true],
+    ['If, after a sync, a site is not responding, run a reconnect.', true],
+    ['Unless, of course, a site is not responding.', true],
+    ['In case, after the next sync, a site is offline, reconnect it.', true],
+    [
+      'If you want me to reconnect them, site3.example.test and site4.example.test are offline.',
+      false,
+    ],
+    ['Let me know if you want details: site3.example.test is offline.', false],
+    ['If you want details, site3.example.test is offline.', false],
+    ['When a site is not responding, run a reconnect.', true],
+    ['All sites are connected. When a site is not responding, run a reconnect.', true],
+    ['Once a site is no longer connected, reconnect it from the dashboard.', true],
+    ['Should a site not respond, reconnect it.', true],
+    ['When a site is offline, run a reconnect.', true],
+    ["You'll be alerted when sites are offline.", true],
+    ['**If**, after a sync, a site is not responding, run a reconnect.', true],
+    [
+      'cedar.example.test was offline when last checked.',
+      false,
+      [...connectedRoster, 'cedar.example.test'],
+    ],
+    [
+      'cedar.example.test is offline and should be reconnected.',
+      false,
+      [...connectedRoster, 'cedar.example.test'],
+    ],
+    ['- Once a site is disconnected, it shows in red.', true],
+    ['- Once 2 sites are offline, the alert fires.', true],
+    ['> Once a site is disconnected, it shows in red.', true],
+    ['All 10 sites are connected.\n- Should you find a site not responding, reconnect it.', true],
+    ['1. Once a site is disconnected, it shows in red.', true],
+    ['- Once again site3.example.test is offline.', false],
+    ['- You should know that 2 sites are offline.', false],
+    ['When I checked, 2 sites were offline.', false],
+    ['When last checked, site3.example.test was not responding.', false],
+    ['site3.example.test is not responding when pinged.', false],
+    ['Whenever a site is offline, run a reconnect.', true],
+    ['You should know that 2 sites are offline.', false],
+    ['I should mention site3.example.test is offline.', false],
+    ['Once again site3.example.test is offline.', false],
+    ['Once more, 2 sites are offline.', false],
+    ['Should a site not respond, reconnect it.', true],
+    ['Once a site is no longer connected, reconnect it from the dashboard.', true],
+    ['All sites are connected. Should a site stop responding, run a reconnect.', true],
+    ['When a site is not responding, run a reconnect.', true],
+    [
+      'cedar.example.test is offline and should be reconnected.',
+      false,
+      [...connectedRoster, 'cedar.example.test'],
+    ],
+  ])('scopes hypothetical down claims to the subject clause: %s', (answer, expected, roster) => {
+    if (roster) {
+      expect(answerLabelsDisconnectedSites(answer, [], roster)).toBe(expected);
+      return;
+    }
+    expect(answerLabelsDisconnectedSites(answer, [], connectedRoster)).toBe(expected);
+  });
+
+  it.each([
+    ['Disconnected:\n- cedar.example.test', [...connectedRoster, 'cedar.example.test'], false],
+    ['## Disconnected\n\n- site3.example.test', connectedRoster, false],
+    ['**Disconnected / erroring:**\n- site3.example.test', connectedRoster, false],
+    [
+      'Disconnected:\n- none\n\n**Sync freshness**\n- site1.example.test synced at 01:28 UTC',
+      connectedRoster,
+      true,
+    ],
+    [
+      '### Disconnected sites\nNone.\n\n**Fully current**\n- site1.example.test',
+      connectedRoster,
+      true,
+    ],
+    [
+      '### Disconnected sites\nNone.\n\n| Site | Last sync |\n|---|---|\n| site1.example.test | 01:28 |',
+      connectedRoster,
+      true,
+    ],
+    [
+      '**Disconnected:**\n- none\n\n**Needs attention now**\n1. **site5**: WordPress core 6.8.3 → 7.1.2',
+      connectedRoster,
+      true,
+    ],
+    [
+      '## Network summary\n\n### Disconnected sites\nNone.\n\n### Erroring sites\nNone.\n\n' +
+        '**Needs attention now**\n1. **site5**: WordPress core is a major version behind.',
+      connectedRoster,
+      true,
+    ],
+    ['| site3.example.test | 🔴 Disconnected |', connectedRoster, false],
+    ['| ❌ Disconnected | 2 | |', connectedRoster, false],
+    ['## 🔴 Disconnected\n- site3.example.test', connectedRoster, false],
+    ['**🔴 Disconnected:**\n- site3.example.test', connectedRoster, false],
+    ['site3.example.test is 🔴 offline.', connectedRoster, false],
+    [
+      '| ✅ Connected | 10 | site1 to site10 |\n| 🔴 Disconnected | 0 | none |',
+      connectedRoster,
+      true,
+    ],
+    ['Sites offline:\n- None', connectedRoster, true],
+    ['Sites offline:\nNone.', connectedRoster, true],
+    ['Sites disconnected:\n- none', connectedRoster, true],
+    ['Sites offline:\n0', connectedRoster, true],
+    ['### Sites offline\nNone.', connectedRoster, true],
+    ['## Sites down\n- none', connectedRoster, true],
+    ['Sites offline: 2', connectedRoster, false],
+    ['Sites offline:\n- site3.example.test', connectedRoster, false],
+    ['### Sites offline (2)', connectedRoster, false],
+    ['Sites are offline.', connectedRoster, false],
+    ['Disconnected:\n- site3.example.test.', connectedRoster, false],
+    ['Disconnected:\n1. site3.example.test.', connectedRoster, false],
+    ['Disconnected:\n\nsite3.example.test.', connectedRoster, false],
+    [
+      'Disconnected:\n- site3.example.test is connected; site4.example.test',
+      connectedRoster,
+      false,
+    ],
+    ['Disconnected:\n- site3.example.test: child plugin not responding', connectedRoster, false],
+    ['Disconnected:\n- site3.example.test, unreachable', connectedRoster, false],
+    [
+      '## Disconnected\n- site3.example.test - last sync failed, not reachable',
+      connectedRoster,
+      false,
+    ],
+    ['Disconnected:\n- site3.example.test is connected', connectedRoster, true],
+    ['Disconnected:\n**site3**\n- site4.example.test', connectedRoster, true],
+    ['Sites offline.', connectedRoster, false],
+    ['Sites down.', connectedRoster, false],
+    ['Websites offline!', connectedRoster, false],
+    ['**Sites offline**', connectedRoster, false],
+    ['Sites offline:\n- None', connectedRoster, true],
+    ['### Sites offline\nNone.', connectedRoster, true],
+    ['Sites offline: 2', connectedRoster, false],
+    ['Disconnected sites: none found.', connectedRoster, true],
+    ['Sites offline\n- None', connectedRoster, true],
+    ['Sites offline\nNone', connectedRoster, true],
+    ['Sites offline\n0', connectedRoster, true],
+    ['Sites offline\n- site3.example.test', connectedRoster, false],
+    ['Sites offline', connectedRoster, false],
+    ['Sites offline.', connectedRoster, false],
+    ['**Sites offline**', connectedRoster, false],
+    ['| Sites offline | 0 |', connectedRoster, true],
+    ['| Sites offline | none |', connectedRoster, true],
+    ['| Sites down | 0 | — |', connectedRoster, true],
+    ['| Sites offline | 2 |', connectedRoster, false],
+    ['| Sites offline | site3.example.test |', connectedRoster, false],
+    ['| Sites are offline | 0 |', connectedRoster, false],
+
+    // Only adverb qualifiers preserve a connection claim through intervening words.
+    [
+      'site3.example.test is using Offline Mode version 2.1; all sites are connected.',
+      connectedRoster,
+      true,
+    ],
+    ['site3.example.test is showing the offline category as empty.', connectedRoster, true],
+    [
+      'site3.example.test is in the offline category documentation example; its actual status is connected.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'site3.example.test is awaiting an offline backup; it remains connected.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'site3.example.test is ready for offline maintenance; it remains connected.',
+      connectedRoster,
+      true,
+    ],
+    ['site3.example.test: the offline category is empty.', connectedRoster, true],
+    [
+      'site3.example.test: an offline backup is recommended before upgrading.',
+      connectedRoster,
+      true,
+    ],
+    ['2 sites are showing the offline category as empty.', connectedRoster, true],
+    ['2 sites are due for offline backups; both remain connected.', connectedRoster, true],
+    [
+      'All 10 sites are connected. site3.example.test is safe from offline failures.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is flagged for offline testing only.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is on the offline backup schedule.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is running Offline Mode 2.1.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is using an offline cache.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test has been updated offline using a backup copy.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is keeping offline backups.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. 2 sites have been updated offline using backup copies.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is scheduled for offline maintenance tomorrow.',
+      connectedRoster,
+      true,
+    ],
+    ['All 10 sites are connected. site3.example.test is far from offline.', connectedRoster, true],
+    [
+      'All 10 sites are connected. site3.example.test is anything except offline.',
+      connectedRoster,
+      true,
+    ],
+    ['All 10 sites are connected. 2 sites are nowhere near offline.', connectedRoster, true],
+    [
+      'All 10 sites are connected. site3.example.test is unlikely to go offline.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is unlikely to be offline.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is nowhere near offline.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test is anything other than offline.',
+      connectedRoster,
+      true,
+    ],
+    ['All 10 sites are connected. 2 sites are far from offline.', connectedRoster, true],
+    ['site3.example.test has recently been offline.', connectedRoster, false],
+    ['2 sites have recently been offline.', connectedRoster, false],
+    ['site3.example.test had already been offline.', connectedRoster, false],
+    ['site3.example.test has unfortunately been disconnected.', connectedRoster, false],
+    ['Several sites currently offline.', connectedRoster, false],
+    ['Three sites currently unreachable.', connectedRoster, false],
+    ['Cedar currently offline.', [...connectedRoster, 'cedar.example.test'], false],
+    ['site3.example.test is one major version down.', connectedRoster, true],
+    ['Erroring would mean a site is in an error state; none are.', connectedRoster, true],
+    ['All 10 sites were checked for offline status.', connectedRoster, true],
+    ['Every site is checked for offline status on each sync.', connectedRoster, true],
+    [
+      'All 10 sites were checked for offline or erroring states, and every one is connected.',
+      connectedRoster,
+      true,
+    ],
+    ['All 10 sites are free of any offline status.', connectedRoster, true],
+    ['10 sites are without any offline flag.', connectedRoster, true],
+    ['site3.example.test is far from offline.', connectedRoster, true],
+    ['site3.example.test is fine rather than offline.', connectedRoster, true],
+    ['site3.example.test is back after being offline yesterday.', connectedRoster, true],
+    ['site3.example.test is reconnected after being offline last week.', connectedRoster, true],
+    [
+      'site3.example.test is likely to go offline briefly during the core update.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'site3.example.test is expected to go offline briefly during the core update.',
+      connectedRoster,
+      true,
+    ],
+    ['Two sites are scheduled to go offline for maintenance tonight.', connectedRoster, true],
+    ['Two sites still show as disconnected.', connectedRoster, false],
+    ['site3.example.test still shows as disconnected.', connectedRoster, false],
+    ['site3.example.test currently shows as offline.', connectedRoster, false],
+    ['site3.example.test also appears offline.', connectedRoster, false],
+    ['site3.example.test is being taken down.', connectedRoster, true],
+    ['Two sites have already been offline.', connectedRoster, false],
+    ['site3.example.test is rarely offline.', connectedRoster, true],
+    ['site3.example.test is hardly ever offline.', connectedRoster, true],
+
+    // A score or count can fall without changing the site connection.
+    [
+      'site3.example.test is slightly down from its previous health score of 93 to 87.',
+      connectedRoster,
+      true,
+    ],
+    ['2 sites are slightly down from their previous health scores.', connectedRoster, true],
+    [
+      'All 10 sites are connected. The health score on site3.example.test is slightly down from 93 to 87.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. Pending updates on site3.example.test are now down from 6 to 3.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. Pending updates across 2 sites are now down from 6 to 3.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test: health score slightly down from 93 to 87.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. site3.example.test: plugin updates down from 6 to 3.',
+      connectedRoster,
+      true,
+    ],
+    ['Updates across 3 sites are broken down below:', connectedRoster, true],
+    ['The 10 sites are broken down by status below.', connectedRoster, true],
+    ['Pending updates on 3 sites are broken down by type:', connectedRoster, true],
+    ['Updates for site3.example.test are broken down by type below.', connectedRoster, true],
+    [
+      'The 6 pending updates on site3.example.test have been broken down by type below.',
+      connectedRoster,
+      true,
+    ],
+    ['site3.example.test has been trending down on its health score.', connectedRoster, true],
+    ['2 sites are trending down in health score.', connectedRoster, true],
+    ['site3.example.test is being slowed down by a heavy plugin.', connectedRoster, true],
+    ['site3.example.test is worth drilling down into.', connectedRoster, true],
+    ['site3.example.test is slightly down in health score.', connectedRoster, true],
+    ['Pending updates on site3.example.test are now down from 6 to 3.', connectedRoster, true],
+    ['2 sites are currently down.', connectedRoster, false],
+    ['site3.example.test has been down since Monday.', connectedRoster, false],
+
+    // A conditional definition of a status does not report a current outage.
+    [
+      'A site is only listed as disconnected when the Dashboard loses contact with it.',
+      connectedRoster,
+      true,
+    ],
+    ["A site is only marked disconnected if the Dashboard can't reach it.", connectedRoster, true],
+    ['A site is considered offline when it misses a sync.', connectedRoster, true],
+    ['A site is treated as disconnected when its last sync fails.', connectedRoster, true],
+    [
+      'A site is usually reported as disconnected when the child plugin is deactivated.',
+      connectedRoster,
+      true,
+    ],
+    [
+      'A site is typically marked offline after repeated sync failures. None are.',
+      connectedRoster,
+      true,
+    ],
+    ['A site is offline.', connectedRoster, false],
+    ['One site is currently unreachable.', connectedRoster, false],
+
+    // A label cannot swallow the subject of its own outage claim.
+    ['Two sites offline.', connectedRoster, false],
+    ['Some sites offline.', connectedRoster, false],
+    ['Two offline sites.', connectedRoster, false],
+    ['Three sites unreachable.', connectedRoster, false],
+    ['Both sites down.', connectedRoster, false],
+    ['All sites offline.', connectedRoster, false],
+    ['Eight connected; two sites offline.', connectedRoster, false],
+    ['Cedar offline.', [...connectedRoster, 'cedar.example.test'], false],
+    ['2 sites offline.', connectedRoster, false],
+    ['Sites offline:\n- None', connectedRoster, true],
+    ['### Sites offline\nNone.', connectedRoster, true],
+    ['| Sites offline | 0 |', connectedRoster, true],
+    ['Disconnected sites (0)', connectedRoster, true],
+    ['Disconnected sites: none found.', connectedRoster, true],
+
+    // Negating a connected state labels the same outage as a down word.
+    ['site3.example.test: still not responding', connectedRoster, false],
+    ['site3.example.test — currently no longer connected', connectedRoster, false],
+    ['Currently not responding: site3.example.test', connectedRoster, false],
+    ['Currently no longer connected: site3.example.test', connectedRoster, false],
+    ['Currently not responding: 2 sites', connectedRoster, false],
+    ['Currently no longer connected: 2 sites', connectedRoster, false],
+    ['site3.example.test: currently completely not responding', connectedRoster, false],
+    ['site3.example.test (still not responding)', connectedRoster, false],
+    ['Not responding: site3.example.test', connectedRoster, false],
+    ['site3.example.test — not responding', connectedRoster, false],
+    ['Not responding: none', connectedRoster, true],
+    ['Sites not responding: 0', connectedRoster, true],
+
+    // Inflection and a possessive status noun keep the verdict on the site.
+    ['site3.example.test is showing up as offline.', connectedRoster, false],
+    ['site3.example.test is still showing up as disconnected.', connectedRoster, false],
+    ['Two sites remain offline.', connectedRoster, false],
+    ['2 sites remain disconnected.', connectedRoster, false],
+    ['site3.example.test shows up as disconnected.', connectedRoster, false],
+    ["site3.example.test's status is disconnected.", connectedRoster, false],
+    ["site3.example.test's connection is down.", connectedRoster, false],
+    ['All sites remain connected.', connectedRoster, true],
+    ['site3.example.test now shows as connected.', connectedRoster, true],
+    ["site3.example.test's status is connected.", connectedRoster, true],
+
+    // Label punctuation binds a positive site count while zero remains empty.
+    ['2 sites: currently down', connectedRoster, false],
+    ['2 sites — currently offline', connectedRoster, false],
+    ['0 sites: currently down', connectedRoster, true],
+    ['10 sites: connected, none offline', connectedRoster, true],
+
+    // List markers and separators preserve the label's site or count binding.
+    ['- Disconnected: site3.example.test', connectedRoster, false],
+    ['- **Disconnected:** site3.example.test', connectedRoster, false],
+    ['- Offline: cedar.example.test', [...connectedRoster, 'cedar.example.test'], false],
+    ['- Disconnected (1): site3.example.test', connectedRoster, false],
+    ['- Disconnected: 2', connectedRoster, false],
+    ['- Erroring: site3.example.test', connectedRoster, false],
+    ['- Connected: 9\n- Disconnected: site3.example.test', connectedRoster, false],
+    ['- Offline sites: 2', connectedRoster, false],
+    ['- Offline sites: site3.example.test, site4.example.test', connectedRoster, false],
+    ['- Down: site3.example.test', connectedRoster, false],
+    ['- Unreachable: 1', connectedRoster, false],
+    ['• Disconnected: site3.example.test', connectedRoster, false],
+    ['+ Disconnected: site3.example.test', connectedRoster, false],
+    ['Status - Disconnected: site3.example.test', connectedRoster, false],
+    ['Connected: 9 - Disconnected: 1', connectedRoster, false],
+    ['Connected: 9 · Disconnected: 1 · Erroring: 0', connectedRoster, false],
+    ['- Disconnected: site3.example.test (since Monday)', connectedRoster, false],
+    ['- Disconnected - site3.example.test', connectedRoster, false],
+    ['- Disconnected — site3.example.test', connectedRoster, false],
+    ['- Connected: 10\n- Disconnected: 0\n- Erroring: 0', connectedRoster, true],
+    ['- Disconnected: none', connectedRoster, true],
+    ['- Disconnected: 0', connectedRoster, true],
+    ['Connected: 10 - Disconnected: 0 - Erroring: 0', connectedRoster, true],
+    ['- Erroring: 0. The update inventory returned no per-site errors.', connectedRoster, true],
+    ['- Disconnected: none\n- Erroring: none', connectedRoster, true],
+
+    // A status cell can explain its verdict without making a software name a status.
+    [
+      'All 10 sites are connected. | site3.example.test | Plugin updates down |',
+      connectedRoster,
+      true,
+    ],
+    [
+      'All 10 sites are connected. | Update count down | 2 | site3.example.test |',
+      connectedRoster,
+      true,
+    ],
+    ['| site3.example.test | Currently marked as offline |', connectedRoster, false],
+    ['| site3.example.test | Still listed as offline |', connectedRoster, false],
+    ['| site3.example.test | Currently marked offline |', connectedRoster, false],
+    ['| site3.example.test | Apparently marked as unreachable |', connectedRoster, false],
+    ['| Currently marked as offline | 2 | |', connectedRoster, false],
+    ['| site3.example.test | Currently offline since Monday |', connectedRoster, false],
+    ['| site3.example.test | Currently offline (last checked today) |', connectedRoster, false],
+    ['| Currently offline since Monday | 2 | |', connectedRoster, false],
+    ['| site3.example.test | Currently offline; reconnect required |', connectedRoster, false],
+    ['| site3.example.test | Currently offline, last sync failed |', connectedRoster, false],
+    ['| site3.example.test | Currently offline. Last sync failed. |', connectedRoster, false],
+    ['| site3.example.test | Showing up as offline |', connectedRoster, false],
+    ['| site3.example.test | Currently not responding |', connectedRoster, false],
+    ['| site3.example.test | Offline (since Monday) |', connectedRoster, false],
+    ['| site3.example.test | Connected |', connectedRoster, true],
+    ['| site3.example.test | Offline Mode plugin installed |', connectedRoster, true],
+    ['| Site | Status |', connectedRoster, true],
+  ])('bounds down heading reach and strips label presentation: %s', (answer, roster, expected) => {
+    expect(answerLabelsDisconnectedSites(answer, [], roster)).toBe(expected);
+  });
+
+  it.each([
+    ['None of your connected sites are offline.', true],
+    ['None of the managed sites is down.', true],
+    ['No managed sites are offline.', true],
+    ['No child sites are disconnected.', true],
+    ["There aren't any sites offline.", true],
+    ['Not one of the sites is offline.', true],
+    ['All 10 sites are connected; none of the child sites are offline.', true],
+    ['No WordPress sites are offline.', true],
+    ['Zero managed sites are disconnected.', true],
+    ['0 out of 10 sites are offline.', true],
+    ['No updates but one site is offline.', false],
+    ['No updates but sites are offline.', false],
+    ['No updates and sites are offline.', false],
+    ['2 out of 10 sites are offline.', false],
+    ['At least 2 disconnected sites need attention.', false],
+    ['Not a single one of the sites is offline.', true],
+    ['No updates but sites are offline.', false],
+    ['No updates and sites are offline.', false],
+  ])('cancels negated site quantities without crossing conjunctions: %s', (answer, expected) => {
+    expect(answerLabelsDisconnectedSites(answer, [], connectedRoster)).toBe(expected);
   });
 
   it('grades disconnected sites on being labeled, not merely named', () => {

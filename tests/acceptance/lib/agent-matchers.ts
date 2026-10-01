@@ -1137,9 +1137,6 @@ const LIST_ITEM = /^(?:[-*+•|]|\d+[.)])\s*/;
 /** The colon that makes a line a heading, behind any markdown emphasis. */
 const HEADING_END = /:[*_]*$/;
 
-/** Advice about a hypothetical outage is not a claim that one exists. */
-const CONDITIONAL_CLAUSE = /\b(?:if|when|unless|once|should|in case)\b/;
-
 /**
  * True when the fragment names this host and not a longer one containing it:
  * "example.test" sits inside "staging.example.test", and crediting the
@@ -1162,6 +1159,524 @@ function fragmentNamesHost(fragment: string, hostname: string): boolean {
     }
   }
   return false;
+}
+
+/** Site nouns let a connection predicate name a group without listing hosts. */
+const DOWN_CLAIM_SITE_NOUN = '(?:sites?|websites?)';
+/** Site nouns retain their quantity meaning even when a roster shares the label. */
+const DOWN_CLAIM_SITE_NOUN_LABEL = new RegExp(`^${DOWN_CLAIM_SITE_NOUN}$`);
+/**
+ * A version number has no final DNS label beginning with a letter, and an
+ * abbreviation ("e.g", "i.e") has a one-letter one.
+ */
+const DOWN_CLAIM_HOSTNAME = /\b[\w-]+(?:\.[\w-]+)*\.[a-z][\w-]+\b/;
+/** A ratio's denominator stays with its numerator instead of becoming a subject. */
+const DOWN_CLAIM_QUANTITY = new RegExp(
+  `${NUMBER_TOKEN.source}(?:\\s*(?:out of|of|/)\\s*${NUMBER_TOKEN.source})?(?:\\s+${DOWN_CLAIM_SITE_NOUN}\\b)?` +
+    `|\\b(?:an?|some|several|many|most|all|every|both|multiple)\\s+${DOWN_CLAIM_SITE_NOUN}\\b` +
+    '|\\b(?:sites|websites)\\b'
+);
+/** Behind a down term, a bare plural is its modified noun, not another subject. */
+const DOWN_CLAIM_BARE_PLURAL = /^(?:sites|websites)$/;
+/** A punctuation label needs a site quantity, rather than an unrelated number. */
+const DOWN_CLAIM_SITE_QUANTITY = new RegExp(`\\b${DOWN_CLAIM_SITE_NOUN}$`);
+/**
+ * Qualifiers are adverbs ending in ly, or still, now, again, also, just,
+ * already or yet. Negating adverbs, negators, connected states and conjunctions
+ * cannot qualify a down verdict. Only spaces separate gap words, so commas
+ * and clause boundaries end the link. Negated connected states remain terms.
+ */
+const DOWN_CLAIM_GAP_WORD =
+  "\\b(?!(?:hardly|barely|rarely|scarcely|not|no|never|[a-z]+n't|connected|online|up|reachable|responding|" +
+  'healthy|operational|but|and|or|while|although|though|whereas)\\b)' +
+  '(?:[a-z]+ly|still|now|again|also|just|already|yet)\\b';
+/** Qualifiers share one budget even when they sit on different sides of a verb. */
+const DOWN_CLAIM_GAP_LIMIT = 3;
+const DOWN_CLAIM_GAP = `(?:${DOWN_CLAIM_GAP_WORD}(?:[ \\t]+|$)){0,${DOWN_CLAIM_GAP_LIMIT}}`;
+const DOWN_CLAIM_GAP_WORDS = new RegExp(DOWN_CLAIM_GAP_WORD, 'g');
+/**
+ * These inflected verbs bind a connection verdict, including an auxiliary
+ * before a status verb and qualifiers inside a perfect tense.
+ */
+const DOWN_CLAIM_LINK =
+  '(?:is|are|was|were|remains?|stays?|appears?|seems?|shows?(?: up)? as|' +
+  'came back|went|has gone|is being|are being|' +
+  `(?:has|have|had)[ \\t]+${DOWN_CLAIM_GAP}been|` +
+  `(?:(?:is|are|was|were)[ \\t]+${DOWN_CLAIM_GAP})?` +
+  '(?:listed as|marked(?: as)?|showing(?: up)? as))';
+/** A bare verdict or a verb can bind a subject through adverb qualifiers only. */
+const DOWN_CLAIM_PREDICATE = new RegExp(
+  `^(?:${DOWN_CLAIM_SITE_NOUN}(?:[ \\t]+|$))?${DOWN_CLAIM_GAP}` +
+    `(?:${DOWN_CLAIM_LINK}(?:[ \\t]+${DOWN_CLAIM_GAP})?)?$`
+);
+/** A possessive status noun still makes the named site the connection subject. */
+const DOWN_CLAIM_POSSESSIVE_STATE = /^'s\s+(?:status|connection|state)\s+/;
+/** A status cell has no subject noun before its optional verb. */
+const DOWN_CLAIM_STATUS_PREFIX = new RegExp(
+  `^${DOWN_CLAIM_GAP}(?:${DOWN_CLAIM_LINK}(?:[ \\t]+${DOWN_CLAIM_GAP})?)?$`
+);
+/** A leading label has only its site noun and adverb qualifiers before the state. */
+const DOWN_CLAIM_LABEL_PREFIX = new RegExp(
+  `^(?:${DOWN_CLAIM_SITE_NOUN}[ \\t]+)?${DOWN_CLAIM_GAP}$`
+);
+/** A dash or middle dot separates status labels without adding gap words. */
+const DOWN_CLAIM_LABEL_SEPARATOR = /[ \t]+[-—–·](?:[ \t]+|$)/;
+/** Explanatory tails preserve a status; a software name after it does not. */
+const DOWN_CLAIM_STATUS_TAIL = /^(?:since\b|for\b|as of\b|[(—–,-])/;
+/** Down can describe the direction of a count or score without a connection state. */
+const DOWN_CLAIM_DIRECTION = /^\s+(?:from|to|by|in|on|below|into)\b/;
+/** Conditions following an indefinite site describe a general status rule. */
+const DOWN_CLAIM_INDEFINITE = new RegExp(`^an?\\s+${DOWN_CLAIM_SITE_NOUN}$`);
+const DOWN_CLAIM_GENERAL_CONDITION = /\b(?:when|whenever|if|unless|after|once)\b/;
+/** Label punctuation can bind a subject without supplying a verb. */
+const DOWN_CLAIM_LABEL_LINK = new RegExp(`^[\\s:=(—–-]*(?:${DOWN_CLAIM_SITE_NOUN})?[\\s:=(—–-]*$`);
+/** A trailing label binds a named site or site quantity through actual punctuation. */
+const DOWN_CLAIM_SITE_LABEL_LINK = new RegExp(
+  `^(?=[\\s:=(—–-]*[:=(—–-])[\\s:=(—–-]+${DOWN_CLAIM_GAP}$`
+);
+/** The noun following an attributive verdict must still denote sites. */
+const DOWN_CLAIM_ATTRIBUTED_SITES = new RegExp(`^\\s+${DOWN_CLAIM_SITE_NOUN}\\b`);
+/** Negated connected states carry the same label verdict as down words. */
+const DOWN_CLAIM_LABEL_STATE = `(?:${DOWN_WORD.source}|${NEGATED_CONNECTED_STATE.source})`;
+/**
+ * A bucket label carries its verdict into a row or list without a predicate.
+ * The summary command's own buckets are often joined ("Disconnected / erroring").
+ * Adverb qualifiers may precede its state. A subject before the state remains
+ * a sentence claim, even when the label sits in a table cell.
+ */
+const DOWN_CLAIM_LABEL = new RegExp(
+  `^(?:${DOWN_CLAIM_SITE_NOUN}\\s+)?${DOWN_CLAIM_GAP}${DOWN_CLAIM_LABEL_STATE}` +
+    `(?:\\s*(?:[/,&]|,?\\s*(?:or|and)\\b)\\s*${DOWN_CLAIM_LABEL_STATE})*` +
+    `(?:\\s+${DOWN_CLAIM_SITE_NOUN})?:?$`
+);
+/** A noun-led state remains a claim unless heading punctuation marks a bucket. */
+const DOWN_CLAIM_SITE_NOUN_LEADING_LABEL = new RegExp(`^${DOWN_CLAIM_SITE_NOUN}\\s`);
+/** Advice about a possible outage does not assert a current connection verdict. */
+const DOWN_CLAIM_HYPOTHETICAL =
+  /\b(?:if|unless|in case|when(?:ever)?)\b|^\s*(?:once(?!\s+(?:again|more)\b)|should)\b/;
+/** The paired commas of an aside immediately after a marker keep its clause open. */
+const DOWN_CLAIM_HYPOTHETICAL_ASIDE = new RegExp(
+  `(${DOWN_CLAIM_HYPOTHETICAL.source})\\s*,[^,:]*,`,
+  'g'
+);
+/** A quote or list marker leaves the advice at the start of its clause. */
+const DOWN_CLAIM_CLAUSE_PRESENTATION = /^(?:>\s*)*(?:(?:[-*+•]|\d+[.)])\s+)?/;
+/** Negation removes a quantity, while comparisons leave it positive. */
+const DOWN_CLAIM_QUANTITY_NEGATOR =
+  /\b(?:no|not|zero|without|(?:none|neither)\s+of(?:\s+(?:the|these|those|my|your|our|their|his|her|its))?)\s*$/;
+/** Modifiers can separate a negator from a bare plural, but conjunctions change its subject. */
+const DOWN_CLAIM_BARE_PLURAL_NEGATOR =
+  /\b(?:no|not|zero|without|isn't|aren't|wasn't|weren't|none|neither)\b(?:\s+(?!(?:but|and|or|yet|though|although|except|while)\b)[a-z'-]+){0,5}\s*$/;
+/** Markdown headings introduce the same site lists as colon labels. */
+const DOWN_CLAIM_MARKDOWN_HEADING = /^#+\s+(.+)$/;
+/** A heading marker cannot turn an empty bucket label into a bare-plural claim. */
+const DOWN_CLAIM_LABEL_HEADING_MARKS = /^#+\s*/;
+/** A bold section title ends the preceding bucket even without a colon. */
+const DOWN_CLAIM_BOLD_HEADING = /^\*\*[^*]+\*\*:?$/;
+/** An empty item closes the bucket before later sections can inherit its verdict. */
+const DOWN_CLAIM_EMPTY_ITEM = /^(?:none|nothing|n\/a|0|[-—–])\.?$/;
+/** Emphasis and status symbols add presentation without adding prose to a link. */
+const DOWN_CLAIM_EMPHASIS = /[*_`]|\uFE0F|\p{Extended_Pictographic}/gu;
+/** Link text can name the site independently of the destination. */
+const DOWN_CLAIM_MARKDOWN_LINK = /\[([^\]\n]+)\]\(([^()\s]+)\)/g;
+/** Autolink brackets present the URL without changing its site. */
+const DOWN_CLAIM_AUTOLINK = /<([a-z][a-z\d+.-]*:\/\/[^<>\s]+)>/g;
+/** Paths and ports belong to a URL mention and cannot supply connection verdicts. */
+const DOWN_CLAIM_URL = /\b[a-z][a-z\d+.-]*:\/\/([\w.-]+)(?::\d+)?(?:\/[^\s|<>()[\]]*)?/g;
+/** Sentence punctuation keeps its clause boundary when a URL is replaced. */
+const DOWN_CLAIM_URL_PUNCTUATION = /[.,;!?:]+$/;
+/** Cell boundaries separate a count from a site's own connection claim. */
+const DOWN_CLAIM_TABLE_CELL = /\|([^|]*)/g;
+/** Roster names remain literal identifiers when included in a subject pattern. */
+const DOWN_CLAIM_ROSTER_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+/** An attributive has no prose between its quantity and the down term. */
+const DOWN_CLAIM_ATTRIBUTIVE_LINK = /^\s*$/;
+/** Negated connected verdicts are scanned as complete down terms. */
+const DOWN_CLAIM_NEGATED_CONNECTED = new RegExp(NEGATED_CONNECTED_STATE.source, 'g');
+
+/**
+ * Replaces URL mentions with their bare hosts before clauses or links are read,
+ * including ports and paths but leaving sentence punctuation behind. Markdown
+ * links become the first site identifier their text names, otherwise their URL
+ * supplies the host. Autolinks and a bare host's trailing slash carry the same
+ * site subject.
+ */
+function canonicalizeDownClaimSites(answer: string, sitePattern: RegExp): string {
+  const trailingSlash = new RegExp(`(${sitePattern.source})\\/(?=\\s|[.,;!?)\\]]|$)`, 'g');
+  return answer
+    .replace(DOWN_CLAIM_MARKDOWN_LINK, (_match, text: string, url: string) => {
+      const site = [...text.matchAll(sitePattern)].find(match => fragmentNamesHost(text, match[0]));
+      return site?.[0] ?? url;
+    })
+    .replace(DOWN_CLAIM_AUTOLINK, '$1')
+    .replace(DOWN_CLAIM_URL, (url: string, host: string) => {
+      const punctuation = url.match(DOWN_CLAIM_URL_PUNCTUATION)?.[0] ?? '';
+      return host.replace(DOWN_CLAIM_URL_PUNCTUATION, '') + punctuation;
+    })
+    .replace(trailingSlash, '$1');
+}
+
+/**
+ * If, unless, in case, when or whenever exempts a subject only before it in
+ * the same clause. Once and should must open that clause; once again and once
+ * more never exempt a claim. Presentation, including leading quote and list
+ * markers, is stripped before the marker is read. Commas and colons end its
+ * scope, except the paired commas of an aside directly after it, so advice
+ * keeps its condition. A subject introduced by a or an also describes a
+ * general rule when its down term is followed by when, whenever, if, unless,
+ * after or once in the same clause.
+ */
+function isDownClaimHypothetical(
+  scope: string,
+  index: number,
+  subject = '',
+  wordEnd?: number
+): boolean {
+  const before = stripDownClaimPresentation(scope.slice(0, index))
+    .replace(DOWN_CLAIM_CLAUSE_PRESENTATION, '')
+    .replace(DOWN_CLAIM_HYPOTHETICAL_ASIDE, '$1 ');
+  return (
+    DOWN_CLAIM_HYPOTHETICAL.test(
+      before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(':')) + 1)
+    ) ||
+    (wordEnd !== undefined &&
+      DOWN_CLAIM_INDEFINITE.test(subject) &&
+      DOWN_CLAIM_GENERAL_CONDITION.test(scope.slice(wordEnd).split(/[:,]/)[0]))
+  );
+}
+
+/**
+ * Removes emphasis, pictographic emoji and their variation selector, then
+ * trims the label. These marks present a verdict without adding words between
+ * the subject and its state.
+ */
+function stripDownClaimPresentation(text: string): string {
+  return text.replace(DOWN_CLAIM_EMPHASIS, '').trim();
+}
+
+/**
+ * All positions in a claim share at most three adverb qualifiers. Counting
+ * them before the down term keeps its negated connected wording intact.
+ */
+function downClaimGapWithinBudget(prefix: string): boolean {
+  return [...prefix.matchAll(DOWN_CLAIM_GAP_WORDS)].length <= DOWN_CLAIM_GAP_LIMIT;
+}
+
+/**
+ * A leading label is read after its list or heading marker and after the last
+ * dash or middle-dot separator. Those marks present a separate label, so the
+ * adverb-only prefix rule applies to that label rather than the preceding text.
+ */
+function downClaimLabelPrefix(prefix: string): boolean {
+  const label = stripDownClaimPresentation(prefix)
+    .replace(DOWN_CLAIM_LABEL_HEADING_MARKS, '')
+    .replace(LIST_ITEM, '')
+    .split(DOWN_CLAIM_LABEL_SEPARATOR)
+    .at(-1);
+  return DOWN_CLAIM_LABEL_PREFIX.test(label?.trim() ?? '');
+}
+
+/**
+ * Down followed by from, to, by, in, on, below or into describes a direction,
+ * so it cannot supply a connection verdict to any link.
+ */
+function downClaimDirection(scope: string, index: number, word: string): boolean {
+  return word === 'down' && DOWN_CLAIM_DIRECTION.test(scope.slice(index + word.length));
+}
+
+/**
+ * A status cell starts with adverb qualifiers and an optional connection verb,
+ * then a down term, including a negated connected state. Its tail is empty or
+ * starts with since, for, as of, a parenthesis, a dash or a comma. Later clauses
+ * explain the status independently; arbitrary following words denote vocabulary.
+ */
+function downClaimCellStatus(cell: string): RegExpExecArray | undefined {
+  const clause = cell.split(CLAUSE_BOUNDARY)[0];
+  const terms = [
+    ...clause.matchAll(DOWN_WORD),
+    ...clause.matchAll(DOWN_CLAIM_NEGATED_CONNECTED),
+  ].sort((left, right) => left.index - right.index);
+  return terms.find(match => {
+    const prefix = stripDownClaimPresentation(clause.slice(0, match.index));
+    const tail = stripDownClaimPresentation(clause.slice(match.index + match[0].length));
+    return (
+      DOWN_CLAIM_STATUS_PREFIX.test(prefix) &&
+      downClaimGapWithinBudget(prefix) &&
+      !downClaimDirection(clause, match.index, match[0]) &&
+      (!tail || DOWN_CLAIM_STATUS_TAIL.test(tail))
+    );
+  });
+}
+
+/**
+ * A down label may put the site noun before or after its down terms. A leading
+ * site noun needs a colon or a heading mark, a table cell, or an unpunctuated
+ * line followed by an emptied item. A bare "Sites offline" otherwise remains
+ * a claim. Presentation and heading marks are stripped to read the label when
+ * its value is on the next line.
+ * Only a bare plural site noun may stand before its first down term; another
+ * subject makes the scope a claim instead of a label.
+ */
+function isDownClaimLabel(
+  text: string,
+  context: {
+    tableCell?: boolean;
+    nextLine?: string;
+    subjects?: { end: number; barePlural: boolean }[];
+  } = {}
+): boolean {
+  const label = stripDownClaimPresentation(text);
+  const firstTerm = [
+    ...text.matchAll(DOWN_WORD),
+    ...text.matchAll(DOWN_CLAIM_NEGATED_CONNECTED),
+  ].sort((left, right) => left.index - right.index)[0];
+  if (
+    firstTerm &&
+    context.subjects?.some(subject => !subject.barePlural && subject.end <= firstTerm.index)
+  ) {
+    return false;
+  }
+  const nextItem = stripDownClaimPresentation(context.nextLine ?? '')
+    .replace(LIST_ITEM, '')
+    .trim();
+  return (
+    DOWN_CLAIM_LABEL.test(label.replace(DOWN_CLAIM_LABEL_HEADING_MARKS, '')) &&
+    (!DOWN_CLAIM_SITE_NOUN_LEADING_LABEL.test(label) ||
+      HEADING_END.test(label) ||
+      DOWN_CLAIM_LABEL_HEADING_MARKS.test(label) ||
+      context.tableCell ||
+      DOWN_CLAIM_EMPTY_ITEM.test(nextItem))
+  );
+}
+
+/**
+ * A connected item overrides a down heading only with an unnegated connected
+ * word and no down word left standing. Each clause earns its own exemption so
+ * another site in the item keeps the heading's verdict.
+ */
+function downClaimItemConnected(clause: string): boolean {
+  return (
+    CONNECTED_STATE.test(clause) &&
+    !NEGATED_CONNECTED_STATE.test(clause) &&
+    ![...clause.matchAll(DOWN_WORD)].some(
+      match =>
+        !downClaimDirection(clause, match.index, match[0]) &&
+        !downClaimEmptied(clause, match.index, match[0])
+    )
+  );
+}
+
+/**
+ * Zero numerators (including N out of M ratios) and an adjacent real negator
+ * cancel a quantity. A bare plural also accepts a negator through up to five
+ * intervening words, never across a conjunction, so negated updates cannot
+ * cancel a separate claim about sites.
+ */
+function downClaimQuantityNegated(scope: string, index: number, subject: string): boolean {
+  const number = subject.match(NUMBER_TOKEN)?.[0];
+  if (number !== undefined && (numericValue(number) ?? 0) <= 0) return true;
+  const before = scope.slice(0, index);
+  return (
+    DOWN_CLAIM_QUANTITY_NEGATOR.test(before) ||
+    (DOWN_CLAIM_BARE_PLURAL.test(subject) && DOWN_CLAIM_BARE_PLURAL_NEGATOR.test(before))
+  );
+}
+
+/**
+ * A colon or markdown heading starts a down bucket only when it is a down
+ * label, whose site noun can lead or follow the down term. Every heading,
+ * including a bold-only title without a colon, ends the preceding reach.
+ * Items and bare sites inherit that reach across blank lines; a non-item or
+ * an empty item (none, nothing, n/a, 0 or a dash) ends it. The carried verdict
+ * is read per item clause after its sentence punctuation is dropped.
+ */
+function downClaimHeadingReach(line: string, carried: boolean, sitePattern: RegExp): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return carried;
+  const label = stripDownClaimPresentation(line);
+  const markdownHeading = DOWN_CLAIM_MARKDOWN_HEADING.exec(label);
+  const colonHeading = HEADING_END.test(label);
+  if (markdownHeading || colonHeading || DOWN_CLAIM_BOLD_HEADING.test(trimmed)) {
+    return Boolean((markdownHeading || colonHeading) && isDownClaimLabel(line));
+  }
+  const item = label.replace(LIST_ITEM, '').trim();
+  if (!item || DOWN_CLAIM_EMPTY_ITEM.test(item) || trimmed.startsWith('|')) return false;
+  const bareSite = label.replace(/\.$/, '');
+  return (
+    carried &&
+    (LIST_ITEM.test(trimmed) || (bareSite.match(sitePattern)?.includes(bareSite) ?? false))
+  );
+}
+
+/**
+ * An empty oracle passes unless a named site or a positive quantity of sites
+ * is linked to a down term. Predicates, attributives, labels, table rows and
+ * headings over lists establish that link. Labels and table rows bind named
+ * sites in either order. A site-noun label on its own unpunctuated line may be
+ * emptied by the next non-blank item; table cell boundaries mark labels too.
+ * An unrecognized claim shape passes.
+ * Site nouns retain their quantity meaning rather than becoming roster first
+ * labels, while a full hostname still names the site.
+ */
+function answerAvoidsDisconnectedClaims(answer: string, connectedHostnames: string[]): boolean {
+  const names = connectedHostnames
+    .map(hostname => hostname.trim().toLowerCase())
+    .filter(name => name.length > 0);
+  const shortNames = names
+    .map(name => name.split('.')[0])
+    .filter(name => name.length >= 4 && name !== 'www' && !DOWN_CLAIM_SITE_NOUN_LABEL.test(name));
+  const roster = [...names, ...shortNames]
+    .map(name => name.replace(DOWN_CLAIM_ROSTER_ESCAPE, '\\$&'))
+    .join('|');
+  // A first label must not consume the start of a different hostname.
+  const siteSubject = roster
+    ? `\\b(?:${roster})\\b(?![\\w.-])|${DOWN_CLAIM_HOSTNAME.source}`
+    : DOWN_CLAIM_HOSTNAME.source;
+  const sitePattern = new RegExp(siteSubject, 'g');
+  answer = canonicalizeDownClaimSites(answer, sitePattern);
+  const subjectPattern = new RegExp(`(?:${siteSubject})|(?:${DOWN_CLAIM_QUANTITY.source})`, 'g');
+
+  const subjectsIn = (scope: string) =>
+    [...scope.matchAll(subjectPattern)].flatMap(match => {
+      const index = match.index;
+      const subject = match[0];
+      const isSite =
+        DOWN_CLAIM_HOSTNAME.test(subject) ||
+        names.some(name => fragmentNamesHost(subject, name)) ||
+        shortNames.includes(subject);
+      if (isSite && !fragmentNamesHost(scope, subject)) return [];
+      if (!isSite && downClaimQuantityNegated(scope, index, subject)) return [];
+      return [
+        {
+          index,
+          end: index + subject.length,
+          text: subject,
+          isSite,
+          siteQuantity: !isSite && DOWN_CLAIM_SITE_QUANTITY.test(subject),
+          barePlural: !isSite && DOWN_CLAIM_BARE_PLURAL.test(subject),
+        },
+      ];
+    });
+
+  const lines = answer.split('\n');
+  let nextNonBlank = 1;
+  let downHeading = false;
+  for (const [lineIndex, line] of lines.entries()) {
+    nextNonBlank = Math.max(nextNonBlank, lineIndex + 1);
+    while (nextNonBlank < lines.length && !lines[nextNonBlank].trim()) nextNonBlank++;
+    downHeading = downClaimHeadingReach(line, downHeading, sitePattern);
+    for (const clause of line.trim().startsWith('|') ? [line] : line.split(CLAUSE_BOUNDARY)) {
+      const trimmed = clause.trim();
+      if (
+        downHeading &&
+        !downClaimItemConnected(clause) &&
+        subjectsIn(clause).some(subject => subject.isSite)
+      ) {
+        return false;
+      }
+
+      const cells = trimmed.startsWith('|') ? [...clause.matchAll(DOWN_CLAIM_TABLE_CELL)] : [];
+      if (cells.length >= 2) {
+        const countStart = cells[1].index + 1;
+        const countEnd = countStart + cells[1][1].length;
+        for (const [cellIndex, cell] of cells.entries()) {
+          const word = isDownClaimLabel(cell[1], {
+            tableCell: true,
+            subjects: subjectsIn(cell[1]),
+          })
+            ? [
+                ...cell[1].matchAll(DOWN_WORD),
+                ...cell[1].matchAll(DOWN_CLAIM_NEGATED_CONNECTED),
+              ].sort((left, right) => left.index - right.index)[0]
+            : downClaimCellStatus(cell[1]);
+          const cellStart = cell.index + 1;
+          const cellEnd = cellStart + cell[1].length;
+          // Pipes keep an empty count from denying a site named in another cell.
+          if (
+            !word ||
+            downClaimDirection(cell[1], word.index, word[0]) ||
+            downClaimEmptied(clause, cellStart + word.index, word[0])
+          ) {
+            continue;
+          }
+          if (
+            subjectsIn(clause).some(
+              subject =>
+                ((subject.isSite && (subject.end <= cellStart || subject.index >= cellEnd)) ||
+                  (cellIndex === 0 &&
+                    !subject.barePlural &&
+                    subject.index >= countStart &&
+                    subject.end <= countEnd)) &&
+                !isDownClaimHypothetical(clause, subject.index)
+            )
+          ) {
+            return false;
+          }
+        }
+      }
+
+      const scopes =
+        cells.length > 0 ? cells.flatMap(cell => cell[1].split(CLAUSE_BOUNDARY)) : [clause];
+      for (const scope of scopes) {
+        const subjects = subjectsIn(scope);
+        if (
+          isDownClaimLabel(scope, {
+            tableCell: cells.length >= 2,
+            nextLine: scope.trim() === line.trim() ? lines[nextNonBlank] : undefined,
+            subjects,
+          })
+        ) {
+          continue;
+        }
+        const terms = [
+          ...[...scope.matchAll(DOWN_WORD)].map(match => ({ match, negatedConnected: false })),
+          ...[...scope.matchAll(DOWN_CLAIM_NEGATED_CONNECTED)].map(match => ({
+            match,
+            negatedConnected: true,
+          })),
+        ];
+        for (const { match, negatedConnected } of terms) {
+          const wordIndex = match.index;
+          const wordEnd = wordIndex + match[0].length;
+          if (downClaimDirection(scope, wordIndex, match[0])) continue;
+          for (const subject of subjects) {
+            if (isDownClaimHypothetical(scope, subject.index, subject.text, wordEnd)) continue;
+            const before = stripDownClaimPresentation(scope.slice(subject.end, wordIndex));
+            const after = stripDownClaimPresentation(scope.slice(wordEnd, subject.index));
+            const predicate = subject.isSite
+              ? before.replace(DOWN_CLAIM_POSSESSIVE_STATE, '')
+              : before;
+            const linked =
+              (subject.end <= wordIndex &&
+                DOWN_CLAIM_PREDICATE.test(predicate) &&
+                downClaimGapWithinBudget(predicate)) ||
+              (!negatedConnected &&
+                !subject.isSite &&
+                !subject.barePlural &&
+                subject.end <= wordIndex &&
+                DOWN_CLAIM_ATTRIBUTIVE_LINK.test(before) &&
+                DOWN_CLAIM_ATTRIBUTED_SITES.test(scope.slice(wordEnd))) ||
+              (!subject.barePlural &&
+                subject.index >= wordEnd &&
+                DOWN_CLAIM_LABEL_LINK.test(after) &&
+                downClaimLabelPrefix(scope.slice(0, wordIndex))) ||
+              ((subject.isSite || subject.siteQuantity) &&
+                !subject.barePlural &&
+                subject.end <= wordIndex &&
+                DOWN_CLAIM_SITE_LABEL_LINK.test(before));
+            if (!linked) continue;
+            // A negator about updates cannot reach past the site's positive subject.
+            const emptierScope = subject.end <= wordIndex ? scope.slice(subject.index) : scope;
+            const emptierIndex = subject.end <= wordIndex ? wordIndex - subject.index : wordIndex;
+            if (!downClaimEmptied(emptierScope, emptierIndex, match[0])) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
 }
 
 /**
@@ -1187,22 +1702,7 @@ export function answerLabelsDisconnectedSites(
   // items to the next heading's fragment.
   const answer = normalizeAnswerKeepingBreaks(text, LINE_BREAKS);
   if (disconnectedHostnames.length === 0) {
-    // An empty site cell may include a note with its own connection claim.
-    const claims = answer.replace(
-      /^\|[ \t]*(?:disconnected|erroring)[ \t]*\|[ \t]*0[ \t]*\|[ \t]*none\b(?=[ \t]*(?:\||\())/gm,
-      ''
-    );
-    // A summary of a healthy network still prints the vocabulary, so a
-    // down-word only claims something when nothing empties it.
-    for (const match of claims.matchAll(DOWN_WORD)) {
-      if (!downClaimEmptied(claims, match.index ?? 0, match[0])) return false;
-    }
-    // A negated connected word is the same claim without any down-word, unless
-    // the clause is advice about a hypothetical outage.
-    for (const clause of claims.split(CLAUSE_BOUNDARY)) {
-      if (NEGATED_CONNECTED_STATE.test(clause) && !CONDITIONAL_CLAUSE.test(clause)) return false;
-    }
-    return true;
+    return answerAvoidsDisconnectedClaims(answer, connectedHostnames);
   }
 
   const disconnectedFragments: string[] = [];
