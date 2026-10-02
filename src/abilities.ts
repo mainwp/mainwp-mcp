@@ -35,6 +35,11 @@ import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
 import { classifyDestructive } from './policy.js';
 import { createWriteOnlyRedactor } from './write-only.js';
 
+// These mirror the limits the MainWP Dashboard enforces on its JSON input
+// carrier, so an over-size input is refused locally instead of by the server.
+const MAX_JSON_QUERY_INPUT_BYTES = 8192;
+const MAX_JSON_BODY_INPUT_BYTES = 1048576;
+
 /** Maximum age of stale cache before hard-failing (30 minutes) */
 const MAX_STALE_AGE_MS = 30 * 60 * 1000;
 
@@ -981,6 +986,98 @@ function serializeToPhpQueryString(input: Record<string, unknown>, schema: unkno
   return params.length > 0 ? '?' + params.join('&') : '';
 }
 
+function isPlainSchemaObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (
+    (prototype === null || prototype === Object.prototype) &&
+    !Object.keys(value).some(key => ['__proto__', 'constructor', 'prototype'].includes(key))
+  );
+}
+
+// A root default or nullable root could execute with missing input on an older
+// Dashboard, which ignores the carrier. Only object roots without defaults qualify.
+function hasRequiredNullableInput(schema: unknown): boolean {
+  if (
+    !isPlainSchemaObject(schema) ||
+    !Object.hasOwn(schema, 'type') ||
+    schema.type !== 'object' ||
+    Object.hasOwn(schema, 'default') ||
+    !Object.hasOwn(schema, 'required') ||
+    !Array.isArray(schema.required) ||
+    !Object.hasOwn(schema, 'properties') ||
+    !isPlainSchemaObject(schema.properties)
+  )
+    return false;
+
+  const properties = schema.properties;
+  if (
+    !Object.values(properties).every(
+      property =>
+        isPlainSchemaObject(property) &&
+        (!Object.hasOwn(property, 'type') ||
+          typeof property.type === 'string' ||
+          (Array.isArray(property.type) && property.type.every(type => typeof type === 'string')))
+    )
+  )
+    return false;
+  if (!schema.required.every(key => typeof key === 'string' && Object.hasOwn(properties, key)))
+    return false;
+
+  return schema.required.some(key => {
+    const type = (properties[key] as Record<string, unknown>).type;
+    return type === 'null' || (Array.isArray(type) && type.includes('null'));
+  });
+}
+
+// The Dashboard carrier preserves JSON types and bypasses core's query coercion.
+function serializeJsonInput(input: Record<string, unknown>, schema: unknown): string {
+  const normalized = { ...input };
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value !== 'string') continue;
+    const property = propertySchema(schema, key);
+    const type = property && Object.hasOwn(property, 'type') ? property.type : undefined;
+    const types = typeof type === 'string' ? [type] : Array.isArray(type) ? type : [];
+    if (types.length === 0 || types.includes('string')) continue;
+    let converted: number | boolean | undefined;
+    for (const declared of types) {
+      if (
+        declared === 'integer' &&
+        /^-?(0|[1-9][0-9]*)$/.exec(value)?.[0] === value &&
+        Number.isSafeInteger(Number(value))
+      ) {
+        converted = Number(value);
+        break;
+      }
+      if (
+        declared === 'number' &&
+        /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/.exec(value)?.[0] === value &&
+        Number.isFinite(Number(value))
+      ) {
+        converted = Number(value);
+        break;
+      }
+      if (declared === 'boolean' && ['true', 'false', '1', '0'].includes(value)) {
+        converted = value === 'true' || value === '1';
+        break;
+      }
+    }
+    if (converted === undefined) {
+      throw McpErrorFactory.invalidParams(
+        `Invalid JSON input parameter "${sanitizeError(key)}": expected a canonical declared type`
+      );
+    }
+    normalized[key] = converted;
+  }
+  try {
+    return JSON.stringify(normalized);
+  } catch {
+    throw McpErrorFactory.invalidParams(
+      'Unsupported JSON input parameter "input": input must be JSON serializable'
+    );
+  }
+}
+
 /**
  * Execute an ability via the REST API
  *
@@ -1024,6 +1121,10 @@ export async function executeAbility(
   // selection and audit logging can never diverge from the gate's decision.
   const isDestructive = classifyDestructive(ability.meta?.annotations);
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
+  const usesJsonCarrier =
+    (isReadonly || (isDestructive && isIdempotent)) &&
+    /^mainwp\/[a-z0-9-]+$/.test(ability.name) &&
+    hasRequiredNullableInput(ability.input_schema);
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   // WordPress treats an empty schema as absent and rejects non-null input for it.
   // A top-level default needs missing GET/DELETE input; input= prevents it from applying.
@@ -1052,18 +1153,43 @@ export async function executeAbility(
 
     let response: Response;
     if (isReadonly || (isDestructive && isIdempotent)) {
-      // GET or DELETE — both use query string params (WP Abilities API doesn't parse DELETE bodies)
       const method = isReadonly ? 'GET' : 'DELETE';
-      const queryString =
-        serializeToPhpQueryString(input ?? {}, ability.input_schema) ||
-        (hasInputSchema && !hasSchemaDefault ? '?input=' : '');
+      let queryString: string;
+      let body: string | undefined;
+      if (usesJsonCarrier) {
+        const json = serializeJsonInput(input ?? {}, ability.input_schema);
+        if (isReadonly) {
+          if (Buffer.byteLength(json, 'utf8') > MAX_JSON_QUERY_INPUT_BYTES) {
+            throw McpErrorFactory.invalidParams(
+              `JSON input parameter "input" exceeds ${MAX_JSON_QUERY_INPUT_BYTES} bytes`
+            );
+          }
+          queryString = `?input_json=${encodeURIComponent(json)}`;
+        } else {
+          body = `{"input":${json}}`;
+          if (Buffer.byteLength(body, 'utf8') > MAX_JSON_BODY_INPUT_BYTES) {
+            throw McpErrorFactory.invalidParams(
+              `JSON input parameter "input" exceeds ${MAX_JSON_BODY_INPUT_BYTES} bytes`
+            );
+          }
+          queryString = '';
+        }
+      } else {
+        queryString =
+          serializeToPhpQueryString(input ?? {}, ability.input_schema) ||
+          (hasInputSchema && !hasSchemaDefault ? '?input=' : '');
+      }
       const fullUrl = url + queryString;
       if (fullUrl.length > MAX_URL_LENGTH) {
         throw new Error(
           `Request URL exceeds ${MAX_URL_LENGTH} characters (${fullUrl.length}); reduce input parameters`
         );
       }
-      response = await customFetch(fullUrl, { method, signal });
+      response = await customFetch(fullUrl, {
+        method,
+        ...(body === undefined ? {} : { body }),
+        signal,
+      });
     } else {
       // POST request for non-destructive write operations
       response = await customFetch(url, {
@@ -1114,6 +1240,10 @@ export async function executeAbility(
         isCredentialRejection(response.status, code)
           ? ` ${describeCredentialRejection(config, code)}`
           : '';
+      const carrierNote =
+        usesJsonCarrier && response.status === 400 && errorCode === 'ability_invalid_input'
+          ? " If this Dashboard is older than MainWP Dashboard 6.2, update it: this ability's input cannot be delivered to earlier versions."
+          : '';
 
       if (writeOnlyRedactor.carriesWriteOnly) {
         // errorCode is already a plain slug or the status; drop it as well
@@ -1135,14 +1265,14 @@ export async function executeAbility(
         throw createHttpError(
           response.status,
           safeErrorCode,
-          `Ability execution failed: ${safeErrorCode} (HTTP ${response.status}). The upstream message is withheld because this call carried write-only input.${safeNote}`
+          `Ability execution failed: ${safeErrorCode} (HTTP ${response.status}). The upstream message is withheld because this call carried write-only input.${safeNote}${carrierNote}`
         );
       }
 
       throw createHttpError(
         response.status,
         errorCode,
-        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${credentialNote(errorCode)}`
+        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${credentialNote(errorCode)}${carrierNote}`
       );
     }
 

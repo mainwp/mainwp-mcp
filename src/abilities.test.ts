@@ -1231,6 +1231,311 @@ describe('getAbilityByToolName', () => {
   });
 });
 
+describe('required nullable JSON carrier', () => {
+  const schema = {
+    type: 'object',
+    required: ['cursor'],
+    properties: {
+      cursor: { type: ['string', 'null'] },
+      optional: { type: ['string', 'null'] },
+      flag: { type: 'boolean' },
+      count: { type: ['integer', 'null'] },
+      amount: { type: 'number' },
+      text: { type: ['integer', 'string'] },
+      nested: { type: 'object', properties: { flag: { type: 'boolean' } } },
+    },
+  };
+  const carrierAbility: Ability = {
+    ...sampleAbilities[0],
+    name: 'mainwp/list-records-v1',
+    input_schema: schema,
+  };
+  const deleteAbility: Ability = {
+    ...sampleAbilities[1],
+    name: 'mainwp/reset-record-v1',
+    input_schema: {
+      type: 'object',
+      required: ['preview_token'],
+      properties: {
+        preview_token: { type: ['string', 'null'] },
+        dry_run: { type: 'boolean' },
+        confirm: { type: 'boolean' },
+      },
+    },
+  };
+  const versionNote =
+    "If this Dashboard is older than MainWP Dashboard 6.2, update it: this ability's input cannot be delivered to earlier versions.";
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+  });
+
+  function run(input?: Record<string, unknown>, ability = carrierAbility) {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));
+    return executeAbility(baseConfig, ability.name, input, undefined, ability);
+  }
+
+  function request() {
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    return mockFetch.mock.calls[0] as [string, RequestInit];
+  }
+
+  it.each([
+    { cursor: null, optional: null, count: 5, omitted: undefined },
+    { cursor: 'next', optional: 'present', count: 5 },
+  ])('GET keeps the exact input in input_json: %j', async input => {
+    await run(input);
+    const [url, options] = request();
+    expect(options.method).toBe('GET');
+    expect(url).toBe(
+      `${baseConfig.dashboardUrl}/wp-json/wp-abilities/v1/abilities/${carrierAbility.name}/run?input_json=${encodeURIComponent(JSON.stringify(input))}`
+    );
+    expect(JSON.parse(new URL(url).searchParams.get('input_json')!)).toEqual(
+      JSON.parse(JSON.stringify(input))
+    );
+    expect([...new URL(url).searchParams.keys()]).toEqual(['input_json']);
+    expect(options.body).toBeUndefined();
+  });
+
+  it.each([undefined, {}, { cursor: undefined }])(
+    'GET carries an empty JSON object for %j without the input= fallback',
+    async input => {
+      await run(input);
+      expect(new URL(request()[0]).search).toBe('?input_json=%7B%7D');
+    }
+  );
+
+  it('GET detects a property whose type is exactly null', async () => {
+    await run(
+      { cursor: null },
+      {
+        ...carrierAbility,
+        input_schema: { ...schema, properties: { cursor: { type: 'null' } } },
+      }
+    );
+    expect(new URL(request()[0]).search).toBe('?input_json=%7B%22cursor%22%3Anull%7D');
+  });
+
+  it('DELETE sends the exact JSON envelope and application/json without a query', async () => {
+    const input = { preview_token: null, dry_run: true, confirm: false };
+    await run(input, deleteAbility);
+    const [url, options] = request();
+    expect(options.method).toBe('DELETE');
+    expect(options.body).toBe('{"input":{"preview_token":null,"dry_run":true,"confirm":false}}');
+    expect(new URL(url).search).toBe('');
+    expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+  });
+
+  it('GET preserves JSON booleans, nested values and string unions', async () => {
+    const input = {
+      cursor: null,
+      flag: false,
+      count: 5,
+      text: '5',
+      nested: { flag: 'false' },
+      extra: '5',
+    };
+    await run(input);
+    const json = new URL(request()[0]).searchParams.get('input_json');
+    expect(json).toBe(JSON.stringify(input));
+  });
+
+  it.each([
+    ['count', '5', 5],
+    ['count', '-5', -5],
+    ['count', '0', 0],
+    ['amount', '5', 5],
+    ['amount', '-5.25', -5.25],
+    ['amount', '0.25', 0.25],
+    ['flag', 'true', true],
+    ['flag', 'false', false],
+    ['flag', '1', true],
+    ['flag', '0', false],
+  ])('converts canonical %s string %s on the carrier', async (key, value, expected) => {
+    await run({ cursor: null, [key as string]: value });
+    expect(new URL(request()[0]).searchParams.get('input_json')).toBe(
+      JSON.stringify({ cursor: null, [key as string]: expected })
+    );
+  });
+
+  it.each([
+    ['count', '5.0'],
+    ['count', ' 5'],
+    ['count', '5\n'],
+    ['count', ''],
+    ['count', '05'],
+    ['count', '9007199254740992'],
+    ['amount', '1e3'],
+    ['amount', '+5'],
+    ['amount', '5.25\n'],
+    ['flag', 'yes'],
+    ['flag', ''],
+    ['flag', 'TRUE'],
+  ])('rejects non-canonical %s string %j locally', async (key, value) => {
+    const error = await run({ cursor: null, [key]: value }).catch(error => error);
+    expect(error).toBeInstanceOf(McpError);
+    if (!(error instanceof McpError)) throw new Error('Expected a local parameter rejection');
+    expect(error).toMatchObject({ code: MCP_ERROR_CODES.INVALID_PARAMS });
+    expect(error.message).toContain(`"${key}"`);
+    if (value) expect(error.message).not.toContain(value);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['GET', carrierAbility, { cursor: null, extra: 'é'.repeat(4096) }],
+    ['DELETE', deleteAbility, { preview_token: null, extra: 'é'.repeat(524288) }],
+  ])('rejects oversized %s JSON in UTF-8 locally', async (_method, ability, input) => {
+    await expect(run(input, ability)).rejects.toMatchObject({
+      code: MCP_ERROR_CODES.INVALID_PARAMS,
+      message: expect.stringContaining('"input"'),
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'appends the version note to carrier input errors (writeOnly=%s)',
+    async writeOnly => {
+      const ability = writeOnly
+        ? {
+            ...carrierAbility,
+            input_schema: {
+              ...schema,
+              properties: { cursor: { type: ['string', 'null'], writeOnly: true } },
+            },
+          }
+        : carrierAbility;
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: 'ability_invalid_input',
+            message: 'cursor is a required property of input.',
+          }),
+          { status: 400 }
+        )
+      );
+      const error = await executeAbility(
+        baseConfig,
+        ability.name,
+        { cursor: 'next' },
+        undefined,
+        ability
+      ).catch(error => error);
+      expect(error).toMatchObject({ status: 400, code: 'ability_invalid_input' });
+      if (!(error instanceof Error)) throw new Error('Expected an upstream input rejection');
+      expect(error.message.endsWith(versionNote)).toBe(true);
+    }
+  );
+
+  it.each([
+    ['different status', 403, 'ability_invalid_input'],
+    ['different code', 400, 'mainwp_abilities_invalid_input_transport'],
+  ])('unchanged error behaviour: %s has no version note', async (_label, status, code) => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code, message: 'Rejected.' }), { status })
+    );
+    await expect(
+      executeAbility(baseConfig, carrierAbility.name, { cursor: null }, undefined, carrierAbility)
+    ).rejects.toMatchObject({ message: expect.not.stringContaining(versionNote) });
+  });
+
+  const malformedSchemas: Array<[string, unknown]> = [
+    ['required not an array', { ...schema, required: 'cursor' }],
+    ['non-string required entry', { ...schema, required: ['cursor', 7] }],
+    ['missing required property', { ...schema, required: ['cursor', 'missing'] }],
+    ['properties not an object', { ...schema, properties: [] }],
+    ['properties null', { ...schema, properties: null }],
+    [
+      'properties not plain',
+      {
+        ...schema,
+        properties: Object.assign(Object.create({ inherited: true }), schema.properties),
+      },
+    ],
+    ['property not an object', { ...schema, properties: { ...schema.properties, extra: true } }],
+    ['property is an array', { ...schema, properties: { cursor: [{ type: 'null' }] } }],
+    ['property null', { ...schema, properties: { cursor: null } }],
+    ['malformed type array', { ...schema, properties: { cursor: { type: ['null', 7] } } }],
+    ...['__proto__', 'constructor', 'prototype'].map((key): [string, unknown] => [
+      `reserved property ${key}`,
+      { ...schema, properties: { ...schema.properties, [key]: { type: 'null' } } },
+    ]),
+    ['reserved required key', { ...schema, required: ['cursor', '__proto__'] }],
+  ];
+
+  it.each([
+    [
+      'no required nullable',
+      {
+        ...carrierAbility,
+        input_schema: {
+          ...schema,
+          required: ['count'],
+          properties: { ...schema.properties, count: { type: 'integer' } },
+        },
+      },
+    ],
+    ['optional nullable', { ...carrierAbility, input_schema: { ...schema, required: [] } }],
+    ['other namespace', { ...carrierAbility, name: 'example/list-records-v1' }],
+    ['root default', { ...carrierAbility, input_schema: { ...schema, default: {} } }],
+    ['root union', { ...carrierAbility, input_schema: { ...schema, type: ['object', 'null'] } }],
+    ...malformedSchemas.map(([label, input_schema]) => [
+      label,
+      { ...carrierAbility, input_schema },
+    ]),
+  ] as Array<[string, Ability]>)(
+    'unchanged bracket form byte for byte: %s',
+    async (_label, ability) => {
+      await run({ cursor: null, text: 'a b', extra: ['x', 'y'], absent: undefined }, ability);
+      const [url, options] = request();
+      expect(new URL(url).search).toBe('?input[text]=a%20b&input[extra][]=x&input[extra][]=y');
+      expect(options.body).toBeUndefined();
+    }
+  );
+
+  it('unchanged POST envelope for a required nullable ability', async () => {
+    await run(
+      { preview_token: null },
+      {
+        ...deleteAbility,
+        meta: { annotations: { readonly: false, destructive: true, idempotent: false } },
+      }
+    );
+    const [url, options] = request();
+    expect(options.method).toBe('POST');
+    expect(options.body).toBe('{"input":{"preview_token":null}}');
+    expect(new URL(url).search).toBe('');
+  });
+
+  it.each(['mainwp/list_records', 'mainwp/List-records', 'mainwp/list.records'])(
+    'unchanged name validation rejects %s before transport',
+    async name => {
+      await expect(run({ cursor: null }, { ...carrierAbility, name })).rejects.toMatchObject({
+        code: MCP_ERROR_CODES.INVALID_PARAMS,
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    }
+  );
+
+  it('unchanged bracket 400 has no version note', async () => {
+    const ability = { ...carrierAbility, input_schema: { ...schema, required: [] } };
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'ability_invalid_input', message: 'Rejected.' }), {
+        status: 400,
+      })
+    );
+    await expect(
+      executeAbility(baseConfig, ability.name, { cursor: null }, undefined, ability)
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'ability_invalid_input',
+      message: 'Ability execution failed: ability_invalid_input - Rejected.',
+    });
+  });
+});
+
 describe('executeAbility', () => {
   beforeEach(() => {
     vi.resetAllMocks();

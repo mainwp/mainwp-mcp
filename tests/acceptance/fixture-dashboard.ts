@@ -50,6 +50,8 @@ const requiredConfirmAbility = {
 
 export const FIXTURE_PREVIEW_TOKEN_ABILITY = 'mainwp/clear-site-note-v1';
 export const FIXTURE_PREVIEW_TOKEN_TOOL = 'clear_site_note_v1';
+export const FIXTURE_NULLABLE_DELETE_ABILITY = 'mainwp/reset-site-note-v1';
+export const FIXTURE_NULLABLE_DELETE_TOOL = 'reset_site_note_v1';
 
 const previewTokenAbility = {
   name: FIXTURE_PREVIEW_TOKEN_ABILITY,
@@ -218,24 +220,85 @@ function parseQueryInput(url: URL, schema: unknown): Record<string, unknown> | n
   return hasInput ? input : null;
 }
 
+class InputTransportError extends Error {}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function invalidTransport(): never {
+  throw new InputTransportError('The ability input transport is invalid.');
+}
+
 async function parseInput(
   request: IncomingMessage,
   url: URL,
   schema: unknown
-): Promise<Record<string, unknown> | null> {
-  if (request.method === 'GET' || request.method === 'DELETE') return parseQueryInput(url, schema);
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    if (chunks.reduce((size, current) => size + current.length, 0) > 1024 * 1024) {
-      throw new Error('Fixture request body too large');
+): Promise<{ input: Record<string, unknown> | null; body: string }> {
+  const hasQueryInput = [...url.searchParams.keys()].some(key => /^input(?:\[|$)/.test(key));
+  if (request.method === 'GET') {
+    if (!url.searchParams.has('input_json'))
+      return { input: parseQueryInput(url, schema), body: '' };
+    const encoded = url.searchParams.get('input_json')!;
+    if (hasQueryInput || Buffer.byteLength(encoded, 'utf8') > 8192) invalidTransport();
+    let input: unknown;
+    try {
+      input = JSON.parse(encoded);
+    } catch {
+      invalidTransport();
     }
+    if (!isJsonObject(input)) invalidTransport();
+    return { input, body: '' };
   }
-  if (chunks.length === 0) return {};
-  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { input?: unknown };
-  return parsed.input && typeof parsed.input === 'object'
-    ? (parsed.input as Record<string, unknown>)
-    : {};
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size <= 1024 * 1024) chunks.push(buffer);
+  }
+  // Drain before rejecting so the fixture can send its transport error.
+  if (size > 1024 * 1024) {
+    if (request.method === 'DELETE') invalidTransport();
+    throw new Error('Fixture request body too large');
+  }
+  const body = Buffer.concat(chunks).toString('utf8');
+  if (request.method === 'DELETE') {
+    if (!body) return { input: parseQueryInput(url, schema), body };
+    if (hasQueryInput || url.searchParams.has('input_json')) invalidTransport();
+    if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json')
+      invalidTransport();
+    let envelope: unknown;
+    try {
+      envelope = JSON.parse(body);
+    } catch {
+      invalidTransport();
+    }
+    if (
+      !isJsonObject(envelope) ||
+      Object.keys(envelope).length !== 1 ||
+      !Object.hasOwn(envelope, 'input') ||
+      !isJsonObject(envelope.input)
+    )
+      invalidTransport();
+    return { input: envelope.input, body };
+  }
+  if (!body) return { input: {}, body };
+  const parsed = JSON.parse(body) as { input?: unknown };
+  return {
+    input:
+      parsed.input && typeof parsed.input === 'object'
+        ? (parsed.input as Record<string, unknown>)
+        : {},
+    body,
+  };
+}
+
+interface FixtureTransport {
+  method: string;
+  body: string;
+  contentType: string;
+  query: string;
 }
 
 type PublicSite = Omit<
@@ -393,7 +456,8 @@ async function runAbility(
   input: Record<string, unknown>,
   sites: FixtureSite[],
   previewTokens: Map<string, string>,
-  response: ServerResponse
+  response: ServerResponse,
+  transport?: FixtureTransport
 ): Promise<void> {
   const faultMode = getFixtureFaultMode(abilityName, input);
   if (faultMode === 'oversized') {
@@ -727,7 +791,10 @@ async function runAbility(
     return;
   }
 
-  if (abilityName === FIXTURE_PREVIEW_TOKEN_ABILITY) {
+  if (
+    abilityName === FIXTURE_PREVIEW_TOKEN_ABILITY ||
+    abilityName === FIXTURE_NULLABLE_DELETE_ABILITY
+  ) {
     for (const key of ['confirm', 'dry_run', 'preview_token']) {
       if (!Object.hasOwn(input, key)) {
         json(response, 400, {
@@ -773,6 +840,7 @@ async function runAbility(
         updated: false,
         would_affect: { site_id: site.id, notes: '' },
         preview_token: token,
+        ...(transport ? { transport } : {}),
       });
       return;
     }
@@ -789,7 +857,12 @@ async function runAbility(
     }
     previewTokens.delete(tokenKey);
     site.notes = '';
-    json(response, 200, { dry_run: false, updated: true, site: publicSite(site) });
+    json(response, 200, {
+      dry_run: false,
+      updated: true,
+      site: publicSite(site),
+      ...(transport ? { transport } : {}),
+    });
     return;
   }
 
@@ -813,9 +886,11 @@ export async function startFixtureDashboard(
     ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[]),
     requiredConfirmAbility,
     previewTokenAbility,
-    ...(options.acceptanceOnlyAbilities
-      ? (JSON.parse(fs.readFileSync(ACCEPTANCE_ABILITIES_PATH, 'utf8')) as unknown[])
-      : []),
+    ...(
+      JSON.parse(fs.readFileSync(ACCEPTANCE_ABILITIES_PATH, 'utf8')) as Array<{ name: string }>
+    ).filter(
+      ability => options.acceptanceOnlyAbilities || ability.name === FIXTURE_NULLABLE_DELETE_ABILITY
+    ),
   ];
   const loadSites = (): FixtureSite[] =>
     JSON.parse(fs.readFileSync(SITES_PATH, 'utf8')) as FixtureSite[];
@@ -856,7 +931,28 @@ export async function startFixtureDashboard(
           }>
         ).find(candidate => candidate.name === abilityName);
         const schema = ability?.input_schema;
-        const input = await parseInput(request, url, schema);
+        const { input, body } = await parseInput(request, url, schema);
+        if (abilityName === FIXTURE_NULLABLE_DELETE_ABILITY) {
+          const requiredSchema = schema as {
+            required: string[];
+            properties: Record<string, { type: string | string[] }>;
+          };
+          for (const key of requiredSchema.required) {
+            const type = requiredSchema.properties[key].type;
+            if (
+              !input ||
+              !Object.hasOwn(input, key) ||
+              (input[key] === null &&
+                !(type === 'null' || (Array.isArray(type) && type.includes('null'))))
+            ) {
+              json(response, 400, {
+                code: 'ability_invalid_input',
+                message: `Ability input requires a valid "${key}" property.`,
+              });
+              return;
+            }
+          }
+        }
         const schemaType = schema?.type;
         if (
           input === null &&
@@ -872,7 +968,21 @@ export async function startFixtureDashboard(
           });
           return;
         }
-        await runAbility(abilityName, input ?? {}, sites, previewTokens, response);
+        await runAbility(
+          abilityName,
+          input ?? {},
+          sites,
+          previewTokens,
+          response,
+          abilityName === FIXTURE_NULLABLE_DELETE_ABILITY
+            ? {
+                method: request.method ?? '',
+                body,
+                contentType: request.headers['content-type'] ?? '',
+                query: url.search,
+              }
+            : undefined
+        );
         return;
       }
 
@@ -882,6 +992,14 @@ export async function startFixtureDashboard(
         data: { status: 404 },
       });
     } catch (error) {
+      if (error instanceof InputTransportError) {
+        json(response, 400, {
+          code: 'mainwp_abilities_invalid_input_transport',
+          message: error.message,
+          data: { status: 400 },
+        });
+        return;
+      }
       json(response, 500, {
         code: 'fixture_internal_error',
         message: error instanceof Error ? error.message : 'Fixture error',

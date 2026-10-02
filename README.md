@@ -48,7 +48,7 @@ Full documentation lives at **[docs.mainwp.com/mcp-server](https://docs.mainwp.c
 
 ## Quick Start
 
-**Requirements:** Node.js >=20.19.0 and MainWP Dashboard 6.0+
+**Requirements:** Node.js >=20.19.0 and MainWP Dashboard 6.0+. Abilities with a required input that may be null need MainWP Dashboard 6.2 or later.
 
 **1. Create an Application Password.** This is a separate password WordPress issues for tools like this one; it never changes your login and you can revoke it at any time.
 

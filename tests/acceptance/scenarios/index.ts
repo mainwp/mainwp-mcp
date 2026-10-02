@@ -3,6 +3,7 @@ import { configurationScenarios } from './configuration.js';
 import { completionScenarios } from './completions.js';
 import { confirmationScenarios } from './confirmation.js';
 import { idInputScenarios } from './id-inputs.js';
+import { fixtureNullableInputs } from './nullable-inputs.js';
 import { policyScenarios } from './policy.js';
 import { readScenarios } from './read.js';
 import { setupScenarios } from './setup.js';
@@ -19,6 +20,7 @@ export const scenarios: ScenarioDefinition[] = [
   ...setupScenarios,
   ...writeScenarios,
   ...confirmationScenarios,
+  fixtureNullableInputs,
   ...transportScenarios,
   ...idInputScenarios,
 ];
