@@ -5,10 +5,15 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createServer } from './index.js';
 import { clearCache, initRateLimiter, type Ability } from './abilities.js';
-import { capturePreviewToken, clearPendingPreviews } from './confirmation.js';
+import {
+  capturePreviewToken,
+  clearPendingPreviews,
+  getPendingPreviewCounts,
+} from './confirmation.js';
 import { clearToolsCache } from './tools.js';
 import { clearKnownSecrets } from './security.js';
 import { resetSessionData } from './session.js';
+import { MCP_ERROR_CODES } from './errors.js';
 import { makeBaseConfig } from '../tests/helpers/config.js';
 
 const upstreamToken = 'example_preview_token_0123456789';
@@ -280,6 +285,31 @@ describe('preview_token confirmation flow', () => {
     expect(responseData(result)).toEqual({ updated: true });
   });
 
+  it('keeps the stored preview_token when a repeat preview fails session accounting', async () => {
+    const { client } = await connectedClient(makeBaseConfig({ maxSessionData: 2048 }));
+    const token = await preview(client);
+    const before = getPendingPreviewCounts();
+    previewResult = {
+      preview_token: 'failed_preview_token_0123456789',
+      payload: 'x'.repeat(4096),
+    };
+    const failed = await client.callTool({
+      name: toolName,
+      arguments: { ...previewArgs, confirm: true },
+    });
+    expect(failed.isError).toBe(true);
+    expect(responseData(failed).error.code).toBe(MCP_ERROR_CODES.RESOURCE_EXHAUSTED);
+    expect(getPendingPreviewCounts()).toEqual(before);
+
+    resetSessionData();
+    const confirmed = await confirm(client, token);
+    expect(upstreamInputs()[2]).toEqual({
+      input: { ...previewArgs, preview_token: upstreamToken, confirm: true, dry_run: false },
+    });
+    expect(confirmed.isError).toBeFalsy();
+    expect(responseData(confirmed)).toEqual({ updated: true });
+  });
+
   it('forwards a different caller token and fails closed upstream', async () => {
     const { client } = await connectedClient();
     const token = await preview(client);
@@ -499,7 +529,7 @@ describe('preview_token confirmation flow', () => {
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const { client } = await connectedClient();
     const tokens: string[] = [];
-    for (let index = 0; index < 102; index++) {
+    for (let index = 0; index < 101; index++) {
       now++;
       tokens.push(
         await preview(client, {
@@ -516,14 +546,14 @@ describe('preview_token confirmation flow', () => {
     });
     expect(oldest.isError).toBe(true);
     expect(responseData(oldest).error).toBe('PREVIEW_REQUIRED');
-    expect(upstreamInputs()).toHaveLength(102);
+    expect(upstreamInputs()).toHaveLength(101);
     const retained = await confirm(client, tokens[1], {
       ...previewArgs,
       request_id: 'request-1',
       preview_token: upstreamToken,
     });
     expect(retained.isError).toBeFalsy();
-    expect(upstreamInputs()).toHaveLength(103);
+    expect(upstreamInputs()).toHaveLength(102);
     expect(upstreamInputs().at(-1)).toEqual({
       input: { ...previewArgs, preview_token: upstreamToken, confirm: true, dry_run: false },
     });

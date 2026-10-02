@@ -3,13 +3,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from './index.js';
 import { getTools, executeTool, clearToolsCache, isToolAllowed } from './tools.js';
 import { abilityNameToToolName } from './naming.js';
 import { getSessionDataUsage, resetSessionData, isNoOpError } from './session.js';
-import { clearPendingPreviews, getPreviewKey } from './confirmation.js';
+import { clearPendingPreviews, getPendingPreviewCounts, getPreviewKey } from './confirmation.js';
 import { generateInstructions, buildSafetyTags } from './tool-schema.js';
 import { MCP_ERROR_CODES } from './errors.js';
 import {
@@ -2349,6 +2351,164 @@ describe('confirmation flow - full cycle', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  describe('preview publication state', () => {
+    let dryRunResult: unknown;
+    const connections: Array<{ client: Client; server: Server }> = [];
+
+    async function connectedClient(config = makeBaseConfig()) {
+      const { server } = await createServer(config);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      connections.push({ client, server });
+      return client;
+    }
+
+    function responseData(result: Awaited<ReturnType<Client['callTool']>>) {
+      return JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    }
+
+    function upstreamInputs(): Array<{ input: Record<string, unknown> }> {
+      return mockFetch.mock.calls
+        .filter(([url]) => String(url).includes('/run'))
+        .map(([, options]) => JSON.parse(String(options.body)));
+    }
+
+    async function preview(client: Client, siteId: number) {
+      const result = await client.callTool({
+        name: 'delete_site_v1',
+        arguments: { site_id: siteId, confirm: true },
+      });
+      expect(result.isError).toBeUndefined();
+      const data = responseData(result);
+      expect(data.status).toBe('CONFIRMATION_REQUIRED');
+      expect(typeof data.confirmation_token).toBe('string');
+      return data.confirmation_token as string;
+    }
+
+    async function confirm(client: Client, siteId: number, token: string) {
+      return client.callTool({
+        name: 'delete_site_v1',
+        arguments: { site_id: siteId, user_confirmed: true, confirmation_token: token },
+      });
+    }
+
+    beforeEach(() => {
+      clearToolsCache();
+      resetSessionData();
+      dryRunResult = { preview: true };
+      mockFetch.mockImplementation(async (url: string, options: RequestInit) => {
+        if (!url.includes('/run')) return new Response(JSON.stringify([sampleAbilities[1]]));
+        const { input } = JSON.parse(String(options.body));
+        return new Response(
+          JSON.stringify(input.dry_run === true ? dryRunResult : { deleted: true })
+        );
+      });
+    });
+
+    afterEach(async () => {
+      for (const { client, server } of connections.splice(0)) {
+        await client.close();
+        await server.close();
+      }
+    });
+
+    it('does not publish a first preview when session accounting fails', async () => {
+      const client = await connectedClient(makeBaseConfig({ maxSessionData: 2048 }));
+      dryRunResult = { payload: 'x'.repeat(4096) };
+      const before = getPendingPreviewCounts();
+      const randomUUID = vi.spyOn(crypto, 'randomUUID');
+      const failed = await client.callTool({
+        name: 'delete_site_v1',
+        arguments: { site_id: 1, confirm: true },
+      });
+      expect(failed.isError).toBe(true);
+      expect(responseData(failed).error.code).toBe(MCP_ERROR_CODES.RESOURCE_EXHAUSTED);
+      const failedToken = randomUUID.mock.results.at(-1)!.value as string;
+      expect(typeof failedToken).toBe('string');
+      expect.soft(getPendingPreviewCounts()).toEqual(before);
+
+      resetSessionData();
+      const confirmed = await confirm(client, 1, failedToken);
+      expect.soft(confirmed.isError).toBe(true);
+      expect.soft(responseData(confirmed).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs()).toEqual([{ input: { site_id: 1, dry_run: true } }]);
+    });
+
+    it('preserves an earlier confirmation when repeat-preview accounting fails', async () => {
+      const client = await connectedClient(makeBaseConfig({ maxSessionData: 2048 }));
+      const token = await preview(client, 1);
+      const before = getPendingPreviewCounts();
+      dryRunResult = { payload: 'x'.repeat(4096) };
+      const failed = await client.callTool({
+        name: 'delete_site_v1',
+        arguments: { site_id: 1, confirm: true },
+      });
+      expect(failed.isError).toBe(true);
+      expect(responseData(failed).error.code).toBe(MCP_ERROR_CODES.RESOURCE_EXHAUSTED);
+      expect(getPendingPreviewCounts()).toEqual(before);
+
+      resetSessionData();
+      const confirmed = await confirm(client, 1, token);
+      expect(confirmed.isError).toBeUndefined();
+      expect(responseData(confirmed)).toEqual({ deleted: true });
+      expect(upstreamInputs()).toEqual([
+        { input: { site_id: 1, dry_run: true } },
+        { input: { site_id: 1, dry_run: true } },
+        { input: { site_id: 1, confirm: true } },
+      ]);
+    });
+
+    it('caps pending previews at 100 after 101 distinct previews', async () => {
+      const client = await connectedClient();
+      const tokens = new Map<number, string>();
+      for (let siteId = 1; siteId <= 101; siteId++) {
+        tokens.set(siteId, await preview(client, siteId));
+      }
+      expect.soft(getPendingPreviewCounts()).toEqual({ previews: 100, tokens: 100 });
+
+      const newest = await confirm(client, 101, tokens.get(101)!);
+      expect(newest.isError).toBeUndefined();
+      expect(responseData(newest)).toEqual({ deleted: true });
+      const oldest = await confirm(client, 1, tokens.get(1)!);
+      expect.soft(oldest.isError).toBe(true);
+      expect.soft(responseData(oldest).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs().filter(({ input }) => input.dry_run !== true)).toEqual([
+        { input: { site_id: 101, confirm: true } },
+      ]);
+    });
+
+    it('evicts by publication order when previews share a millisecond', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const now = new Date('2026-10-01T12:00:00Z');
+      vi.setSystemTime(now);
+      const client = await connectedClient();
+      const tokens = new Map<number, string>();
+      for (let siteId = 1; siteId <= 100; siteId++) {
+        tokens.set(siteId, await preview(client, siteId));
+      }
+      const repeatedToken = await preview(client, 1);
+      const newestToken = await preview(client, 101);
+      expect(Date.now()).toBe(now.getTime());
+      expect.soft(getPendingPreviewCounts()).toEqual({ previews: 100, tokens: 100 });
+
+      const repeated = await confirm(client, 1, repeatedToken);
+      expect.soft(repeated.isError).toBeUndefined();
+      expect.soft(responseData(repeated)).toEqual({ deleted: true });
+      const newest = await confirm(client, 101, newestToken);
+      expect.soft(newest.isError).toBeUndefined();
+      expect.soft(responseData(newest)).toEqual({ deleted: true });
+      const evicted = await confirm(client, 2, tokens.get(2)!);
+      expect.soft(evicted.isError).toBe(true);
+      expect.soft(responseData(evicted).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs().filter(({ input }) => input.dry_run !== true)).toEqual([
+        { input: { site_id: 1, confirm: true } },
+        { input: { site_id: 101, confirm: true } },
+      ]);
+    });
   });
 
   it.each([
