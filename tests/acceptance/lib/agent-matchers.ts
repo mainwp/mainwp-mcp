@@ -859,19 +859,22 @@ const LINE_ORDINAL_BEFORE = /(?:^|\n)[\s*+-]*$/;
 
 /** Table boundaries stop an unrelated total from borrowing another table's categories. */
 const UPDATE_BREAKDOWN_TABLE = /^(?:[^\n]*\|[^\n]*(?:\n|$))+/gm;
-/** Rows and cells retain their offsets so the total replaces the same window token. */
+/** Row offsets let the total replace the same window token. */
 const UPDATE_BREAKDOWN_ROW = /[^\n]+/g;
-const UPDATE_BREAKDOWN_CELL = /[^|]+/g;
-/** Type labels distinguish an update breakdown from a count of affected sites. */
-const UPDATE_BREAKDOWN_CATEGORY = /^(?:core|plugins?|themes?|translations?)$/;
+/** Empty cells preserve a count's column when its header is blank. */
+const UPDATE_BREAKDOWN_CELL = /[^|]+|(?<=\|)(?=\|)/g;
+/** Generic type labels keep product and site names out of the category sum. */
+const UPDATE_BREAKDOWN_CATEGORY =
+  /^(?:(?:(?:wordpress|wp)\s+)?(core)(?:\s+updates?|\s+\(wordpress\))?|(plugins?|themes?|translations?)(?:\s+updates?)?)$/;
 /** A category count cannot stand in for the breakdown's explicit total. */
 const UPDATE_BREAKDOWN_TOTAL = /^(?:total|overall)$/;
 /** Descriptions and version strings do not supply numeric count cells. */
 const UPDATE_BREAKDOWN_COUNT = new RegExp(`^${NUMBER_TOKEN.source}$`);
 /** Emphasis presents the same label or count without changing its meaning. */
 const UPDATE_BREAKDOWN_EMPHASIS = /[*_]/g;
-/** Installed items and affected sites are different inventories despite sharing type labels. */
-const UPDATE_BREAKDOWN_COUNT_HEADER = /^(?:count|updates|pending|total|number)$/i;
+/** Headers naming another inventory or versions cannot supply an update count. */
+const UPDATE_BREAKDOWN_NON_COUNT_HEADER =
+  /\b(?:installed|(?:web)?sites?|affected|applied|active|versions?)\b/i;
 /** A site identifier can carry a note without becoming a network heading. */
 const UPDATE_BREAKDOWN_SITE_HEADING = /^(?=\S*[\d.])\S+$|^(?=\S*[a-z])(?=\S*[\d.])\S+\s+[(—–-].*$/;
 /** Opening and closing heading marks, list marks and a colon present the same identifier. */
@@ -909,9 +912,9 @@ const UPDATE_BREAKDOWN_SUM_CATEGORY_SCOPE =
   /\b(?:core|plugins?|themes?|translations?)\s+updates?\b/;
 
 /**
- * Reads a total row only when it agrees with the category counts. For either
- * reading, a header must say count, updates, pending, total or number above
- * each count, ignoring case and emphasis. Headerless tables are unrestricted.
+ * Reads a total row only when it agrees with the category counts. Headers
+ * exclude numeric columns naming other inventories or versions; each row must
+ * have exactly one remaining count. Headerless rows need one numeric cell.
  *
  * Without a total row, the sum of numeric core, plugin and theme counts,
  * including translations when present, earns credit when it equals the
@@ -927,16 +930,26 @@ function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMent
   const mentions = new Map<number, UpdateCountMention | null>();
   for (const table of answer.matchAll(UPDATE_BREAKDOWN_TABLE)) {
     if (isPerSiteUpdateBreakdown(answer, table.index)) continue;
+    const rows = [...table[0].matchAll(UPDATE_BREAKDOWN_ROW)];
+    const header = [...rows[0][0].matchAll(UPDATE_BREAKDOWN_CELL)].map(cell =>
+      cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim()
+    );
+    const hasHeader =
+      !UPDATE_BREAKDOWN_CATEGORY.test(header[0] ?? '') &&
+      !UPDATE_BREAKDOWN_TOTAL.test(header[0] ?? '');
     const categories: { value: number; index: number }[] = [];
     const categoryLabels = new Set<string>();
     const totals: { value: number; index: number }[] = [];
     let valid = true;
-    for (const row of table[0].matchAll(UPDATE_BREAKDOWN_ROW)) {
+    for (const row of rows) {
       const cells = [...row[0].matchAll(UPDATE_BREAKDOWN_CELL)];
       const label = cells[0]?.[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim() ?? '';
-      const category = UPDATE_BREAKDOWN_CATEGORY.test(label);
+      const category = UPDATE_BREAKDOWN_CATEGORY.exec(label);
       if (!category && !UPDATE_BREAKDOWN_TOTAL.test(label)) continue;
-      const counts = cells.slice(1).flatMap(cell => {
+      const counts = cells.slice(1).flatMap((cell, column) => {
+        if (hasHeader && UPDATE_BREAKDOWN_NON_COUNT_HEADER.test(header[column + 1] ?? '')) {
+          return [];
+        }
         const count = cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim();
         if (!UPDATE_BREAKDOWN_COUNT.test(count)) return [];
         const token = [...cell[0].matchAll(NUMBER_TOKEN)][0];
@@ -949,32 +962,9 @@ function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMent
         continue;
       }
       (category ? categories : totals).push(counts[0]);
-      if (category) categoryLabels.add(label);
+      if (category) categoryLabels.add(category[1] ?? category[2]);
     }
     if (!valid || categories.length === 0 || totals.length > 1) continue;
-    const rows = [...table[0].matchAll(UPDATE_BREAKDOWN_ROW)];
-    const header = [...rows[0][0].matchAll(UPDATE_BREAKDOWN_CELL)].map(cell =>
-      cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim()
-    );
-    if (
-      !UPDATE_BREAKDOWN_CATEGORY.test(header[0] ?? '') &&
-      !UPDATE_BREAKDOWN_TOTAL.test(header[0] ?? '') &&
-      [...categories, ...totals].some(count => {
-        const row = rows.find(
-          row =>
-            count.index >= table.index + row.index &&
-            count.index < table.index + row.index + row[0].length
-        );
-        if (!row) return true;
-        const column = [...row[0].matchAll(UPDATE_BREAKDOWN_CELL)].findIndex(cell => {
-          const start = table.index + row.index + cell.index;
-          return count.index >= start && count.index < start + cell[0].length;
-        });
-        return !UPDATE_BREAKDOWN_COUNT_HEADER.test(header[column] ?? '');
-      })
-    ) {
-      continue;
-    }
     const sum = categories.reduce((value, count) => value + count.value, 0);
     let total = totals[0];
     if (total) {
@@ -1408,7 +1398,12 @@ const DOWN_CLAIM_HYPOTHETICAL_ASIDE = new RegExp(
 const DOWN_CLAIM_CLAUSE_PRESENTATION = /^(?:>\s*)*(?:(?:[-*+•]|\d+[.)])\s+)?/;
 /** Negation removes a quantity, while comparisons leave it positive. */
 const DOWN_CLAIM_QUANTITY_NEGATOR =
-  /\b(?:no|not|zero|without|(?:none|neither)\s+of(?:\s+(?:the|these|those|my|your|our|their|his|her|its))?)\s*$/;
+  /\b(?:no|not|zero|without|(?:none|neither|zero)\s+of(?:\s+(?:the|these|those|my|your|our|their|his|her|its))?)\s*$/;
+/** A count and two plain modifiers keep the site noun within a quantity denial. */
+const DOWN_CLAIM_MODIFIED_QUANTITY_NEGATOR = new RegExp(
+  `\\b(?:no|(?:none|neither|zero)\\s+of(?:\\s+(?:the|these|those|my|your|our|their|his|her|its))?)` +
+    `\\s+${NUMBER_TOKEN.source}(?:\\s+(?!(?:but|and|or|yet|though|although|except|while)\\b)[a-z]+){0,2}\\s*$`
+);
 /** Modifiers can separate a negator from a bare plural, but conjunctions change its subject. */
 const DOWN_CLAIM_BARE_PLURAL_NEGATOR =
   /\b(?:no|not|zero|without|isn't|aren't|wasn't|weren't|none|neither)\b(?:\s+(?!(?:but|and|or|yet|though|although|except|while)\b)[a-z'-]+){0,5}\s*$/;
@@ -1612,9 +1607,9 @@ function downClaimItemConnected(clause: string): boolean {
 }
 
 /**
- * Zero numerators (including N out of M ratios) and an adjacent real negator
- * cancel a quantity. A bare plural also accepts a negator through up to five
- * intervening words, never across a conjunction, so negated updates cannot
+ * Zero numerators (including N out of M ratios) and an adjacent negator cancel
+ * a quantity. A bare plural accepts a count and two plain modifiers, or five
+ * words without a count. Conjunctions end the reach so negated updates cannot
  * cancel a separate claim about sites.
  */
 function downClaimQuantityNegated(scope: string, index: number, subject: string): boolean {
@@ -1623,7 +1618,9 @@ function downClaimQuantityNegated(scope: string, index: number, subject: string)
   const before = scope.slice(0, index);
   return (
     DOWN_CLAIM_QUANTITY_NEGATOR.test(before) ||
-    (DOWN_CLAIM_BARE_PLURAL.test(subject) && DOWN_CLAIM_BARE_PLURAL_NEGATOR.test(before))
+    (DOWN_CLAIM_BARE_PLURAL.test(subject) &&
+      (DOWN_CLAIM_BARE_PLURAL_NEGATOR.test(before) ||
+        DOWN_CLAIM_MODIFIED_QUANTITY_NEGATOR.test(before)))
   );
 }
 
@@ -1678,6 +1675,10 @@ function answerAvoidsDisconnectedClaims(answer: string, connectedHostnames: stri
     ? `\\b(?:${roster})\\b(?![\\w.-])|${DOWN_CLAIM_HOSTNAME.source}`
     : DOWN_CLAIM_HOSTNAME.source;
   const sitePattern = new RegExp(siteSubject, 'g');
+  /** A neither/nor pair denies a down verdict on both named sites. */
+  const neitherPair = new RegExp(
+    `\\bneither\\s+(?:${siteSubject})\\s+nor\\s+(?:${siteSubject})\\s*$`
+  );
   answer = canonicalizeDownClaimSites(answer, sitePattern);
   const subjectPattern = new RegExp(`(?:${siteSubject})|(?:${DOWN_CLAIM_QUANTITY.source})`, 'g');
 
@@ -1786,6 +1787,9 @@ function answerAvoidsDisconnectedClaims(answer: string, connectedHostnames: stri
           if (downClaimDirection(scope, wordIndex, match[0])) continue;
           for (const subject of subjects) {
             if (isDownClaimHypothetical(scope, subject.index, subject.text, wordEnd)) continue;
+            if (subject.isSite && neitherPair.test(scope.slice(0, subject.end))) {
+              continue;
+            }
             const before = stripDownClaimPresentation(scope.slice(subject.end, wordIndex));
             const after = stripDownClaimPresentation(scope.slice(wordEnd, subject.index));
             const predicate = subject.isSite
@@ -1825,6 +1829,15 @@ function answerAvoidsDisconnectedClaims(answer: string, connectedHostnames: stri
 }
 
 /**
+ * "None of the 10 sites are connected" calls every site down without a
+ * down-word: the negated quantity sits in front of a liveness word. The
+ * lookahead keeps "none of your connected sites are offline" out, where
+ * "connected" describes the sites and the claim is the denial after it.
+ */
+const NO_SITES_CONNECTED =
+  /\b(?:no|none|neither|not one|zero)\b(?:\s+of)?(?:\s+(?:the|your|our|these|those|them))?(?:\s+(?:\d+|sites?|websites?|one|managed|child|active|monitored|remaining|other))*\s+(?:(?:is|are|was|were|appears?|seems?)(?:\s+to\s+be)?\s+)?(?:up|online|connected|reachable|responding|operational|healthy)\b(?!\s+(?:\w+\s+)?(?:sites?|websites?)\b)/;
+
+/**
  * True when the answer reports every disconnected site as disconnected, never
  * reports a connected one as down, and, for a fully connected network, claims
  * nothing is down.
@@ -1847,6 +1860,10 @@ export function answerLabelsDisconnectedSites(
   // items to the next heading's fragment.
   const answer = normalizeAnswerKeepingBreaks(text, LINE_BREAKS);
   if (disconnectedHostnames.length === 0) {
+    for (const clause of answer.split(CLAUSE_BOUNDARY)) {
+      const claim = NO_SITES_CONNECTED.exec(clause);
+      if (claim && !DOWN_CLAIM_HYPOTHETICAL.test(clause.slice(0, claim.index))) return false;
+    }
     return answerAvoidsDisconnectedClaims(answer, connectedHostnames);
   }
 

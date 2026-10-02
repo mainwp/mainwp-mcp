@@ -3451,8 +3451,54 @@ describe('plugin command scenarios', () => {
       '| site3.example.test | 1 |\n' +
       '| Total | 3 |';
 
-    it.each([
+    it.each<[string, string, number, boolean]>([
       ['archived answer at 6', FULLY_CONNECTED_NETWORK_SUMMARY, 6, true],
+      ...['# updates', 'Pending (#)', 'To update', 'Qty', 'Updates needed', '', undefined].map(
+        header =>
+          [
+            `ordinary count header with a total: ${header ?? 'missing'}`,
+            'You manage 10 sites.\n' +
+              (header === undefined ? '| Type |\n' : `| Type | ${header} |\n`) +
+              '|---|---|\n| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+            6,
+            true,
+          ] as [string, string, number, boolean]
+      ),
+      ...[
+        'Installed',
+        'Sites affected',
+        'Installed updates',
+        'Applied',
+        'Active',
+        'Version',
+        'Versions',
+        'Available versions',
+      ].flatMap(header => {
+        const table =
+          `| Type | ${header} |\n|---|---|\n` +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |';
+        return [
+          [
+            `other inventory header cannot supply a total: ${header}`,
+            'Sites: 10.\n' + table,
+            6,
+            false,
+          ] as [string, string, number, boolean],
+          [
+            `other inventory header preserves the prose total: ${header}`,
+            'Sites: 10. Pending updates: 5 in total.\n' + table,
+            5,
+            true,
+          ] as [string, string, number, boolean],
+        ];
+      }),
+      [
+        'one count column survives beside affected sites with a total',
+        'Sites: 10.\n| Type | Pending updates | Sites affected |\n|---|---|---|\n' +
+          '| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 2 | 1 |\n| Total | 6 | 5 |',
+        6,
+        true,
+      ],
       ['archived answer at 5', FULLY_CONNECTED_NETWORK_SUMMARY, 5, false],
       ['affected sites without an update total', 'Sites: 10.\n' + affectedSitesTable, 3, false],
       [
@@ -3543,6 +3589,28 @@ describe('plugin command scenarios', () => {
         true,
       ],
       [
+        'pending updates header with a matching total row',
+        'You manage 10 sites.\n\n| Type | Pending updates |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+        6,
+        true,
+      ],
+      [
+        'updates available header with a matching total row',
+        'You manage 10 sites.\n\n| Type | Updates available |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
+        6,
+        true,
+      ],
+      [
+        'installed updates total beside the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n' +
+          '| Type | Installed updates |\n|---|---|\n| Core | 10 |\n| Plugins | 120 |\n' +
+          '| Themes | 30 |\n| Total | 160 |',
+        6,
+        true,
+      ],
+      [
         'count header with a conflicting total row',
         'You manage 10 sites.\n\n| Type | Count |\n|---|---|\n' +
           '| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |\n| Total | 6 |',
@@ -3569,7 +3637,110 @@ describe('plugin command scenarios', () => {
     const categoryBreakdown =
       '| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |';
 
-    it.each([
+    it.each<[string, string, number, boolean]>([
+      ...['# updates', 'Pending (#)', 'To update', 'Qty', 'Updates needed', '', undefined].map(
+        header =>
+          [
+            `ordinary count header without a total: ${header ?? 'missing'}`,
+            'You manage 10 sites.\n' +
+              categoryBreakdown.replace(
+                '| Type | Count |',
+                header === undefined ? '| Type |' : `| Type | ${header} |`
+              ),
+            6,
+            true,
+          ] as [string, string, number, boolean]
+      ),
+      [
+        'one count column survives beside affected sites',
+        'Sites: 10.\n| Type | Pending updates | Sites affected |\n|---|---|---|\n' +
+          '| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 2 | 1 |',
+        6,
+        true,
+      ],
+      [
+        'count column follows affected sites',
+        'Sites: 10.\n| Type | Sites affected | Pending updates |\n|---|---|---|\n' +
+          '| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 1 | 2 |',
+        6,
+        true,
+      ],
+      [
+        'empty count header beside affected sites',
+        'Sites: 10.\n| Type || Sites affected |\n|---|---|---|\n' +
+          '| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 2 | 1 |',
+        6,
+        true,
+      ],
+      [
+        'two numeric columns without a header',
+        'Sites: 10.\n| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 2 | 1 |',
+        6,
+        false,
+      ],
+      [
+        'two surviving numeric columns with a header',
+        'Sites: 10.\n| Type | Pending updates | Qty |\n|---|---|---|\n' +
+          '| Core | 1 | 1 |\n| Plugins | 3 | 3 |\n| Themes | 2 | 1 |',
+        6,
+        false,
+      ],
+      ...[
+        ['Core', 'WordPress core'],
+        ['Core', 'WP core'],
+        ['Core', 'Core updates'],
+        ['Plugins', 'Plugin updates'],
+        ['Themes', 'Theme updates'],
+        ['Translations', 'Translation updates'],
+        ['Core', 'Core (WordPress)'],
+      ].map(
+        ([original, label]) =>
+          [
+            `generic category label: ${label}`,
+            'Sites: 10.\n' +
+              (categoryBreakdown + '\n| Translations | 0 |').replace(
+                `| ${original} |`,
+                `| ${label} |`
+              ),
+            6,
+            true,
+          ] as [string, string, number, boolean]
+      ),
+      [
+        'nonzero translation update count',
+        'Sites: 10.\n' + categoryBreakdown + '\n| Translation updates | 1 |',
+        7,
+        true,
+      ],
+      ...['Akismet plugin', 'site4 plugins'].map(
+        label =>
+          [
+            `specific plugin or site label: ${label}`,
+            'Sites: 10.\n' + categoryBreakdown.replace('| Plugins |', `| ${label} |`),
+            6,
+            false,
+          ] as [string, string, number, boolean]
+      ),
+      [
+        'specific theme label',
+        'Sites: 10.\n' + categoryBreakdown.replace('| Themes |', '| Twenty Twenty-Four theme |'),
+        6,
+        false,
+      ],
+      [
+        'long category labels under a single-type heading',
+        'Sites: 10.\nPending plugin updates:\n| Type | Count |\n|---|---|\n' +
+          '| WordPress core | 1 |\n| Plugin updates | 3 |\n| Theme updates | 2 |',
+        6,
+        false,
+      ],
+      [
+        'long category labels under a per-site heading',
+        'Sites: 10.\nsite4.example.test:\n| Type | Count |\n|---|---|\n' +
+          '| WP core | 1 |\n| Plugin updates | 3 |\n| Theme updates | 2 |',
+        6,
+        false,
+      ],
       [
         'four categories without a total at 6',
         'You manage 10 sites.\n' + categoryBreakdown + '\n| Translations | 0 |',
@@ -3708,6 +3879,13 @@ describe('plugin command scenarios', () => {
         'pending header above category counts',
         'You manage 10 sites.\n\n' +
           categoryBreakdown.replace('| Type | Count |', '| Type | Pending |'),
+        6,
+        true,
+      ],
+      [
+        'pending updates header above category counts',
+        'You manage 10 sites.\n\n' +
+          categoryBreakdown.replace('| Type | Count |', '| Type | Pending updates |'),
         6,
         true,
       ],
@@ -5030,6 +5208,23 @@ describe('plugin command scenarios', () => {
   });
 
   it.each([
+    ['None of the 10 managed sites are disconnected.', true],
+    ['Neither of the 10 connected child sites are offline.', true],
+    ['Zero of the 10 active monitored sites are down.', true],
+    ['None of the 10 sites are connected.', false],
+    ['No sites are responding.', false],
+    ['None of the 10 managed sites are online.', false],
+    ['If none of the sites are responding, run a reconnect.', true],
+    ['2 of the 10 managed sites are disconnected.', false],
+    ['2 of the 10 managed child sites are offline.', false],
+    ['No updates and 2 of the 10 managed sites are disconnected.', false],
+    ['Neither site1.example.test nor site2.example.test is offline.', true],
+    ['Neither site1 nor site2 is offline.', true],
+    ['Neither site1.example.test nor site2.example.test is not connected.', true],
+    [
+      'Neither site1.example.test nor site2.example.test is online; site2.example.test is offline.',
+      false,
+    ],
     ['None of your connected sites are offline.', true],
     ['None of the managed sites is down.', true],
     ['No managed sites are offline.', true],
