@@ -1829,15 +1829,6 @@ function answerAvoidsDisconnectedClaims(answer: string, connectedHostnames: stri
 }
 
 /**
- * "None of the 10 sites are connected" calls every site down without a
- * down-word: the negated quantity sits in front of a liveness word. The
- * lookahead keeps "none of your connected sites are offline" out, where
- * "connected" describes the sites and the claim is the denial after it.
- */
-const NO_SITES_CONNECTED =
-  /\b(?:no|none|neither|not one|zero)\b(?:\s+of)?(?:\s+(?:the|your|our|these|those|them))?(?:\s+(?:\d+|sites?|websites?|one|managed|child|active|monitored|remaining|other))*\s+(?:(?:is|are|was|were|appears?|seems?)(?:\s+to\s+be)?\s+)?(?:up|online|connected|reachable|responding|operational|healthy)\b(?!\s+(?:\w+\s+)?(?:sites?|websites?)\b)/;
-
-/**
  * True when the answer reports every disconnected site as disconnected, never
  * reports a connected one as down, and, for a fully connected network, claims
  * nothing is down.
@@ -1860,10 +1851,6 @@ export function answerLabelsDisconnectedSites(
   // items to the next heading's fragment.
   const answer = normalizeAnswerKeepingBreaks(text, LINE_BREAKS);
   if (disconnectedHostnames.length === 0) {
-    for (const clause of answer.split(CLAUSE_BOUNDARY)) {
-      const claim = NO_SITES_CONNECTED.exec(clause);
-      if (claim && !DOWN_CLAIM_HYPOTHETICAL.test(clause.slice(0, claim.index))) return false;
-    }
     return answerAvoidsDisconnectedClaims(answer, connectedHostnames);
   }
 
