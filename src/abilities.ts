@@ -1026,7 +1026,8 @@ function hasRequiredNullableInput(schema: unknown): boolean {
 
   return schema.required.some(key => {
     const type = (properties[key] as Record<string, unknown>).type;
-    return type === 'null' || (Array.isArray(type) && type.includes('null'));
+    if (type === 'null') return true;
+    return Array.isArray(type) && type.includes('null');
   });
 }
 
