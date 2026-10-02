@@ -272,6 +272,41 @@ describe('MCP request handlers', () => {
     await server.close();
   });
 
+  it('sends the site resource id as site_id_or_domain', async () => {
+    // get-site-v1 requires site_id_or_domain; the Dashboard rejects a
+    // request that carries site_id instead.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...getSiteAbility({ readonly: true, destructive: false, idempotent: true }),
+          input_schema: {
+            type: 'object',
+            properties: { site_id_or_domain: { type: ['integer', 'string'] } },
+            required: ['site_id_or_domain'],
+          },
+        },
+      ],
+      headers: new Headers(),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 7, name: 'Site 7' }),
+      headers: new Headers(),
+    });
+    const { client, server } = await connectedClient();
+
+    const result = await client.readResource({ uri: 'mainwp://site/7' });
+
+    const text = (result.contents as Array<{ text: string }>)[0].text;
+    expect(JSON.parse(text)).toMatchObject({ id: 7, name: 'Site 7' });
+    expect(runUrls()).toHaveLength(1);
+    expect(runUrls()[0]).toContain('input[site_id_or_domain]=7');
+    expect(runUrls()[0]).not.toContain('input[site_id]');
+    await client.close();
+    await server.close();
+  });
+
   it('skips site-id completions instead of executing a destructive-annotated list-sites', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
