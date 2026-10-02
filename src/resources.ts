@@ -205,7 +205,7 @@ export async function handleReadResource(
       const result = await executeAbility(
         config,
         'mainwp/get-site-v1',
-        { site_id: parsed.params.site_id },
+        { site_id_or_domain: parsed.params.site_id },
         logger,
         ability
       );
