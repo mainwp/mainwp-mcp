@@ -904,16 +904,31 @@ function isPerSiteUpdateBreakdown(answer: string, index: number): boolean {
   return UPDATE_BREAKDOWN_SITE_HEADING.test(label);
 }
 
+/** A sum under one category's update heading cannot state the network total. */
+const UPDATE_BREAKDOWN_SUM_CATEGORY_SCOPE =
+  /\b(?:core|plugins?|themes?|translations?)\s+updates?\b/;
+
 /**
  * Reads a total row only when it agrees with the category counts. For either
  * reading, a header must say count, updates, pending, total or number above
  * each count, ignoring case and emphasis. Headerless tables are unrestricted.
+ *
+ * Without a total row, the sum of numeric core, plugin and theme counts,
+ * including translations when present, earns credit when it equals the
+ * inventory and is otherwise ignored. The nearest non-blank line must contain no
+ * hostname and must not put a category directly before update or updates.
+ * The sum is neither explicit nor labelled, so it cannot contradict a stated
+ * total or cause a site update conflict. Its mention uses the first category
+ * count's offset because the sum has no token of its own. Null entries suppress
+ * window readings at the other category offsets so those counts do not state
+ * totals.
  */
-function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMention> {
-  const mentions = new Map<number, UpdateCountMention>();
+function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMention | null> {
+  const mentions = new Map<number, UpdateCountMention | null>();
   for (const table of answer.matchAll(UPDATE_BREAKDOWN_TABLE)) {
     if (isPerSiteUpdateBreakdown(answer, table.index)) continue;
     const categories: { value: number; index: number }[] = [];
+    const categoryLabels = new Set<string>();
     const totals: { value: number; index: number }[] = [];
     let valid = true;
     for (const row of table[0].matchAll(UPDATE_BREAKDOWN_ROW)) {
@@ -934,8 +949,9 @@ function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMent
         continue;
       }
       (category ? categories : totals).push(counts[0]);
+      if (category) categoryLabels.add(label);
     }
-    if (!valid || categories.length === 0 || totals.length !== 1) continue;
+    if (!valid || categories.length === 0 || totals.length > 1) continue;
     const rows = [...table[0].matchAll(UPDATE_BREAKDOWN_ROW)];
     const header = [...rows[0][0].matchAll(UPDATE_BREAKDOWN_CELL)].map(cell =>
       cell[0].replace(UPDATE_BREAKDOWN_EMPHASIS, '').trim()
@@ -959,13 +975,32 @@ function breakdownTableUpdateCounts(answer: string): Map<number, UpdateCountMent
     ) {
       continue;
     }
-    const total = totals[0];
-    if (categories.reduce((sum, count) => sum + count.value, 0) !== total.value) continue;
+    const sum = categories.reduce((value, count) => value + count.value, 0);
+    let total = totals[0];
+    if (total) {
+      if (sum !== total.value) continue;
+    } else {
+      const heading = stripDownClaimPresentation(
+        answer.slice(0, table.index).trimEnd().split('\n').pop() ?? ''
+      );
+      if (DOWN_CLAIM_HOSTNAME.test(heading) || UPDATE_BREAKDOWN_SUM_CATEGORY_SCOPE.test(heading)) {
+        continue;
+      }
+      if (
+        !categoryLabels.has('core') ||
+        (!categoryLabels.has('plugin') && !categoryLabels.has('plugins')) ||
+        (!categoryLabels.has('theme') && !categoryLabels.has('themes'))
+      ) {
+        continue;
+      }
+      total = { value: sum, index: categories[0].index };
+      for (const count of categories) mentions.set(count.index, null);
+    }
     mentions.set(total.index, {
       value: total.value,
-      explicitTotal: true,
+      explicitTotal: totals.length === 1,
       categoryScoped: false,
-      labelled: true,
+      labelled: totals.length === 1,
     });
   }
   return mentions;
@@ -980,8 +1015,8 @@ function updateCountMentions(answer: string): UpdateCountMention[] {
     if (value === undefined) continue;
     const index = match.index ?? 0;
     const tableMention = tableMentions.get(index);
-    if (tableMention) {
-      mentions.push(tableMention);
+    if (tableMentions.has(index)) {
+      if (tableMention) mentions.push(tableMention);
       continue;
     }
     const before = answer.slice(Math.max(0, index - 40), index);

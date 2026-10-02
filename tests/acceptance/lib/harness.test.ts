@@ -96,6 +96,42 @@ import { launchServer, type ServerConnection } from './server.js';
 
 vi.mock('./server.js', () => ({ launchServer: vi.fn() }));
 
+const CATEGORY_ONLY_NETWORK_SUMMARY = `Here's the network summary. It's complete: every capability it needed is on this Dashboard, and I made only read-only calls.
+
+## Connection state (10 sites)
+
+| State | Count | Sites |
+|---|---|---|
+| Connected | 10 | site1 to site10 |
+| Disconnected | 0 | none |
+| Erroring | 0 | none |
+
+The Dashboard reports every site as \`connected\`. Neither the site list nor the per-site detail has a separate error field, so "erroring" here means no site has a non-connected status.
+
+## Pending updates
+
+| Type | Count | Where |
+|---|---|---|
+| Core | 1 | site5 (WordPress 6.8.3 → 7.1.2) |
+| Plugins | 3 | site4 (Akismet 5.4 → 5.7.2, Contact Form 7 6.1.3 → 6.1.7, Yoast SEO 28.1 → 28.6) |
+| Themes | 2 | site6 (Twenty Twenty-Four 1.0 → 1.6, Twenty Twenty-Three 1.0 → 1.7) |
+| Translations | 0 | none |
+
+**Fully current: 7 of 10.** That's site1, 2, 3, 7, 8, 9 and 10.
+
+## Sync freshness
+
+All 10 \`last_sync\` timestamps fall between 2026-10-02 01:44:32 and 01:46:38 UTC, so the whole network was synced within the same two minutes and no site has stale data. The timestamps are in UTC and show a date one day after today's local date. That fits a US timezone in the evening, but the server doesn't report its current time, so I can't give an exact age.
+
+## Needs attention now
+
+1. **site5**: WordPress core is a major version behind (6.8.3 → 7.1.2). It has the lowest health score on the network, 82.
+2. **site10**: runs PHP 7.4.30, which is end-of-life. Every other site runs 8.2.29. It's the reason this site's health is 87 even with no pending updates.
+3. **site4**: 3 plugin updates, including Akismet more than three minor versions behind. Health 87.
+4. **site6**: both default themes are still at 1.0. If neither is the active theme, deleting them is cleaner than updating them.
+
+Also worth knowing: every child runs MainWP Child \`6.3-beta1\`. That's expected on a testbed but would need attention on a production network.`;
+
 const FULLY_CONNECTED_NETWORK_SUMMARY = `Here's the network summary. It's read-only and covers all 10 sites.
 
 ## Network summary (2026-10-01, 11:49 UTC)
@@ -3530,6 +3566,233 @@ describe('plugin command scenarios', () => {
       }
     );
 
+    const categoryBreakdown =
+      '| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |';
+
+    it.each([
+      [
+        'four categories without a total at 6',
+        'You manage 10 sites.\n' + categoryBreakdown + '\n| Translations | 0 |',
+        6,
+        true,
+      ],
+      [
+        'four categories without a total at 5',
+        'You manage 10 sites.\n' + categoryBreakdown + '\n| Translations | 0 |',
+        5,
+        false,
+      ],
+      [
+        'three categories without translations',
+        'You manage 10 sites.\n' + categoryBreakdown,
+        6,
+        true,
+      ],
+      [
+        'category counts beside notes',
+        'You manage 10 sites.\n| Type | Count | Where |\n|---|---|---|\n' +
+          '| Core | 1 | site5 (WordPress 6.8.3 → 7.1.2) |\n' +
+          '| Plugins | 3 | site4 (Akismet 5.4 → 5.7.2, Contact Form 7 6.1.3 → 6.1.7, Yoast SEO 28.1 → 28.6) |\n' +
+          '| Themes | 2 | site6 (Twenty Twenty-Four 1.0 → 1.6, Twenty Twenty-Three 1.0 → 1.7) |\n' +
+          '| Translations | 0 | none |',
+        6,
+        true,
+      ],
+      [
+        'singular categories without a total',
+        'You manage 10 sites.\n| Type | Count |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugin | 3 |\n| Theme | 2 |',
+        6,
+        true,
+      ],
+      [
+        'category sum without core',
+        'You manage 10 sites.\n| Type | Count |\n|---|---|\n| Plugins | 3 |\n| Themes | 2 |',
+        5,
+        false,
+      ],
+      [
+        'category sum without themes',
+        'You manage 10 sites.\n| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 3 |',
+        4,
+        false,
+      ],
+      [
+        'category sum with a non-numeric theme count',
+        'You manage 10 sites.\n| Type | Count |\n|---|---|\n' +
+          '| Core | 1 |\n| Plugins | 3 |\n| Themes | n/a |',
+        4,
+        false,
+      ],
+      [
+        'one site without a network total',
+        'Sites: 10.\n\nsite4.example.test:\n| Type | Count |\n|---|---|\n' +
+          '| Core | 0 |\n| Plugins | 3 |\n| Themes | 0 |',
+        3,
+        false,
+      ],
+      [
+        'one site beside the stated network total',
+        'Sites: 10. Pending updates: 6 in total.\n\nsite4.example.test:\n' +
+          '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 0 |',
+        6,
+        true,
+      ],
+      [
+        'category sum disagrees with the stated total',
+        'You manage 10 sites. There are 5 pending updates in total.\n' + categoryBreakdown,
+        6,
+        false,
+      ],
+      [
+        'category sum cannot replace an inconsistent total row',
+        'You manage 10 sites.\n' + categoryBreakdown + '\n| Total | 7 |',
+        6,
+        false,
+      ],
+      [
+        'zero category sum',
+        'You manage 10 sites.\n| Type | Count |\n|---|---|\n' +
+          '| Core | 0 |\n| Plugins | 0 |\n| Themes | 0 |',
+        0,
+        true,
+      ],
+      [
+        'hostname in the heading above a category sum',
+        'Sites: 10. Pending updates: 6 in total.\n\n### Updates for site4.example.test\n' +
+          '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 0 |',
+        6,
+        true,
+      ],
+      [
+        'per-site category sums beside the network total',
+        'Sites: 10. Pending updates: 6 in total.\n\n### site5 — 1 update\n' +
+          '| Type | Count |\n|---|---|\n| Core | 1 |\n| Plugins | 0 |\n| Themes | 0 |\n\n' +
+          '### site4 — 3 updates\n' +
+          '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 0 |\n\n' +
+          '### site6 — 2 updates\n' +
+          '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 0 |\n| Themes | 2 |',
+        6,
+        true,
+      ],
+      [
+        'one category heading above a category sum',
+        'Sites: 10. Pending updates: 6 in total.\n\n## Pending plugin updates\n' +
+          '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 0 |',
+        6,
+        true,
+      ],
+      [
+        'installed counts beside the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n## Installed\n\n' +
+          '| Type | Installed |\n|---|---|\n| Core | 10 |\n| Plugins | 120 |\n| Themes | 30 |',
+        6,
+        true,
+      ],
+      [
+        'affected site counts beside the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n## Installed\n\n' +
+          '| Type | Sites affected |\n|---|---|\n| Core | 1 |\n| Plugins | 1 |\n| Themes | 1 |',
+        6,
+        true,
+      ],
+      [
+        'pending update heading with notes beside category counts',
+        'You manage 10 sites.\n\n**Pending updates**\n\n| Type | Count | Where |\n|---|---|---|\n' +
+          '| Core | 1 | site5 |\n| Plugins | 3 | site4 |\n| Themes | 2 | site6 |\n' +
+          '| Translations | 0 | none |',
+        6,
+        true,
+      ],
+      [
+        'pending header above category counts',
+        'You manage 10 sites.\n\n' +
+          categoryBreakdown.replace('| Type | Count |', '| Type | Pending |'),
+        6,
+        true,
+      ],
+      [
+        'category counts without a header',
+        'You manage 10 sites.\n\n| Core | 1 |\n| Plugins | 3 |\n| Themes | 2 |',
+        6,
+        true,
+      ],
+      [
+        'matching contextual prose count beside a different category sum',
+        'You manage 10 sites.\n\nThere are 6 pending updates.\n\n' +
+          categoryBreakdown.replace('| Themes | 2 |', '| Themes | 1 |'),
+        6,
+        true,
+      ],
+      [
+        'matching explicit prose total beside a different category sum',
+        'You manage 10 sites.\n\nThere are 5 pending updates in total.\n\n' + categoryBreakdown,
+        5,
+        true,
+      ],
+      [
+        'translations outside the credited category table',
+        'You manage 10 sites. There are 7 pending updates in total.\n\n' +
+          categoryBreakdown +
+          '\n\nTranslations: 1 pending update.',
+        7,
+        true,
+      ],
+      [
+        'installed inventory cannot contradict the pending update total',
+        'You manage 10 sites.\n\nThere are 6 pending updates across the network.\n\n' +
+          '**Installed inventory**\n\n| Type | Count |\n|---|---|\n' +
+          '| Core | 10 |\n| Plugins | 120 |\n| Themes | 30 |',
+        6,
+        true,
+      ],
+      [
+        'contextual prose count with an ignored category sum',
+        'You manage 10 sites.\n\nThere are 6 pending updates.\n\n' +
+          categoryBreakdown.replace('| Themes | 2 |', '| Themes | 1 |'),
+        6,
+        true,
+      ],
+      [
+        'matching explicit prose total decides over the category sum',
+        'You manage 10 sites.\n\nThere are 5 pending updates in total.\n\n' + categoryBreakdown,
+        5,
+        true,
+      ],
+      [
+        'conflicting explicit prose total decides over the category sum',
+        'You manage 10 sites.\n\nThere are 5 pending updates in total.\n\n' + categoryBreakdown,
+        6,
+        false,
+      ],
+      [
+        'matching category sum earns credit',
+        'You manage 10 sites.\n\n' + categoryBreakdown,
+        6,
+        true,
+      ],
+      [
+        'different category sum earns no credit',
+        'You manage 10 sites.\n\n' + categoryBreakdown,
+        5,
+        false,
+      ],
+      [
+        'zero category sum earns credit',
+        'You manage 10 sites.\n\n| Type | Count |\n|---|---|\n' +
+          '| Core | 0 |\n| Plugins | 0 |\n| Themes | 0 |',
+        0,
+        true,
+      ],
+    ])(
+      'reads the total from all required update categories: %s',
+      (_name, answer, total, expected) => {
+        expect(
+          matchesNetworkSummaryAnswer(answer, { siteTotals: [10], updateTotals: [total] })
+        ).toBe(expected);
+      }
+    );
+
     const siteBreakdown = (hostname: string, plugins: number, themes: number) =>
       `${hostname}:\n| Type | Count |\n|---|---|\n| Plugins | ${plugins} |\n` +
       `| Themes | ${themes} |\n| Total | ${plugins + themes} |`;
@@ -3759,6 +4022,52 @@ describe('plugin command scenarios', () => {
       expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
     });
 
+    it('accepts the full summary with all update categories and no total row', async () => {
+      if (!scenario?.evaluate) throw new Error('The network-summary scenario lost its evaluator');
+      const sites = Array.from({ length: 10 }, (_, index) => ({
+        id: index + 1,
+        url: `https://site${index + 1}.example.test`,
+        name: `site${index + 1}.example.test`,
+        status: 'connected',
+      }));
+      const verifier = {
+        listSites: async () => sites,
+        listUpdates: async () => ({ total: 6 }),
+      } as unknown as IndependentVerifier;
+      const toolUses = [
+        { id: 'count', name: 'mcp__mainwp__count_sites_v1', input: {} },
+        { id: 'updates', name: 'mcp__mainwp__list_updates_v1', input: {} },
+      ];
+      const grade = async (finalText: string) =>
+        (
+          await scenario.evaluate!(
+            {
+              count: sites.length,
+              allSiteUrls: sites.map(site => site.url).sort(),
+              disconnectedSiteUrls: [],
+              updateTotal: 6,
+            },
+            {
+              toolUses,
+              toolResults: [
+                { toolUseId: 'count', content: '{"total":10}' },
+                { toolUseId: 'updates', content: '{"total":6}' },
+              ],
+              finalText,
+              totalToolUses: toolUses.length,
+              turns: toolUses.length,
+              resourceReads: [],
+              skill: { discovered: false, invoked: false },
+              assistantText: true,
+            },
+            verifier
+          )
+        ).evaluation;
+      const evaluation = await grade(CATEGORY_ONLY_NETWORK_SUMMARY);
+
+      expect(evaluation.faithfulFinalAnswer.pass).toBe(true);
+    });
+
     it('allows a network snapshot alongside the inventory reads', async () => {
       const evaluation = await grade(
         'You manage 2 sites with 0 pending updates. No sites are disconnected.',
@@ -3929,6 +4238,21 @@ describe('plugin command scenarios', () => {
         2
       )
     ).toBe(true);
+  });
+
+  it('ignores a category sum when checking site update conflicts', () => {
+    const answer = '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 1 |';
+
+    expect(statedUpdateTotalConflicts(answer, 5)).toBe(false);
+    expect(statedUpdateTotalConflicts(answer, 4)).toBe(false);
+  });
+
+  it('keeps a total row as a stated site update total', () => {
+    const answer =
+      '| Type | Count |\n|---|---|\n| Core | 0 |\n| Plugins | 3 |\n| Themes | 1 |\n| Total | 4 |';
+
+    expect(statedUpdateTotalConflicts(answer, 5)).toBe(true);
+    expect(statedUpdateTotalConflicts(answer, 4)).toBe(false);
   });
 
   it('ignores an installed total when checking site update conflicts', () => {
