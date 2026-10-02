@@ -45,5 +45,26 @@
       },
       "show_in_rest": true
     }
+  },
+  {
+    "name": "mainwp/reset-site-note-v1",
+    "label": "Reset Site Note",
+    "description": "Reset a fixture site note using its dry-run preview token.",
+    "category": "mainwp-sites",
+    "input_schema": {
+      "type": "object",
+      "required": ["site_id_or_domain", "request_id", "confirm", "dry_run", "preview_token"],
+      "properties": {
+        "site_id_or_domain": { "type": ["integer", "string"] },
+        "request_id": { "type": "string" },
+        "confirm": { "type": "boolean" },
+        "dry_run": { "type": "boolean" },
+        "preview_token": { "type": ["string", "null"], "minLength": 43, "maxLength": 128 }
+      }
+    },
+    "meta": {
+      "annotations": { "readonly": false, "destructive": true, "idempotent": true },
+      "show_in_rest": true
+    }
   }
 ]

@@ -2353,6 +2353,72 @@ describe('confirmation flow - full cycle', () => {
     vi.restoreAllMocks();
   });
 
+  it('carries nullable DELETE preview and captured token through MCP request handlers', async () => {
+    clearToolsCache();
+    resetSessionData();
+    const upstreamToken = 'example_preview_token_0123456789';
+    const ability: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/reset-record-v1',
+      input_schema: {
+        type: 'object',
+        required: ['request_id', 'confirm', 'dry_run', 'preview_token'],
+        properties: {
+          request_id: { type: 'string' },
+          confirm: { type: 'boolean' },
+          dry_run: { type: 'boolean' },
+          preview_token: { type: ['string', 'null'] },
+        },
+      },
+      meta: { annotations: { readonly: false, destructive: true, idempotent: true } },
+    };
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify([ability])));
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ preview_token: upstreamToken })));
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ updated: true })));
+    const { server } = await createServer(baseConfig);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const args = { request_id: 'request-1', preview_token: null };
+      const preview = await client.callTool({
+        name: 'reset_record_v1',
+        arguments: { ...args, confirm: true },
+      });
+      expect(preview.isError).toBeUndefined();
+      const previewData = JSON.parse((preview.content as Array<{ text: string }>)[0].text);
+      expect(previewData.status).toBe('CONFIRMATION_REQUIRED');
+      const confirmed = await client.callTool({
+        name: 'reset_record_v1',
+        arguments: {
+          ...args,
+          user_confirmed: true,
+          confirmation_token: previewData.confirmation_token,
+        },
+      });
+      expect(confirmed.isError).toBeUndefined();
+      expect(JSON.parse((confirmed.content as Array<{ text: string }>)[0].text)).toEqual({
+        updated: true,
+      });
+      const calls = mockFetch.mock.calls.filter(([url]) => String(url).includes('/run'));
+      expect(calls).toHaveLength(2);
+      const expectedInputs = [
+        { request_id: 'request-1', preview_token: null, dry_run: true, confirm: false },
+        { request_id: 'request-1', preview_token: upstreamToken, dry_run: false, confirm: true },
+      ];
+      calls.forEach(([url, options], index) => {
+        expect(options.method).toBe('DELETE');
+        expect(options.body).toBe(JSON.stringify({ input: expectedInputs[index] }));
+        expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+        expect(new URL(url).search).toBe('');
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   describe('preview publication state', () => {
     let dryRunResult: unknown;
     const connections: Array<{ client: Client; server: Server }> = [];
