@@ -6,7 +6,7 @@
  * - Standard mode < 30K tokens
  * - Compact mode < 20K tokens
  * - Compact saves >= 20% vs standard
- * - No single tool exceeds 600 tokens
+ * - No single tool exceeds 600 tokens (900 for destructive tools)
  * - Outputs per-category breakdown via console.warn
  */
 
@@ -138,32 +138,20 @@ describe('Token Budget', () => {
     expect(savings).toBeGreaterThanOrEqual(20);
   });
 
-  it('no single tool should exceed 600 tokens, apart from named exemptions', async () => {
+  it('no single tool should exceed 600 tokens, or 900 for a destructive tool', async () => {
     mockAbilitiesFetch();
     const tools = await getTools({ ...baseConfig, schemaVerbosity: 'standard' });
 
-    // The Dashboard descriptions for these two are already at their floor:
-    // their full error lists plus the confirmation guidance this server adds
-    // to every destructive tool keep them just under 700 tokens.
-    const toolTokenBudgetExemptions = new Map<string, number>([
-      ['create_knowledge_record_v1', 700],
-      ['update_knowledge_record_v1', 700],
-    ]);
+    // This server adds 254-275 tokens to every destructive tool (the
+    // confirmation guidance, safety tags and the user_confirmed and
+    // confirmation_token parameters), so the 600 tokens the ability itself
+    // may use get that allowance on top.
     const violations: string[] = [];
     for (const tool of tools) {
       const tokens = estimateTokens(JSON.stringify(tool));
-      const limit = toolTokenBudgetExemptions.get(tool.name) ?? 600;
+      const limit = tool.annotations?.destructiveHint === true ? 900 : 600;
       if (tokens > limit) {
         violations.push(`${tool.name} (${tokens} tokens, limit ${limit})`);
-      }
-      // An exemption that is no longer needed fails, so it gets removed.
-      if (toolTokenBudgetExemptions.has(tool.name) && tokens <= 600) {
-        violations.push(`${tool.name} (${tokens} tokens, exemption no longer needed)`);
-      }
-    }
-    for (const name of toolTokenBudgetExemptions.keys()) {
-      if (!tools.some(tool => tool.name === name)) {
-        violations.push(`${name} (exempt but not in the catalog)`);
       }
     }
 
