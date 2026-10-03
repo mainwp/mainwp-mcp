@@ -6300,7 +6300,7 @@
   {
     "name": "mainwp/create-knowledge-record-v1",
     "label": "Create Knowledge Record",
-    "description": "Save a new knowledge record on a site or a client. Site-specific details belong on the site; pass scope_type client only for knowledge that applies to every site of the client. Requires confirm: true or dry_run: true; dry_run returns exactly what would be saved. Records saved by an agent are stored as source ability, verified false. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_client_not_found, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_db_error.",
+    "description": "Save a knowledge record on a site or client. Site-specific details belong on the site; scope_type client is only for knowledge about all the client's sites. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_client_not_found, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -6487,14 +6487,14 @@
         "readonly": false,
         "destructive": true,
         "idempotent": false,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Changes what every AI client reads later. Requires confirm: true or dry_run: true; show the user the preview first."
       }
     }
   },
   {
     "name": "mainwp/update-knowledge-record-v1",
     "label": "Update Knowledge Record",
-    "description": "Replace the title, body, type or caller_note of a knowledge record. expected_revision must match the stored revision; a mismatch answers a conflict with the current revision. Requires confirm: true or dry_run: true; dry_run returns the current and the proposed record side by side. caller_note describes this write; omit it and the stored note is cleared. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_conflict, mainwp_knowledge_db_error.",
+    "description": "Replace a knowledge record's title, body, type or caller_note. expected_revision must match the stored revision, or a conflict returns it. Omitting caller_note clears it. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_conflict, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -6784,7 +6784,7 @@
         "readonly": false,
         "destructive": true,
         "idempotent": false,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Changes what every AI client reads later. Requires confirm: true or dry_run: true; show the user the preview first."
       }
     }
   },
@@ -6929,7 +6929,7 @@
         "readonly": false,
         "destructive": true,
         "idempotent": true,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Changes what every AI client reads later. Requires confirm: true or dry_run: true; show the user the preview first."
       }
     }
   }

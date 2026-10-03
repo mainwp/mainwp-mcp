@@ -142,11 +142,12 @@ describe('Token Budget', () => {
     mockAbilitiesFetch();
     const tools = await getTools({ ...baseConfig, schemaVerbosity: 'standard' });
 
-    // The fixture copies these two Dashboard descriptions verbatim, and they
-    // run past 600 tokens until they are shortened at the Dashboard source.
+    // The Dashboard descriptions for these two are already at their floor:
+    // their full error lists plus the confirmation guidance this server adds
+    // to every destructive tool keep them just under 700 tokens.
     const toolTokenBudgetExemptions = new Map<string, number>([
-      ['create_knowledge_record_v1', 800],
-      ['update_knowledge_record_v1', 800],
+      ['create_knowledge_record_v1', 700],
+      ['update_knowledge_record_v1', 700],
     ]);
     const violations: string[] = [];
     for (const tool of tools) {

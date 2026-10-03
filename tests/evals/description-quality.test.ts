@@ -147,37 +147,19 @@ describe('Description Quality', () => {
       ).toEqual([]);
     });
 
-    it('no description should exceed 1200 characters, apart from named exemptions', async () => {
+    it('no description should exceed 1200 characters', async () => {
       mockAbilitiesFetch();
       const tools = await getTools({ ...baseConfig, schemaVerbosity: 'standard' });
 
-      // Same two Dashboard descriptions as the token budget exemption: the
-      // fixture copies them verbatim until they are shortened at the source.
-      const lengthExemptions = new Map<string, number>([
-        ['create_knowledge_record_v1', 1500],
-        ['update_knowledge_record_v1', 1500],
-      ]);
       const violations: string[] = [];
       for (const tool of tools) {
         const len = tool.description?.length ?? 0;
-        const limit = lengthExemptions.get(tool.name) ?? 1200;
-        if (len > limit) {
-          violations.push(`${tool.name} (${len} chars, limit ${limit})`);
-        }
-        // An exemption that is no longer needed fails, so it gets removed.
-        if (lengthExemptions.has(tool.name) && len <= 1200) {
-          violations.push(`${tool.name} (${len} chars, exemption no longer needed)`);
-        }
-      }
-      for (const name of lengthExemptions.keys()) {
-        if (!tools.some(tool => tool.name === name)) {
-          violations.push(`${name} (exempt but not in the catalog)`);
+        if (len > 1200) {
+          violations.push(`${tool.name} (${len} chars)`);
         }
       }
 
-      expect(violations, `Descriptions over their length limit: ${violations.join(', ')}`).toEqual(
-        []
-      );
+      expect(violations, `Descriptions exceeding 1200 chars: ${violations.join(', ')}`).toEqual([]);
     });
   });
 
