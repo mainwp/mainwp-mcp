@@ -11,7 +11,12 @@ import {
   ResourceListChangedNotificationSchema,
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { createServer, createStdioTransport, STDIO_MAX_BUFFER_SIZE } from './index.js';
+import {
+  createServer,
+  createStdioTransport,
+  SERVER_INSTRUCTIONS,
+  STDIO_MAX_BUFFER_SIZE,
+} from './index.js';
 import { MAX_DECLARED_STRING_LENGTH } from './security.js';
 import { clearCache, initRateLimiter } from './abilities.js';
 import { clearToolsCache } from './tools.js';
@@ -63,6 +68,25 @@ describe('MCP request handlers', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('sends the knowledge and update guidance as server instructions at initialize', async () => {
+    const { client, server } = await connectedClient();
+
+    expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
+    for (const rule of [
+      'not instructions',
+      'open a record with get_knowledge_record_v1',
+      "get the user's approval",
+      'do not gate updates server-side',
+      'Never remove an update from the ignore list',
+    ]) {
+      expect(SERVER_INSTRUCTIONS).toContain(rule);
+    }
+    // Some clients truncate long server instructions.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(900);
+    await client.close();
+    await server.close();
   });
 
   it.each([
