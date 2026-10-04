@@ -117,6 +117,8 @@ function envelope() {
   };
 }
 
+type Preview = ReturnType<typeof envelope>;
+
 function summary(preview: unknown): string[] {
   const plan = validateUpdatePlan(preview);
   expect(plan).toBeDefined();
@@ -161,6 +163,7 @@ describe('update plan summaries', () => {
 
   it('uses the singular for a core update on one site', () => {
     const preview = envelope();
+    preview.would_affect.sites.splice(1, 1);
     preview.would_affect.summary.truncated = true;
     preview.would_affect.by_item[0].site_count = 1;
     expect(summary(preview)).toContain('Core update on 1 site');
@@ -302,6 +305,110 @@ describe('update plan summaries', () => {
     expect(validateUpdatePlan(preview)).toBeUndefined();
   });
 
+  // Core flags, has_core and by_item come from the complete plan, so they must agree with
+  // each other; a truncated list only bounds them from below.
+  it.each([
+    [
+      'an item core flag that disagrees with its type',
+      (p: Preview) => {
+        p.would_affect.sites[0].items[0].flags.core = false;
+      },
+    ],
+    [
+      'a core flag on a non-core item',
+      (p: Preview) => {
+        p.would_affect.sites[0].items[1].flags.core = true;
+      },
+    ],
+    [
+      'a grouped core flag that disagrees with its type',
+      (p: Preview) => {
+        p.would_affect.by_item[0].flags.core = false;
+      },
+    ],
+    [
+      'has_core false with core updates',
+      (p: Preview) => {
+        p.would_affect.summary.has_core = false;
+      },
+    ],
+    [
+      'has_core true without core updates',
+      (p: Preview) => {
+        for (const entry of p.would_affect.sites)
+          entry.items = entry.items.filter(i => i.type !== 'core');
+        p.would_affect.by_item.shift();
+        p.would_affect.summary.item_count = 5;
+        p.count = 5;
+      },
+    ],
+    [
+      'a core group count that disagrees with the visible core sites',
+      (p: Preview) => {
+        p.would_affect.by_item[0].site_count = 1;
+      },
+    ],
+    [
+      'a grouped site count of zero',
+      (p: Preview) => {
+        p.would_affect.by_item[1].site_count = 0;
+      },
+    ],
+    [
+      'a grouped site count above the plan site count',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.by_item[0].site_count = 999;
+      },
+    ],
+    [
+      'a truncated plan with fewer sites than shown',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.summary.site_count = 1;
+      },
+    ],
+    [
+      'a truncated plan with fewer items than shown',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.summary.item_count = 6;
+        p.count = 6;
+      },
+    ],
+    [
+      'a truncated plan with fewer held items than shown',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.summary.skipped_count = 2;
+      },
+    ],
+    [
+      'a truncated plan with fewer core sites than shown',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.by_item[0].site_count = 1;
+      },
+    ],
+  ] as const)('rejects %s', (_label, mutate) => {
+    const preview = envelope();
+    mutate(preview);
+    expect(validateUpdatePlan(preview)).toBeUndefined();
+  });
+
+  it('accepts complete aggregates above the visible counts when truncated', () => {
+    const preview = envelope();
+    Object.assign(preview.would_affect.summary, {
+      truncated: true,
+      site_count: 40,
+      item_count: 90,
+      skipped_count: 12,
+    });
+    preview.count = 90;
+    preview.would_affect.by_item[0].site_count = 30;
+    expect(summary(preview)).toContain('Core update on 30 sites');
+  });
+
   it('rejects count disagreement even when the site list is truncated', () => {
     const preview = envelope();
     preview.count++;
@@ -333,6 +440,8 @@ describe('update plan summaries', () => {
     'bad\u200b',
     'bad\u200d',
     'bad\uFEFF',
+    'bad\u2028',
+    'bad\u2029',
   ];
   it.each(textPaths.flatMap(path => badText.map(value => ({ path, value }))))(
     'rejects unsafe display text at $path: $value',

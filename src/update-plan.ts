@@ -68,7 +68,15 @@ function displayText(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > MAX_FIELD_LENGTH) return undefined;
   for (const character of value) {
     const code = character.codePointAt(0)!;
-    if (code <= 31 || (code >= 127 && code <= 159) || character === '\uFEFF') return undefined;
+    // Line and paragraph separators are whitespace to trim() but break a summary line in two.
+    if (
+      code <= 31 ||
+      (code >= 127 && code <= 159) ||
+      character === '\uFEFF' ||
+      character === '\u2028' ||
+      character === '\u2029'
+    )
+      return undefined;
     // Check one character so ordinary spacing survives the shared normalizer.
     if (
       character.trim() !== '' &&
@@ -237,12 +245,34 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
   const previewToken = own(preview, 'preview_token');
   if (Object.hasOwn(preview, 'preview_token') && typeof previewToken !== 'string') return undefined;
 
+  const visibleItems = sites.reduce((total, site) => total + site.items.length, 0);
+  const visibleSites = sites.filter(site => site.items.length > 0).length;
+  const visibleSkipped = sites.reduce((total, site) => total + site.skipped.length, 0);
   if (
-    !truncated &&
-    (sites.reduce((total, site) => total + site.items.length, 0) !== itemCount ||
-      sites.filter(site => site.items.length > 0).length !== siteCount ||
-      sites.reduce((total, site) => total + site.skipped.length, 0) !== skippedCount)
+    truncated
+      ? visibleItems > itemCount || visibleSites > siteCount || visibleSkipped > skippedCount
+      : visibleItems !== itemCount || visibleSites !== siteCount || visibleSkipped !== skippedCount
   )
+    return undefined;
+
+  // The Dashboard sets flags.core from the type and builds by_item and has_core from every
+  // site, including ones a truncated list leaves out, so they must agree with each other.
+  if (
+    sites.some(site => site.items.some(item => item.flags.core !== (item.type === 'core'))) ||
+    byItem.some(
+      group =>
+        group.flags.core !== (group.type === 'core') ||
+        group.siteCount < 1 ||
+        group.siteCount > siteCount
+    ) ||
+    hasCore !== byItem.some(group => group.flags.core)
+  )
+    return undefined;
+  const visibleCoreSites = sites.filter(site => site.items.some(item => item.flags.core)).length;
+  const coreGroupSites = byItem
+    .filter(group => group.flags.core)
+    .reduce((total, group) => total + group.siteCount, 0);
+  if (truncated ? visibleCoreSites > coreGroupSites : visibleCoreSites !== coreGroupSites)
     return undefined;
 
   return {
