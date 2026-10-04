@@ -214,7 +214,9 @@ const updateKey = (entry: { type: UpdateType; slug: string }) => `${entry.type}:
 
 // The Dashboard lists each site once, sets flags.core from the type, and builds by_item (one
 // group per type and slug, counting distinct sites), has_core and the summary counts from
-// every site, including ones a truncated list leaves out. A complete list must match those
+// every site, including ones a truncated list leaves out. Core items always carry the slug
+// "wordpress", so there is at most one core group; a second one would double-count the
+// core sites a truncated plan reports. A complete list must match those
 // aggregates exactly; a truncated one can only show less than they count.
 function planCountsAgree(
   sites: UpdateSite[],
@@ -253,6 +255,7 @@ function planCountsAgree(
   const groupKeys = new Set<string>();
   let groupSites = 0;
   let coreSites = 0;
+  let coreGroups = 0;
   for (const group of byItem) {
     const key = updateKey(group);
     if (
@@ -265,7 +268,10 @@ function planCountsAgree(
       return false;
     groupKeys.add(key);
     groupSites += group.siteCount;
-    if (group.flags.core) coreSites += group.siteCount;
+    if (group.flags.core) {
+      coreGroups++;
+      coreSites += group.siteCount;
+    }
   }
   // Each counted site has at least one item, and each group-site pair at least one item.
   return (
@@ -274,6 +280,7 @@ function planCountsAgree(
     (itemCount === 0) === (siteCount === 0) &&
     (itemCount === 0) === (byItem.length === 0) &&
     groupSites <= itemCount &&
+    coreGroups <= 1 &&
     coreSites <= siteCount &&
     hasCore === coreSites > 0
   );

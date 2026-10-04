@@ -413,6 +413,19 @@ describe('update plan summaries', () => {
       },
     ],
     [
+      'a second core group under another slug in a truncated plan',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.sites[1].items.splice(0, 1);
+        p.would_affect.by_item[0].site_count = 1;
+        p.would_affect.by_item.push({
+          ...p.would_affect.by_item[0],
+          slug: 'wordpress-beta',
+          site_count: 1,
+        });
+      },
+    ],
+    [
       'a group whose site count disagrees with a complete list',
       (p: Preview) => {
         p.would_affect.sites[0].items.splice(1, 1);
