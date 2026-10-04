@@ -17,8 +17,9 @@ import {
   SERVER_INSTRUCTIONS,
   STDIO_MAX_BUFFER_SIZE,
 } from './index.js';
-import { MAX_DECLARED_STRING_LENGTH } from './security.js';
-import { clearCache, initRateLimiter } from './abilities.js';
+import { MAX_DECLARED_STRING_LENGTH, clearKnownSecrets } from './security.js';
+import { clearCache, fetchAbilities, initRateLimiter, type Ability } from './abilities.js';
+import type { Config } from './config.js';
 import { clearToolsCache } from './tools.js';
 import { ConfigState, checkStartupCredentials } from './setup.js';
 import { trustedSettingsPath } from './settings-writer.js';
@@ -57,6 +58,318 @@ async function connectedClient(config = makeBaseConfig()) {
   await client.connect(clientTransport);
   return { client, server };
 }
+
+describe('validated upstream 4xx through MCP handlers', () => {
+  const original: Ability = {
+    ...sampleAbilities[0],
+    name: 'mainwp/set-ignored-updates-v1',
+    input_schema: {
+      type: 'object',
+      properties: { private_value: { type: 'string', writeOnly: true } },
+    },
+    meta: { annotations: { readonly: false, destructive: false, idempotent: true } },
+  };
+  const replacement: Ability = {
+    ...sampleAbilities[1],
+    name: 'mainwp/unignore-site-updates-v1',
+  };
+  const moved = {
+    code: 'mainwp_unignore_moved',
+    message:
+      'Removing an item from the ignored list needs confirmation. Use mainwp/unignore-site-updates-v1.',
+    data: { status: 400, replacement: replacement.name },
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearToolsCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    clearKnownSecrets();
+    vi.restoreAllMocks();
+  });
+
+  async function call(
+    body: unknown,
+    status = 400,
+    overrides: Partial<Config> = {},
+    abilities = [original, replacement],
+    args: Record<string, unknown> = {}
+  ) {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(abilities)));
+    mockFetch.mockResolvedValueOnce(
+      new Response(typeof body === 'string' ? body : JSON.stringify(body), {
+        status,
+        statusText: status >= 500 ? 'Server Error' : 'Bad Request',
+      })
+    );
+    const { client, server } = await connectedClient(makeBaseConfig(overrides));
+    try {
+      const result = await client.callTool({ name: 'set_ignored_updates_v1', arguments: args });
+      const text = (result.content as Array<{ text: string }>)[0].text;
+      return { result, text, parsed: JSON.parse(text) };
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  it('keeps mainwp_confirmation_required as SERVER_ERROR with sanitized text', async () => {
+    const { result, parsed } = await call({
+      code: 'mainwp_confirmation_required',
+      message: 'Needs\u0000 confirmation\u202e. /Users/alice/private.txt password=exposed',
+      data: { status: 400, extra: 'never copied' },
+    });
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toEqual({
+      code: -32000,
+      message:
+        'Ability execution failed: mainwp_confirmation_required - Needs confirmation . [path] password=[redacted]',
+      data: { upstream_code: 'mainwp_confirmation_required' },
+    });
+  });
+
+  it.each([false, true])(
+    'converts an allowed replacement from the original snapshot (safeMode=%s)',
+    async safeMode => {
+      const { result, parsed } = await call(moved, 400, { safeMode });
+      expect(result.isError).toBe(true);
+      expect(parsed.error.code).toBe(-32000);
+      expect(parsed.error.data).toEqual({
+        upstream_code: moved.code,
+        replacement: 'unignore_site_updates_v1',
+      });
+    }
+  );
+
+  it.each([
+    { label: 'blockedTools', overrides: { blockedTools: ['unignore_site_updates_v1'] } },
+    { label: 'allowedTools', overrides: { allowedTools: ['set_ignored_updates_v1'] } },
+    { label: 'unknown', name: 'mainwp/missing-v1' },
+    { label: 'unconfigured namespace', name: 'other/unignore-site-updates-v1' },
+    { label: 'malformed', name: 'mainwp/../unignore-site-updates-v1' },
+    { label: 'non-string', name: 123 },
+  ])(
+    'omits a replacement excluded by $label without dropping the error',
+    async ({ overrides, name }) => {
+      const { result, parsed } = await call(
+        { ...moved, data: { status: 400, replacement: name ?? replacement.name } },
+        400,
+        overrides
+      );
+      expect(result.isError).toBe(true);
+      expect(parsed.error.code).toBe(-32000);
+      expect(parsed.error.data).toEqual({ upstream_code: moved.code });
+    }
+  );
+
+  it('uses the configured primary namespace for a secondary replacement', async () => {
+    const secondary = { ...replacement, name: 'acme/unignore-site-updates-v1' };
+    const { parsed } = await call(
+      { ...moved, data: { replacement: secondary.name } },
+      400,
+      { abilityNamespaces: ['mainwp', 'acme'] },
+      [original, secondary]
+    );
+    expect(parsed.error.data.replacement).toBe('acme__unignore_site_updates_v1');
+  });
+
+  it.each([true, false])(
+    'binds replacement lookup to the original snapshot (initially present=%s)',
+    async present => {
+      const config = makeBaseConfig();
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(present ? [original, replacement] : [original]))
+      );
+      mockFetch.mockImplementationOnce(async () => {
+        mockFetch.mockResolvedValueOnce(
+          new Response(JSON.stringify(present ? [original] : [original, replacement]))
+        );
+        await fetchAbilities(config, true);
+        return new Response(JSON.stringify(moved), { status: 400 });
+      });
+      const { client, server } = await connectedClient(config);
+      try {
+        const result = await client.callTool({ name: 'set_ignored_updates_v1', arguments: {} });
+        expect(result.isError).toBe(true);
+        const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+        expect(parsed.error.data.upstream_code).toBe(moved.code);
+        expect(parsed.error.data.replacement).toBe(
+          present ? 'unignore_site_updates_v1' : undefined
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    }
+  );
+
+  it.each(['credential', 'write-only'])(
+    'omits reflected %s metadata and keeps the secret out of output',
+    async kind => {
+      const secret = 'reflectedprivate';
+      const { result, text, parsed } = await call(
+        {
+          code: `mainwp_${secret}`,
+          message: `Rejected ${secret}`,
+          data: { replacement: `mainwp/${secret}-v1` },
+        },
+        400,
+        kind === 'credential' ? { appPassword: secret } : {},
+        [original, { ...replacement, name: `mainwp/${secret}-v1` }],
+        kind === 'write-only' ? { private_value: secret } : {}
+      );
+      expect(result.isError).toBe(true);
+      expect(parsed.error.code).toBe(-32000);
+      expect(parsed.error.data).toBeUndefined();
+      expect(text).not.toContain(secret);
+      if (kind === 'write-only')
+        expect(parsed.error.message).toContain('upstream message is withheld');
+    }
+  );
+
+  it('omits a registered secret in the replacement while preserving upstream_code', async () => {
+    const { text, parsed } = await call(moved, 400, { appPassword: 'unignore-site' });
+    expect(parsed.error.data).toEqual({ upstream_code: moved.code });
+    expect(text).not.toContain('unignore-site');
+  });
+
+  it('omits a write-only replacement while preserving an unrelated upstream_code', async () => {
+    const { text, parsed } = await call(
+      { ...moved, code: 'mainwp_confirmation_required' },
+      400,
+      {},
+      undefined,
+      { private_value: 'unignore' }
+    );
+    expect(parsed.error.data).toEqual({ upstream_code: 'mainwp_confirmation_required' });
+    expect(text).not.toContain('unignore');
+    expect(parsed.error.message).toContain('upstream message is withheld');
+  });
+
+  it('redacts a registered password spanning the message cap', async () => {
+    const secret = 'abcd efgh ijkl mnop qrst uvwx';
+    const { text, parsed } = await call(
+      {
+        code: 'mainwp_confirmation_required',
+        message: `${'x'.repeat(450)} ${secret}${'x'.repeat(10000)}`,
+      },
+      400,
+      { appPassword: secret }
+    );
+    expect(parsed.error.code).toBe(-32000);
+    expect(parsed.error.message.length).toBeLessThanOrEqual(500);
+    expect(text).not.toContain('abcd');
+    expect(parsed.error.data.upstream_code).toBe('mainwp_confirmation_required');
+  });
+
+  it('ignores hostile __proto__ and constructor data without copying it', async () => {
+    const { parsed } = await call(
+      '{"code":"mainwp_unignore_moved","message":"Rejected","__proto__":{"code":"rest_no_route"},"constructor":{"polluted":true},"data":{"replacement":"mainwp/unignore-site-updates-v1","__proto__":{"polluted":true},"constructor":"bad","status":400,"extra":"bad"}}'
+    );
+    expect(parsed.error.code).toBe(-32000);
+    expect(parsed.error.data).toEqual({
+      upstream_code: moved.code,
+      replacement: 'unignore_site_updates_v1',
+    });
+    expect(Object.prototype).not.toHaveProperty('polluted');
+  });
+
+  it.each([
+    { label: 'array', body: [], code: -32603 },
+    { label: 'null', body: null, code: -32603 },
+    { label: 'number', body: 42, code: -32603 },
+    { label: 'unparseable', body: '{invalid json', code: -32602 },
+    {
+      label: '__proto__ only',
+      body: '{"__proto__":{"code":"mainwp_confirmation_required","message":"invalid"}}',
+      code: -32603,
+    },
+    {
+      label: 'data array',
+      body: { code: 'mainwp_confirmation_required', message: 'invalid input', data: [] },
+      code: -32602,
+    },
+    {
+      label: 'data string',
+      body: { code: 'mainwp_confirmation_required', message: 'invalid input', data: 'bad' },
+      code: -32602,
+    },
+    {
+      label: 'data null',
+      body: { code: 'mainwp_confirmation_required', message: 'invalid input', data: null },
+      code: -32602,
+    },
+    {
+      label: 'invalid slug',
+      body: { code: 'unsafe/code', message: 'invalid input' },
+      code: -32602,
+    },
+    {
+      label: 'non-string message',
+      body: { code: 'mainwp_confirmation_required', message: 42 },
+      code: -32603,
+    },
+    { label: 'missing message', body: { code: 'mainwp_confirmation_required' }, code: -32603 },
+  ])('keeps legacy classification for $label', async ({ body, code }) => {
+    const { result, parsed } = await call(body);
+    expect(result.isError).toBe(true);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.data).toBeUndefined();
+  });
+
+  it.each([
+    [401, 'rest_forbidden', -32010],
+    [403, 'rest_forbidden', -32008],
+    [404, 'rest_forbidden', -32002],
+    [429, 'rest_forbidden', -32029],
+    [400, 'mainwp_site_not_found', -32002],
+    [403, 'rest_no_route', -32002],
+    [400, 'mainwp_confirmation_required', -32000],
+  ])('keeps status/slug mapping for HTTP %i %s', async (status, slug, code) => {
+    const { result, parsed } = await call({ code: slug, message: 'invalid input' }, status);
+    expect(result.isError).toBe(true);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.data).toEqual({ upstream_code: slug });
+  });
+
+  it.each([
+    ['mainwp_unignore_moved', -32000],
+    ['mainwp_site_not_found', -32002],
+  ])('keeps 5xx behaviour for %s', async (slug, code) => {
+    const { result, parsed } = await call({ ...moved, code: slug, message: 'invalid input' }, 503);
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toEqual({
+      code,
+      message: `Ability execution failed: ${slug} - invalid input`,
+    });
+  });
+
+  it('preserves allowlisted idempotent no-op success', async () => {
+    const { result, parsed } = await call(
+      { code: 'already_active', message: 'Already active' },
+      409
+    );
+    expect(result.isError).toBeUndefined();
+    expect(parsed.status).toBe('NO_CHANGE');
+    expect(parsed.details.code).toBe('already_active');
+  });
+
+  it('keeps a non-allowlisted idempotent error failed', async () => {
+    const { result, parsed } = await call(
+      { code: 'mainwp_confirmation_required', message: 'Needs confirmation' },
+      409
+    );
+    expect(result.isError).toBe(true);
+    expect(parsed.error.code).toBe(-32000);
+    expect(parsed.error.data).toEqual({ upstream_code: 'mainwp_confirmation_required' });
+  });
+});
 
 describe('MCP request handlers', () => {
   beforeEach(() => {

@@ -7,7 +7,7 @@
 
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
-import { McpErrorFactory, createHttpError, getErrorMessage } from './errors.js';
+import { McpErrorFactory, UpstreamHttpError, createHttpError, getErrorMessage } from './errors.js';
 import {
   describeCredentialRejection,
   isCredentialRejection,
@@ -32,7 +32,7 @@ import {
 } from './http-client.js';
 import { withSecretRedaction, type Logger } from './logging.js';
 import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
-import { classifyDestructive } from './policy.js';
+import { classifyDestructive, decidePolicy } from './policy.js';
 import { createWriteOnlyRedactor } from './write-only.js';
 
 // These mirror the limits the MainWP Dashboard enforces on its JSON input
@@ -385,6 +385,8 @@ interface AbilityIndexes {
   byToolName: Map<string, Ability>;
 }
 const abilityIndexes = new WeakMap<Ability[], AbilityIndexes>();
+// Retain the lookup snapshot while an ability is executing, even after a refresh.
+const abilitySnapshots = new WeakMap<Ability, Ability[]>();
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -799,6 +801,7 @@ export async function fetchAbilities(
             byName: newAbilitiesIndex,
             byToolName: newToolNameIndex,
           });
+          for (const ability of safeAbilities) abilitySnapshots.set(ability, safeAbilities);
           // Notify callbacks if abilities changed
           if (hasChanged && hadCachedAbilities) {
             notifyCacheRefresh(logger);
@@ -1209,6 +1212,8 @@ export async function executeAbility(
       const bodyText = await readLimitedBody(response, MAX_ERROR_BODY_BYTES);
       let errorCode = String(response.status);
       let errorMsg = response.statusText;
+      let acceptedBody = false;
+      let replacementName: unknown;
 
       // Only try to parse as JSON if the body looks like JSON
       if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
@@ -1220,6 +1225,28 @@ export async function executeAbility(
             message === undefined || message === null || message === ''
               ? errorMsg
               : String(message);
+          if (
+            response.status >= 400 &&
+            response.status < 500 &&
+            errorData !== null &&
+            typeof errorData === 'object' &&
+            !Array.isArray(errorData) &&
+            Object.getPrototypeOf(errorData) === Object.prototype &&
+            Object.hasOwn(errorData, 'code') &&
+            safeWpErrorCode(code) !== undefined &&
+            Object.hasOwn(errorData, 'message') &&
+            typeof message === 'string' &&
+            (!Object.hasOwn(errorData, 'data') ||
+              (errorData.data !== null &&
+                typeof errorData.data === 'object' &&
+                !Array.isArray(errorData.data)))
+          ) {
+            acceptedBody = true;
+            errorMsg = message;
+            if (Object.hasOwn(errorData, 'data') && Object.hasOwn(errorData.data, 'replacement')) {
+              replacementName = errorData.data.replacement;
+            }
+          }
         } catch {
           // JSON parse failed - use raw text as message
           errorMsg = bodyText || response.statusText;
@@ -1246,12 +1273,46 @@ export async function executeAbility(
           ? " If this Dashboard is older than MainWP Dashboard 6.2, update it: this ability's input cannot be delivered to earlier versions."
           : '';
 
+      const upstreamCode =
+        acceptedBody &&
+        redactKnownSecrets(errorCode) === errorCode &&
+        !writeOnlyRedactor.mentions(errorCode)
+          ? errorCode
+          : undefined;
+      let replacement: string | undefined;
+      if (
+        acceptedBody &&
+        typeof replacementName === 'string' &&
+        ABILITY_NAME_RE.test(replacementName) &&
+        redactKnownSecrets(replacementName) === replacementName &&
+        !writeOnlyRedactor.mentions(replacementName)
+      ) {
+        const snapshot = abilitySnapshots.get(ability);
+        const target = snapshot && abilityIndexes.get(snapshot)?.byName.get(replacementName);
+        if (target && config.abilityNamespaces.includes(target.name.split('/')[0])) {
+          const toolName = abilityNameToToolName(target.name, config.abilityNamespaces[0]);
+          if (
+            decidePolicy(config, toolName) !== 'blocked-by-policy' &&
+            redactKnownSecrets(toolName) === toolName &&
+            !writeOnlyRedactor.mentions(toolName)
+          ) {
+            replacement = toolName;
+          }
+        }
+      }
+      const executionError = (code: string, message: string): Error =>
+        acceptedBody
+          ? new UpstreamHttpError(response.status, code, message, upstreamCode, replacement)
+          : createHttpError(response.status, code, message);
+
       if (writeOnlyRedactor.carriesWriteOnly) {
         // errorCode is already a plain slug or the status; drop it as well
         // when it contains a write-only value.
-        const safeErrorCode = !writeOnlyRedactor.mentions(errorCode)
-          ? errorCode
-          : String(response.status);
+        const safeErrorCode =
+          !writeOnlyRedactor.mentions(errorCode) &&
+          (!acceptedBody || redactKnownSecrets(errorCode) === errorCode)
+            ? errorCode
+            : String(response.status);
         // Decided on the original code, so a withheld code does not also drop
         // the diagnosis. The note quotes the code and the configured username
         // (escaped and cut to length), and downstream redaction is
@@ -1263,17 +1324,24 @@ export async function executeAbility(
           (writeOnlyRedactor.mentions(note) || writeOnlyRedactor.mentions(config.username ?? ''))
             ? ' The Dashboard rejected the credentials.'
             : note;
-        throw createHttpError(
-          response.status,
+        throw executionError(
           safeErrorCode,
           `Ability execution failed: ${safeErrorCode} (HTTP ${response.status}). The upstream message is withheld because this call carried write-only input.${safeNote}${carrierNote}`
         );
       }
 
-      throw createHttpError(
-        response.status,
-        errorCode,
-        `Ability execution failed: ${errorCode} - ${sanitizeError(errorMsg)}${credentialNote(errorCode)}${carrierNote}`
+      const safeErrorCode =
+        acceptedBody && redactKnownSecrets(errorCode) !== errorCode
+          ? String(response.status)
+          : errorCode;
+      const safeMessage = acceptedBody
+        ? sanitizeError(
+            normalizeRemoteText(redactKnownSecrets(errorMsg), MAX_ERROR_BODY_BYTES, 'flatten')
+          )
+        : sanitizeError(errorMsg);
+      throw executionError(
+        safeErrorCode,
+        `Ability execution failed: ${safeErrorCode} - ${safeMessage}${credentialNote(errorCode)}${carrierNote}`
       );
     }
 

@@ -17,7 +17,7 @@ import {
 } from './abilities.js';
 import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
-import { McpError, MCP_ERROR_CODES } from './errors.js';
+import { McpError, MCP_ERROR_CODES, toMcpErrorResponse } from './errors.js';
 import {
   clearKnownSecrets,
   registerKnownSecrets,
@@ -192,6 +192,186 @@ const sampleAbilities: Ability[] = [
 const sampleCategories = [{ slug: 'mainwp-sites', label: 'Sites', description: 'Site management' }];
 
 const baseConfig = makeBaseConfig();
+
+describe('validated upstream 4xx execution boundary', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+  });
+  afterEach(() => clearKnownSecrets());
+
+  async function failure(
+    body: unknown,
+    status = 400,
+    ability = sampleAbilities[0],
+    config = makeBaseConfig(),
+    input: Record<string, unknown> = {}
+  ) {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify(body), { status, statusText: 'Rejected' })
+    );
+    let thrown: unknown;
+    try {
+      await executeAbility(config, ability.name, input, mockLogger, ability);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    return thrown as Error & { status: number; code: string };
+  }
+
+  it('throws numeric status and string code and serializes accepted 400 without substring classification', async () => {
+    const error = await failure({
+      code: 'mainwp_confirmation_required',
+      message: 'invalid confirmation',
+      data: { status: 400 },
+    });
+    expect(error).toMatchObject({ status: 400, code: 'mainwp_confirmation_required' });
+    expect(toMcpErrorResponse(error, sanitizeError).error).toEqual({
+      code: -32000,
+      message: 'Ability execution failed: mainwp_confirmation_required - invalid confirmation',
+      data: { upstream_code: 'mainwp_confirmation_required' },
+    });
+  });
+
+  it('sanitizes control and format characters across the entire message before truncation', async () => {
+    const error = await failure({
+      code: 'mainwp_confirmation_required',
+      message: `${'\u202e'.repeat(1000)}hello\u0000\u200f world ${'x'.repeat(10000)}`,
+    });
+    const response = toMcpErrorResponse(error, sanitizeError);
+    expect(response.error.code).toBe(-32000);
+    expect(response.error.message).toContain('hello world');
+    expect(response.error.message).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    expect(response.error.message.length).toBeLessThanOrEqual(500);
+  });
+
+  it('accepts an own empty message without falling back to statusText', async () => {
+    const error = await failure({ code: 'mainwp_confirmation_required', message: '' });
+    expect(toMcpErrorResponse(error, sanitizeError).error).toEqual({
+      code: -32000,
+      message: 'Ability execution failed: mainwp_confirmation_required -',
+      data: { upstream_code: 'mainwp_confirmation_required' },
+    });
+  });
+
+  it.each(['credential', 'write-only'])(
+    'drops a reflected %s slug from the thrown HTTP code as well as metadata',
+    async kind => {
+      const secret = 'privatevalue';
+      if (kind === 'credential') registerKnownSecrets([secret]);
+      const ability: Ability = {
+        ...sampleAbilities[0],
+        input_schema: {
+          type: 'object',
+          properties: { value: { type: 'string', writeOnly: true } },
+        },
+      };
+      const error = await failure(
+        {
+          code: `reflected_${secret}`,
+          message: `Rejected ${secret}`,
+          data: { replacement: `mainwp/${secret}` },
+        },
+        400,
+        ability,
+        makeBaseConfig(),
+        kind === 'write-only' ? { value: secret } : {}
+      );
+      expect(error.code).toBe('400');
+      expect(error.message).not.toContain(secret);
+      expect(toMcpErrorResponse(error, sanitizeError).error).toMatchObject({ code: -32000 });
+      expect(toMcpErrorResponse(error, sanitizeError).error.data).toBeUndefined();
+    }
+  );
+
+  it('preserves credential diagnostics on an accepted 401', async () => {
+    const error = await failure({ code: 'invalid_username', message: 'Unknown login' }, 401);
+    expect(error.message).toContain('MAINWP_USER from the environment');
+    expect(toMcpErrorResponse(error, sanitizeError).error).toMatchObject({
+      code: -32010,
+      data: { upstream_code: 'invalid_username' },
+    });
+  });
+
+  it.each([false, true])(
+    'preserves JSON-carrier diagnostics on an accepted 400 (writeOnly=%s)',
+    async writeOnly => {
+      const ability: Ability = {
+        ...sampleAbilities[0],
+        input_schema: {
+          type: 'object',
+          required: ['cursor'],
+          properties: { cursor: { type: ['string', 'null'], writeOnly } },
+        },
+      };
+      const error = await failure(
+        { code: 'ability_invalid_input', message: 'Invalid input' },
+        400,
+        ability,
+        makeBaseConfig(),
+        { cursor: 'privatecursor' }
+      );
+      expect(error.message).toContain('older than MainWP Dashboard 6.2');
+      expect(toMcpErrorResponse(error, sanitizeError).error).toMatchObject({
+        code: -32000,
+        data: { upstream_code: 'ability_invalid_input' },
+      });
+      if (writeOnly) expect(error.message).toContain('upstream message is withheld');
+    }
+  );
+
+  it('retries an accepted readonly 429 and succeeds', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'mainwp_rate_limited', message: 'Slow down' }), {
+        status: 429,
+      })
+    );
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));
+    await expect(
+      executeAbility(
+        makeBaseConfig({ retryEnabled: true, retryBaseDelay: 1, retryMaxDelay: 1 }),
+        sampleAbilities[0].name,
+        {},
+        mockLogger,
+        sampleAbilities[0]
+      )
+    ).resolves.toEqual({ success: true });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry an accepted readonly 400', async () => {
+    const error = await failure(
+      { code: 'mainwp_confirmation_required', message: 'Needs confirmation' },
+      400,
+      sampleAbilities[0],
+      makeBaseConfig({ retryEnabled: true, retryBaseDelay: 1, retryMaxDelay: 1 })
+    );
+    expect(error.status).toBe(400);
+    expect(toMcpErrorResponse(error, sanitizeError).error.code).toBe(-32000);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry an accepted write 429', async () => {
+    const ability = {
+      ...sampleAbilities[0],
+      meta: { annotations: { readonly: false, destructive: false, idempotent: true } },
+    };
+    const error = await failure(
+      { code: 'mainwp_rate_limited', message: 'Slow down' },
+      429,
+      ability,
+      makeBaseConfig({ retryEnabled: true, retryBaseDelay: 1, retryMaxDelay: 1 })
+    );
+    expect(toMcpErrorResponse(error, sanitizeError).error).toMatchObject({
+      code: -32029,
+      data: { upstream_code: 'mainwp_rate_limited' },
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('fetchAbilities', () => {
   beforeEach(() => {

@@ -198,6 +198,19 @@ export function createHttpError(status: number, errorCode: string, message: stri
   return error;
 }
 
+/** An execution error from a validated WordPress 4xx body. */
+export class UpstreamHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly upstreamCode?: string,
+    readonly replacement?: string
+  ) {
+    super(message);
+  }
+}
+
 /**
  * Extract a structured HTTP status from an error, if present.
  */
@@ -263,6 +276,13 @@ export function toMcpErrorResponse(
     code = MCP_ERROR_CODES.RATE_LIMITED;
   } else if (status !== undefined && status >= 500) {
     code = MCP_ERROR_CODES.SERVER_ERROR;
+  } else if (
+    error instanceof UpstreamHttpError &&
+    status !== undefined &&
+    status >= 400 &&
+    status < 500
+  ) {
+    code = MCP_ERROR_CODES.SERVER_ERROR;
   } else if (normalizedMessage.includes('cancelled') || normalizedMessage.includes('aborted')) {
     code = MCP_ERROR_CODES.CANCELLED;
   } else if (normalizedMessage.includes('not found') || normalizedMessage.includes('unknown')) {
@@ -289,12 +309,19 @@ export function toMcpErrorResponse(
     code = MCP_ERROR_CODES.TIMEOUT;
   }
 
-  return {
+  const response: McpErrorResponse = {
     error: {
       code,
       message: sanitizedMessage,
     },
   };
+  if (error instanceof UpstreamHttpError) {
+    const data: Record<string, unknown> = {};
+    if (error.upstreamCode !== undefined) data.upstream_code = error.upstreamCode;
+    if (error.replacement !== undefined) data.replacement = error.replacement;
+    if (Object.keys(data).length > 0) response.error.data = data;
+  }
+  return response;
 }
 
 /**
