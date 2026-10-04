@@ -34,6 +34,7 @@ interface UpdateSite {
 
 interface GroupedItem {
   type: UpdateType;
+  slug: string;
   siteCount: number;
   flags: UpdateFlags;
 }
@@ -134,7 +135,9 @@ function itemFields(value: unknown): ItemFields | undefined {
     name === undefined ||
     from === undefined ||
     to === undefined ||
-    typeof requested !== 'boolean'
+    typeof requested !== 'boolean' ||
+    // Nothing would identify the item in its summary line.
+    (name.trim() === '' && slug.trim() === '')
   )
     return undefined;
   return { type, slug, name, from, to, requested };
@@ -184,16 +187,17 @@ function groupedItem(value: unknown): GroupedItem | undefined {
   const type = updateType(own(value, 'type'));
   const siteCount = own(value, 'site_count');
   const itemFlags = flags(own(value, 'flags'));
+  const slug = displayText(own(value, 'slug'));
   if (
     type === undefined ||
+    slug === undefined ||
     !isCount(siteCount) ||
     !itemFlags ||
     displayText(own(value, 'name')) === undefined ||
-    displayText(own(value, 'slug')) === undefined ||
     !list(own(value, 'to'), displayText)
   )
     return undefined;
-  return { type, siteCount, flags: itemFlags };
+  return { type, slug, siteCount, flags: itemFlags };
 }
 
 function previewError(value: unknown): Record<string, unknown> | undefined {
@@ -204,6 +208,75 @@ function previewError(value: unknown): Record<string, unknown> | undefined {
   if (Object.hasOwn(value, 'site_name') && typeof own(value, 'site_name') !== 'string')
     return undefined;
   return value;
+}
+
+const updateKey = (entry: { type: UpdateType; slug: string }) => `${entry.type}:${entry.slug}`;
+
+// The Dashboard lists each site once, sets flags.core from the type, and builds by_item (one
+// group per type and slug, counting distinct sites), has_core and the summary counts from
+// every site, including ones a truncated list leaves out. A complete list must match those
+// aggregates exactly; a truncated one can only show less than they count.
+function planCountsAgree(
+  sites: UpdateSite[],
+  byItem: GroupedItem[],
+  siteCount: number,
+  itemCount: number,
+  skippedCount: number,
+  truncated: boolean,
+  hasCore: boolean
+): boolean {
+  const fits = (shown: number, total: number) => (truncated ? shown <= total : shown === total);
+  const shownSites = new Map<string, Set<number>>();
+  const siteIds = new Set<number>();
+  let shownItems = 0;
+  let shownSkipped = 0;
+  for (const site of sites) {
+    if (siteIds.has(site.siteId)) return false;
+    siteIds.add(site.siteId);
+    shownItems += site.items.length;
+    shownSkipped += site.skipped.length;
+    for (const item of site.items) {
+      if (item.flags.core !== (item.type === 'core')) return false;
+      const ids = shownSites.get(updateKey(item)) ?? new Set<number>();
+      ids.add(site.siteId);
+      shownSites.set(updateKey(item), ids);
+    }
+  }
+  const sitesWithItems = sites.filter(site => site.items.length > 0).length;
+  if (
+    !fits(shownItems, itemCount) ||
+    !fits(sitesWithItems, siteCount) ||
+    !fits(shownSkipped, skippedCount)
+  )
+    return false;
+
+  const groupKeys = new Set<string>();
+  let groupSites = 0;
+  let coreSites = 0;
+  for (const group of byItem) {
+    const key = updateKey(group);
+    if (
+      groupKeys.has(key) ||
+      group.flags.core !== (group.type === 'core') ||
+      group.siteCount < 1 ||
+      group.siteCount > siteCount ||
+      !fits(shownSites.get(key)?.size ?? 0, group.siteCount)
+    )
+      return false;
+    groupKeys.add(key);
+    groupSites += group.siteCount;
+    if (group.flags.core) coreSites += group.siteCount;
+  }
+  // Each counted site has at least one item, and each group-site pair at least one item.
+  return (
+    [...shownSites.keys()].every(key => groupKeys.has(key)) &&
+    siteCount <= itemCount &&
+    (itemCount === 0) === (siteCount === 0) &&
+    (itemCount === 0) === (byItem.length === 0) &&
+    groupSites <= itemCount &&
+    coreSites <= siteCount &&
+    hasCore === coreSites > 0
+  );
 }
 
 /** Returns only validated fields needed for summary lines; leaves the raw preview untouched. */
@@ -245,34 +318,7 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
   const previewToken = own(preview, 'preview_token');
   if (Object.hasOwn(preview, 'preview_token') && typeof previewToken !== 'string') return undefined;
 
-  const visibleItems = sites.reduce((total, site) => total + site.items.length, 0);
-  const visibleSites = sites.filter(site => site.items.length > 0).length;
-  const visibleSkipped = sites.reduce((total, site) => total + site.skipped.length, 0);
-  if (
-    truncated
-      ? visibleItems > itemCount || visibleSites > siteCount || visibleSkipped > skippedCount
-      : visibleItems !== itemCount || visibleSites !== siteCount || visibleSkipped !== skippedCount
-  )
-    return undefined;
-
-  // The Dashboard sets flags.core from the type and builds by_item and has_core from every
-  // site, including ones a truncated list leaves out, so they must agree with each other.
-  if (
-    sites.some(site => site.items.some(item => item.flags.core !== (item.type === 'core'))) ||
-    byItem.some(
-      group =>
-        group.flags.core !== (group.type === 'core') ||
-        group.siteCount < 1 ||
-        group.siteCount > siteCount
-    ) ||
-    hasCore !== byItem.some(group => group.flags.core)
-  )
-    return undefined;
-  const visibleCoreSites = sites.filter(site => site.items.some(item => item.flags.core)).length;
-  const coreGroupSites = byItem
-    .filter(group => group.flags.core)
-    .reduce((total, group) => total + group.siteCount, 0);
-  if (truncated ? visibleCoreSites > coreGroupSites : visibleCoreSites !== coreGroupSites)
+  if (!planCountsAgree(sites, byItem, siteCount, itemCount, skippedCount, truncated, hasCore))
     return undefined;
 
   return {
@@ -288,13 +334,16 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
 function itemName(item: ItemFields): string {
   // The Dashboard names a translation after the item it translates ("WordPress core", a
   // plugin name); the slug is a locale or "default" and means little to a user.
-  return item.type === 'translation'
-    ? `${item.name || item.slug} translation`
-    : item.name || item.slug;
+  const name = item.name.trim() ? item.name : item.slug;
+  return item.type === 'translation' ? `${name} translation` : name;
+}
+
+function siteLabel(site: UpdateSite): string {
+  return site.name.trim() ? site.name : `Site ${site.siteId}`;
 }
 
 function versionChange(item: ItemFields): string {
-  return item.from
+  return item.from.trim()
     ? `${itemName(item)} ${item.from} → ${item.to}`
     : `${itemName(item)} → ${item.to}`;
 }
@@ -318,14 +367,11 @@ export function buildUpdatePlanSummary(plan: UpdatePlan): string[] {
     if (lines.length < MAX_LINES) lines.push(line);
   };
   for (const site of plan.sites) {
-    for (const item of site.items)
-      append(`${site.name || `Site ${site.siteId}`}: ${versionChange(item)}`);
+    for (const item of site.items) append(`${siteLabel(site)}: ${versionChange(item)}`);
   }
   for (const site of plan.sites) {
     for (const item of site.skipped) {
-      append(
-        `Held back: ${itemName(item)} on ${site.name || `Site ${site.siteId}`} (${skipPhrase(item.reason)})`
-      );
+      append(`Held back: ${itemName(item)} on ${siteLabel(site)} (${skipPhrase(item.reason)})`);
     }
   }
   for (const site of plan.sites) {

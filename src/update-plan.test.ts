@@ -396,6 +396,123 @@ describe('update plan summaries', () => {
     expect(validateUpdatePlan(preview)).toBeUndefined();
   });
 
+  // by_item has one group per type and slug counting distinct sites; a complete list must
+  // reconcile with it exactly, a truncated one can only show less.
+  it.each([
+    [
+      'a duplicate grouped item',
+      (p: Preview) => {
+        p.would_affect.by_item.push({ ...p.would_affect.by_item[1] });
+      },
+    ],
+    [
+      'a duplicate core group in a truncated plan',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.by_item.push({ ...p.would_affect.by_item[0] });
+      },
+    ],
+    [
+      'a group whose site count disagrees with a complete list',
+      (p: Preview) => {
+        p.would_affect.sites[0].items.splice(1, 1);
+        p.would_affect.summary.item_count = 6;
+        p.count = 6;
+      },
+    ],
+    [
+      'a group with no listed item in a complete list',
+      (p: Preview) => {
+        p.would_affect.by_item.push({ ...p.would_affect.by_item[1], slug: 'not-listed' });
+      },
+    ],
+    [
+      'a listed item without a group',
+      (p: Preview) => {
+        p.would_affect.by_item.splice(1, 1);
+      },
+    ],
+    [
+      'a listed item without a group in a truncated plan',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.by_item.splice(1, 1);
+      },
+    ],
+    [
+      'a truncated group counting fewer sites than it lists',
+      (p: Preview) => {
+        p.would_affect.summary.truncated = true;
+        p.would_affect.sites[1].items.push({ ...p.would_affect.sites[0].items[1] });
+        p.would_affect.summary.item_count = 8;
+        p.count = 8;
+      },
+    ],
+    [
+      'a site listed twice',
+      (p: Preview) => {
+        p.would_affect.sites[1].site_id = 4;
+      },
+    ],
+    [
+      'a truncated plan with groups but no items',
+      (p: Preview) => {
+        p.would_affect.sites = [];
+        Object.assign(p.would_affect.summary, { truncated: true, item_count: 0, skipped_count: 0 });
+        p.count = 0;
+      },
+    ],
+    [
+      'a truncated plan with more group-site pairs than items',
+      (p: Preview) => {
+        p.would_affect.sites = [];
+        Object.assign(p.would_affect.summary, { truncated: true, item_count: 6, skipped_count: 0 });
+        p.count = 6;
+      },
+    ],
+    [
+      'a truncated plan with items but no groups',
+      (p: Preview) => {
+        p.would_affect.sites = [];
+        p.would_affect.by_item = [];
+        Object.assign(p.would_affect.summary, {
+          truncated: true,
+          skipped_count: 0,
+          has_core: false,
+        });
+      },
+    ],
+    [
+      'an item with a blank name and slug',
+      (p: Preview) => {
+        Object.assign(p.would_affect.sites[0].items[1], { name: '  ', slug: ' ' });
+        Object.assign(p.would_affect.by_item[1], { slug: ' ' });
+      },
+    ],
+  ] as const)('rejects %s', (_label, mutate) => {
+    const preview = envelope();
+    mutate(preview);
+    expect(validateUpdatePlan(preview)).toBeUndefined();
+  });
+
+  it('accepts one translation slug listed twice on a site as one grouped site', () => {
+    const preview = envelope();
+    const translation = preview.would_affect.sites[1].items[1];
+    preview.would_affect.sites[1].items.push({ ...translation, to: '6.8.2' });
+    preview.would_affect.summary.item_count = 8;
+    preview.count = 8;
+    expect(summary(preview)).toContain('aichild7: WordPress core translation → 6.8.2');
+  });
+
+  it('falls back to the site ID and slug when names are blank', () => {
+    const preview = envelope();
+    preview.would_affect.sites[0].site_name = '   ';
+    preview.would_affect.sites[0].items[1].name = ' ';
+    const lines = summary(preview);
+    expect(lines).toContain('Site 4: akismet 5.3 → 5.4');
+    expect(lines).toContain('Held back: Yoast SEO on Site 4 (ignored on this site)');
+  });
+
   it('accepts complete aggregates above the visible counts when truncated', () => {
     const preview = envelope();
     Object.assign(preview.would_affect.summary, {
