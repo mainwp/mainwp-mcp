@@ -82,14 +82,15 @@ log, `mainwp_get_setup_status`, and 401 errors during a call name the rejected u
 than the display name, and an Application Password rather than the account's login password. Network, TLS, timeout,
 and 5xx failures keep the existing degraded retry path. The Application Password is never logged or returned.
 
-The startup log names the source of each connection setting instead of reporting "mixed". When an environment
-variable overrides a different value in `settings.json`, the log and the setup status say so for that setting, so an
-edit to the file that had no effect is explained.
+The startup log names the source of each connection setting instead of reporting "mixed". When an environment variable
+overrides a different value in `settings.json`, the startup log says so for that setting, and so does the setup status
+when the Dashboard rejects the credentials, so an edit to the file that had no effect is explained.
 
-String inputs now honor the `maxLength` an ability's input schema declares, up to a ceiling of 64 MiB. They were capped
-at 10,000 characters regardless of the schema, which blocked abilities that take base64 file uploads. Properties
-without a usable `maxLength` keep the 10,000-character default, and read-only tools are still bounded by the request
-URL limit. The stdio transport accepts messages large enough to carry the largest allowed string.
+String inputs now honor the `maxLength` an ability's input schema declares, up to a ceiling of 64 MiB. They were
+capped at 10,000 characters regardless of the schema, which blocked abilities that take base64 file uploads.
+Properties without a usable `maxLength` keep the 10,000-character default, and read-only tools are still bounded by
+the request URL limit. The stdio transport accepts messages large enough to carry the largest allowed string of ASCII
+text, such as base64.
 
 On GET and DELETE calls, boolean inputs are sent as `1` and `0` instead of `true` and `false` when the ability's
 schema plainly declares the position as a boolean. WordPress 6.9 and 7.0 pass query values through as raw strings, and
@@ -142,9 +143,11 @@ evicts the oldest preview first.
 
 ### Security
 
-Inputs an ability's schema marks `writeOnly` are redacted from results, confirmation previews, errors, and logs. When a
-call carried `writeOnly` input and the request fails, the error reports the HTTP status and a short upstream error
-code instead of the upstream message. Redaction applies once the Dashboard marks the relevant inputs `writeOnly`.
+Inputs an ability's schema marks `writeOnly` are redacted from results, confirmation previews, errors, and logs.
+Values shorter than four characters and booleans are left as they are, since matching them wherever they appear would
+mangle unrelated counts and keys. When a call carried `writeOnly` input and the request fails, the error reports the
+HTTP status and a short upstream error code instead of the upstream message. Redaction applies once the Dashboard
+marks the relevant inputs `writeOnly`.
 
 Transport errors no longer include the request's query string, which carries GET and DELETE input. A successful
 response that is not valid JSON fails with a fixed message instead of quoting the body.
