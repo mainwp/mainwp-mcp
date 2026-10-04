@@ -7,6 +7,8 @@
  * MCP errors in errors.ts.
  */
 
+import { buildUpdatePlanSummary, validateUpdatePlan } from './update-plan.js';
+
 /**
  * Common context for confirmation-related responses
  */
@@ -131,11 +133,13 @@ export function buildConfirmationRequiredResponse(
   preview: unknown,
   token: string
 ): object {
+  const plan = validateUpdatePlan(preview);
   return {
     status: 'CONFIRMATION_REQUIRED',
     next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
+    ...(plan ? { plan_summary: buildUpdatePlanSummary(plan) } : {}),
     confirmation_token: token,
     instructions:
       'Show the preview to the user. A message that merely requests the operation is not ' +

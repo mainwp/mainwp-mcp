@@ -2405,6 +2405,129 @@ describe('confirmation flow - full cycle', () => {
     vi.restoreAllMocks();
   });
 
+  it('adds plan_summary beside valid update previews through MCP handlers and preserves invalid responses', async () => {
+    clearToolsCache();
+    resetSessionData();
+    const ability: Ability = {
+      ...sampleAbilities[1],
+      name: 'mainwp/run-updates-v1',
+      input_schema: {
+        type: 'object',
+        properties: {
+          site_ids_or_domains: { type: 'array', items: { type: 'integer' } },
+          confirm: { type: 'boolean' },
+          dry_run: { type: 'boolean' },
+        },
+      },
+    };
+    const item = {
+      type: 'plugin',
+      slug: 'akismet',
+      name: 'Akismet',
+      from: '5.3',
+      to: '5.4',
+      requested: true,
+      flags: { core: false, major: false },
+    };
+    const validPreview = {
+      dry_run: true,
+      would_affect: {
+        sites: [
+          {
+            site_id: 4,
+            site_url: 'https://aichild4.example/',
+            site_name: 'aichild4',
+            items: [item],
+            skipped: [],
+          },
+        ],
+        by_item: [
+          {
+            type: item.type,
+            slug: item.slug,
+            name: item.name,
+            to: [item.to],
+            site_count: 1,
+            flags: item.flags,
+          },
+        ],
+        summary: {
+          site_count: 1,
+          item_count: 1,
+          skipped_count: 0,
+          all_sites: false,
+          queued: false,
+          truncated: false,
+          has_core: false,
+          has_major: false,
+          has_unknown_version: false,
+          requested_not_found: [],
+        },
+      },
+      count: 1,
+      warnings: ['Preserve this warning only in the raw preview.'],
+      errors: [],
+    };
+    const invalidPreview = structuredClone(validPreview);
+    invalidPreview.would_affect.summary.item_count = 2;
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify([ability])));
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(validPreview)));
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(invalidPreview)));
+    const { server } = await createServer(baseConfig);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      for (const [index, upstreamPreview] of [validPreview, invalidPreview].entries()) {
+        const result = await client.callTool({
+          name: 'run_updates_v1',
+          arguments: { site_ids_or_domains: [4], confirm: true },
+        });
+        expect(result.isError).toBeUndefined();
+        const text = (result.content as Array<{ text: string }>)[0].text;
+        const data = JSON.parse(text);
+        const unchangedResponse = {
+          status: 'CONFIRMATION_REQUIRED',
+          next_action: 'show_preview_and_confirm',
+          message: 'Preview generated. Review the changes below and confirm to proceed.',
+          preview: upstreamPreview,
+          confirmation_token: data.confirmation_token,
+          instructions:
+            'Show the preview to the user. A message that merely requests the operation is not ' +
+            'approval: unless the user explicitly authorized proceeding through confirmation, stop ' +
+            'and wait for an approving reply sent after they see the preview. Only with that ' +
+            'authorization or reply, call this tool again with user_confirmed: true and ' +
+            'confirmation_token: "<token above>".',
+          metadata: { tool: 'run_updates_v1', ability: ability.name, expiresIn: '5 minutes' },
+        };
+        expect(typeof data.confirmation_token).toBe('string');
+        if (index === 0) {
+          expect(data).toEqual({
+            ...unchangedResponse,
+            plan_summary: [
+              'aichild4: Akismet 5.3 → 5.4',
+              'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.',
+            ],
+          });
+        } else {
+          expect(data).not.toHaveProperty('plan_summary');
+          expect(text).toBe(JSON.stringify(unchangedResponse));
+        }
+      }
+      const calls = mockFetch.mock.calls.filter(([url]) => String(url).includes('/run'));
+      expect(calls).toHaveLength(2);
+      for (const [, options] of calls) {
+        expect(JSON.parse(options.body)).toEqual({
+          input: { site_ids_or_domains: [4], dry_run: true },
+        });
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it('carries nullable DELETE preview and captured token through MCP request handlers', async () => {
     clearToolsCache();
     resetSessionData();
