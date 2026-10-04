@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   fetchAbilities,
   fetchCategories,
+  getAbilityCatalogMetadata,
+  getCachedAbilityCatalogMetadata,
   getAbility,
   getAbilityByToolName,
   executeAbility,
@@ -3637,10 +3639,17 @@ describe('paginateApi', () => {
       async () => new Response('[]', { headers: { 'X-WP-TotalPages': '50' } })
     );
 
-    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+    const result = await paginateApi(
+      customFetch,
+      'https://test.local/items',
+      'items',
+      1000,
+      logger
+    );
 
     expect(customFetch).toHaveBeenCalledTimes(50);
     expect(logger.warning).not.toHaveBeenCalled();
+    expect(result).toEqual({ items: [], truncated: false, pagesFetched: 50, pageLimit: 50 });
   });
 
   it('warns when reported pages exceed the 50-page cap', async () => {
@@ -3649,9 +3658,194 @@ describe('paginateApi', () => {
       async () => new Response('[]', { headers: { 'X-WP-TotalPages': '51' } })
     );
 
-    await paginateApi(customFetch, 'https://test.local/items', 'items', 1000, logger);
+    const result = await paginateApi(
+      customFetch,
+      'https://test.local/items',
+      'items',
+      1000,
+      logger
+    );
 
     expect(customFetch).toHaveBeenCalledTimes(50);
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Pagination capped'));
+    expect(result).toEqual({ items: [], truncated: true, pagesFetched: 50, pageLimit: 50 });
+    expect(customFetch).toHaveBeenLastCalledWith('https://test.local/items?per_page=100&page=50');
+    expect(customFetch).not.toHaveBeenCalledWith('https://test.local/items?per_page=100&page=51');
+  });
+
+  // Headers per page (null = header absent; the last entry repeats) and the
+  // item count of every page (per_page is 100). Request counts pin the
+  // unchanged loop; only the completeness flag is new.
+  it.each([
+    {
+      name: 'header absent on a short page',
+      headers: [null],
+      size: 99,
+      calls: 1,
+      truncated: false,
+    },
+    { name: 'header absent on a full page', headers: [null], size: 100, calls: 1, truncated: true },
+    { name: 'exact total on a full page', headers: ['1'], size: 100, calls: 1, truncated: false },
+    { name: 'exact total on an empty page', headers: ['1'], size: 0, calls: 1, truncated: false },
+    { name: 'zero total pages', headers: ['0'], size: 0, calls: 1, truncated: false },
+    { name: 'consistent 3 of 3 full pages', headers: ['3'], size: 100, calls: 3, truncated: false },
+    {
+      name: 'header dropped at the cap after 51 were advertised',
+      headers: [...Array<string>(49).fill('51'), null],
+      size: 0,
+      calls: 50,
+      truncated: true,
+    },
+    {
+      name: 'total shrinks from 3 to 1 on page 2',
+      headers: ['3', '1'],
+      size: 0,
+      calls: 2,
+      truncated: true,
+    },
+    { name: 'numeric prefix', headers: ['1junk'], size: 0, calls: 1, truncated: true },
+    { name: 'negative total', headers: ['-5'], size: 0, calls: 1, truncated: true },
+    { name: 'empty header', headers: [''], size: 0, calls: 1, truncated: true },
+    { name: 'non-numeric header', headers: ['abc'], size: 0, calls: 50, truncated: true },
+  ])('reports completeness for $name', async ({ headers, size, calls, truncated }) => {
+    let call = 0;
+    const page = JSON.stringify(Array.from({ length: size }, (_, id) => ({ id })));
+    const customFetch = vi.fn(async () => {
+      const header = headers[Math.min(call++, headers.length - 1)];
+      return new Response(page, header === null ? {} : { headers: { 'X-WP-TotalPages': header } });
+    });
+
+    const result = await paginateApi(customFetch, 'https://test.local/items', 'items', 100000);
+
+    expect(customFetch).toHaveBeenCalledTimes(calls);
+    expect(result).toMatchObject({ truncated, pagesFetched: calls, pageLimit: 50 });
+    expect(result.items).toHaveLength(size * calls);
+  });
+});
+
+describe('ability catalog metadata', () => {
+  const truncatedCatalog = { truncated: true, pagesFetched: 50, pageLimit: 50 };
+  const completeCatalog = { truncated: false, pagesFetched: 1, pageLimit: 50 };
+  const emptyCatalog = { truncated: false, pagesFetched: 0, pageLimit: 50 };
+
+  function catalogResponse(url: string, totalPages: number): Response {
+    const page = new URL(url).searchParams.get('page');
+    return new Response(JSON.stringify(page === '1' ? sampleAbilities : []), {
+      headers: { 'X-WP-TotalPages': String(totalPages) },
+    });
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    initRateLimiter(0);
+  });
+
+  it('keeps truncation on cached and stale ability snapshots', async () => {
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+    const first = await fetchAbilities(baseConfig);
+    const cached = await fetchAbilities(baseConfig);
+    expect(cached).toBe(first);
+    expect(getAbilityCatalogMetadata(cached)).toEqual(truncatedCatalog);
+    expect(mockFetch).toHaveBeenCalledTimes(50);
+
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    const stale = await fetchAbilities(baseConfig, true, mockLogger);
+    expect(stale).toBe(first);
+    expect(getAbilityCatalogMetadata(stale)).toEqual(truncatedCatalog);
+    expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(truncatedCatalog);
+  });
+
+  it('resets truncation after a complete refresh without changing an older snapshot', async () => {
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+    const truncated = await fetchAbilities(baseConfig);
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 1));
+    const complete = await fetchAbilities(baseConfig, true);
+
+    expect(getAbilityCatalogMetadata(complete)).toEqual(completeCatalog);
+    expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(completeCatalog);
+    expect(getAbilityCatalogMetadata(truncated)).toEqual(truncatedCatalog);
+  });
+
+  it('resets catalog metadata when the ability cache is cleared', async () => {
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+    await fetchAbilities(baseConfig);
+    clearCache();
+    expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(emptyCatalog);
+
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 1));
+    expect(getAbilityCatalogMetadata(await fetchAbilities(baseConfig))).toEqual(completeCatalog);
+  });
+
+  it.each([
+    ['URL', { dashboardUrl: 'https://other.local' }],
+    ['base path', { dashboardUrl: `${baseConfig.dashboardUrl}/other` }],
+    ['principal', { username: 'other-user' }],
+    ['namespaces', { abilityNamespaces: ['mainwp', 'acme'] }],
+  ] as const)(
+    'isolates catalog metadata across different %s identities',
+    async (_label, overrides) => {
+      const otherConfig = { ...baseConfig, ...overrides } as Config;
+      mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+      const truncated = await fetchAbilities(baseConfig);
+      expect(getCachedAbilityCatalogMetadata(otherConfig)).toEqual(emptyCatalog);
+
+      mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 1));
+      const complete = await fetchAbilities(otherConfig);
+      expect(getAbilityCatalogMetadata(truncated)).toEqual(truncatedCatalog);
+      expect(getAbilityCatalogMetadata(complete)).toEqual(completeCatalog);
+      expect(getCachedAbilityCatalogMetadata(otherConfig)).toEqual(completeCatalog);
+      expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(emptyCatalog);
+
+      mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+      const refetched = await fetchAbilities(baseConfig);
+      expect(getAbilityCatalogMetadata(refetched)).toEqual(truncatedCatalog);
+      expect(getAbilityCatalogMetadata(complete)).toEqual(completeCatalog);
+      expect(mockFetch).toHaveBeenCalledTimes(101);
+    }
+  );
+
+  it('publishes metadata with the matching indexes during concurrent identity refreshes', async () => {
+    let resolveFirst!: (response: Response) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>(resolve => {
+          resolveFirst = resolve;
+        })
+    );
+    const first = fetchAbilities(baseConfig);
+    const otherConfig = { ...baseConfig, dashboardUrl: 'https://other.local' };
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 1));
+    const complete = await fetchAbilities(otherConfig);
+
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+    resolveFirst(catalogResponse(`${baseConfig.dashboardUrl}?page=1`, 51));
+    const truncated = await first;
+    expect(getAbilityCatalogMetadata(truncated)).toEqual(truncatedCatalog);
+    expect(getAbilityCatalogMetadata(complete)).toEqual(completeCatalog);
+    expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(truncatedCatalog);
+    expect(await getAbilityByToolName(baseConfig, 'list_sites_v1')).toBe(truncated[0]);
+    expect(mockFetch).toHaveBeenCalledTimes(51);
+  });
+
+  it('preserves newer catalog metadata when an older identity refresh fails', async () => {
+    let rejectFirst!: (error: Error) => void;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    const failing = fetchAbilities(baseConfig);
+    const otherConfig = { ...baseConfig, username: 'other-user' };
+    mockFetch.mockImplementation(async (url: string) => catalogResponse(url, 51));
+    const newer = await fetchAbilities(otherConfig);
+    rejectFirst(new Error('Network error'));
+    await expect(failing).rejects.toThrow('Network error');
+
+    expect(await fetchAbilities(otherConfig)).toBe(newer);
+    expect(getCachedAbilityCatalogMetadata(otherConfig)).toEqual(truncatedCatalog);
+    expect(getCachedAbilityCatalogMetadata(baseConfig)).toEqual(emptyCatalog);
+    expect(mockFetch).toHaveBeenCalledTimes(51);
   });
 });

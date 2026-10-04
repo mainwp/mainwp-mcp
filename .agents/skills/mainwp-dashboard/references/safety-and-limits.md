@@ -133,9 +133,17 @@ it fetches the same bytes upstream only to be rejected the same way.
 ## Pagination and partial reads
 
 Catalog and category fetches page sequentially at 100 per page and stop at 50
-pages. Hitting the cap logs a
-warning through the MCP logger and returns what was collected. The tool result
-itself carries no marker, and the user may never see the log line.
+pages. Hitting the cap logs a warning through the MCP logger and returns what
+was collected. For the ability catalog, `mainwp://status` and
+`mainwp_get_setup_status` also report it as `catalog.truncated`, with
+`catalog.pagesFetched` and `catalog.pageLimit`. A truncated catalog stays connected and its tools stay
+usable. `catalog.truncated` is also true when the Dashboard's page-count header
+is malformed, is missing on a full page, or goes missing or shrinks after an
+earlier page advertised more pages, because pages may remain. `catalog.pagesFetched: 0` means the server
+holds no catalog for this connection yet (setup status can answer from the
+cache without fetching), so `truncated: false` there proves nothing; read
+`mainwp://status`, which refreshes the catalog. Category
+truncation is still reported only through the log line.
 
 Consequences to carry into any answer:
 
