@@ -56,6 +56,7 @@ import {
   getFixtureFaultMode,
   startFixtureDashboard,
 } from '../fixture-dashboard.js';
+import { makeDashboard63Abilities } from '../../helpers/update-gate.js';
 import {
   agentLaunchCwd,
   agentPrompt,
@@ -5845,7 +5846,9 @@ describe('acceptance fixture catalog', () => {
             'utf8'
           )
         ) as Array<{ name: string }>
-      ).map(ability => ability.name)
+      )
+        .map(ability => ability.name)
+        .concat(makeDashboard63Abilities().map(ability => ability.name))
     );
     for (const name of FIXTURE_ROUTED_ABILITIES) {
       if (name === FIXTURE_CONFIRM_ONLY_ABILITY) continue;
