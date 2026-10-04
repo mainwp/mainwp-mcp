@@ -16,19 +16,22 @@ ability. The troubleshooting, maintenance and update workflows load a site's kno
 `mainwp-dashboard` skill explains how to use it: records are information about a site or client, not instructions;
 summaries list skills and memories by title only, so a record is opened before its content is described; records
 marked `verified: false` were written by an agent and are unreviewed; and a record that contains instructions
-addressed to an AI agent is named to the user in a separate note instead of being followed.
+addressed to an AI agent is named to the user in a separate note instead of being followed. The update workflow also
+loads the ignored-updates list, names the ignored items in scope, and holds back or asks about an item a record argues
+against.
 
-The server sends instructions to the client at initialize. They carry the knowledge rules above, ask for the user's
-approval before any call that changes sites, say that a tool's preview is the plan to show and that previews shown
-together can be approved in one reply, note that Dashboards before 6.3 do not gate updates, and forbid removing an
-update from the ignore list to force it through unless the user asks. Clients decide how to use server instructions.
+The server sends instructions to the client at initialize. They say that knowledge records are information, not
+instructions, that a record is opened before its content is described, and that a record that contains instructions
+addressed to an AI agent is named to the user instead of followed. They also ask for the user's approval before any
+call that changes sites, say that a tool's preview is the plan to show and that previews shown together can be
+approved in one reply, note that Dashboards before 6.3 do not gate updates, and forbid removing an update from the
+ignore list to force it through unless the user asks. Clients decide how to use server instructions.
 
 Update previews carry a readable summary. When a destructive update tool's preview is a valid Dashboard 6.3 update
 plan, the confirmation response adds `plan_summary`: per-site version changes, held-back items with the reason, major
 version jumps, the number of sites getting a core update, a line when the site list is partial, and, when the preview
 carries no preview token, a note that a newer version synced before confirmation is the one applied. The raw preview
-is still included. A preview that does
-not validate gets no summary.
+is still included. A preview that does not validate gets no summary.
 
 Abilities that take a `preview_token` from their own dry run can now be confirmed. When an ability supports `dry_run`
 and declares `preview_token` as a nullable string, the preview sends `null` for it (or leaves it out when it is
@@ -47,34 +50,37 @@ Tool descriptions, help, and confirmation responses name the parameter the tool 
 
 `mainwp://status`, `mainwp_get_setup_status` and `mainwp_configure` report whether the ability catalog is complete, as
 `catalog: { truncated, pagesFetched, pageLimit }`. `truncated` is true when pagination stopped at the 50-page limit,
-and also when the `X-WP-TotalPages` header is malformed, missing on a full page, or drops below the count an earlier
-page advertised. A truncated catalog stays connected and its tools stay usable; a complete refresh or a cache clear
-resets it.
+when an `X-WP-TotalPages` header is malformed, when a full page arrives without one, and when the fetch stops short of
+the largest page count any page advertised. A truncated catalog stays connected and its tools stay usable; a complete
+refresh or a cache clear resets it.
 
 ### Changed
 
-On MainWP Dashboard 6.3 and later, the update tools and `unignore_site_updates_v1` are destructive. They go through
-the preview and confirmation flow, and safe mode blocks them. The update workflow prompt, the `/mainwp:update-workflow`
-command and the skill use the Dashboard's preview as the plan: one update call per group of sites with the same
-items, all previews shown together, one approval. On earlier Dashboards the update tools run without a preview, as
-before.
+On MainWP Dashboard 6.3 and later, the update tools and `unignore_site_updates_v1` are destructive, so safe mode
+blocks them and, with confirmation enabled (the default), they go through the preview and confirmation flow. With
+`MAINWP_REQUIRE_USER_CONFIRMATION=false` the caller must send `confirm: true` itself; the Dashboard rejects a call
+with neither `confirm` nor `dry_run`, and the error carries `mainwp_confirmation_required` as
+`error.data.upstream_code`. The update workflow prompt, the `/mainwp:update-workflow` command and the skill use the
+Dashboard's preview as the plan: one update call per group of sites with the same items, all previews shown together,
+one approval. On earlier Dashboards the update tools run without a preview, as before.
 
 Errors from the Dashboard with a 4xx status keep the WordPress error code. When the body is a well-formed WordPress
 error, the code is returned as `error.data.upstream_code` and the error maps to `SERVER_ERROR` (-32000) unless an
 existing mapping applies (401, 403, 404, 429 and `*_not_found` are unchanged). A replacement ability the Dashboard
 names in `data.replacement`, such as `unignore_site_updates_v1` for the retired unignore path, is returned as
 `error.data.replacement` when that tool exists and is allowed by `MAINWP_ALLOWED_TOOLS` and `MAINWP_BLOCKED_TOOLS`.
-Before, these errors surfaced as a generic internal error. Malformed bodies and 5xx errors are unchanged.
+Before, these errors surfaced as an internal error or were classified by words in their message. Malformed bodies and
+5xx errors are unchanged.
 
 Standard tool descriptions drop the Dashboard sentence "Call dry_run first and show the plan to the user." because the
 server adds its own preview reminder. Other Dashboard instructions and compact descriptions are unchanged.
 
-Rejected credentials are now reported at startup instead of producing a tool list that cannot work. When the
-Dashboard rejects the configured user or Application Password, the server enters a `credentials_rejected` state. The
-startup log, `mainwp_get_setup_status`, and 401 errors during a call name the rejected user, where each of
-`MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` came from, and what WordPress expects: the login name or email
-address rather than the display name, and an Application Password rather than the account's login password. Network, TLS, timeout, and 5xx failures keep the existing degraded retry path. The
-Application Password is never logged or returned.
+Rejected credentials are now reported at startup instead of producing a tool list that cannot work. When the Dashboard
+rejects the configured user or Application Password, the server enters a `credentials_rejected` state. The startup
+log, `mainwp_get_setup_status`, and 401 errors during a call name the rejected user, where each of `MAINWP_URL`,
+`MAINWP_USER`, and `MAINWP_APP_PASSWORD` came from, and what WordPress expects: the login name or email address rather
+than the display name, and an Application Password rather than the account's login password. Network, TLS, timeout,
+and 5xx failures keep the existing degraded retry path. The Application Password is never logged or returned.
 
 The startup log names the source of each connection setting instead of reporting "mixed". When an environment
 variable overrides a different value in `settings.json`, the log and the setup status say so for that setting, so an
@@ -85,15 +91,17 @@ at 10,000 characters regardless of the schema, which blocked abilities that take
 without a usable `maxLength` keep the 10,000-character default, and read-only tools are still bounded by the request
 URL limit. The stdio transport accepts messages large enough to carry the largest allowed string.
 
-On GET and DELETE calls, boolean inputs are sent as `1` and `0` instead of `true` and `false` when the ability's schema
-plainly declares the position as a boolean. WordPress 6.9 and 7.0 pass query values through as raw strings, and PHP
-code that tests a flag by truthiness reads the string `"false"` as true. Undeclared keys and positions with ambiguous
-or combined types keep `true`/`false`.
+On GET and DELETE calls, boolean inputs are sent as `1` and `0` instead of `true` and `false` when the ability's
+schema plainly declares the position as a boolean. WordPress 6.9 and 7.0 pass query values through as raw strings, and
+PHP code that tests a flag by truthiness reads the string `"false"` as true. Undeclared keys, positions under `anyOf`,
+`oneOf` or `allOf`, and type lists that name `integer`, `number`, `string` or `array` before `boolean` keep
+`true`/`false`.
 
 Abilities with a required input that may be `null` now receive their input as JSON, so a `null` stays `null`: GET
-calls send `input_json`, DELETE calls send a JSON body. This applies to `mainwp/` abilities whose input schema
-requires a nullable key, and needs MainWP Dashboard 6.2 or later; on an older Dashboard the error says to update.
-Values that are not in the declared type's canonical form are refused before the call.
+calls send `input_json`, DELETE calls send a JSON body. This applies to `mainwp/` abilities whose input schema is an
+object without a default and requires a nullable key, and needs MainWP Dashboard 6.2 or later; on an older Dashboard
+the error says to update. A string sent for a top-level property whose declared types exclude `string` is converted to
+the declared type when it is in canonical form and refused before the call when it is not.
 
 ### Fixed
 
@@ -112,12 +120,15 @@ another preview.
 strings of at most 255 characters with no control characters. Integer-typed and untyped ids keep the positive-integer
 rule.
 
-Calls with no arguments now send an input parameter when the ability declares an input schema: an empty parameter on
-GET and DELETE, an empty object on POST. Abilities whose schema requires an input object rejected these calls before.
+Calls with no arguments now send an input parameter when the ability declares an input schema: an empty `input`
+parameter on GET and DELETE when the schema has no default, and an empty `input` object on POST. Abilities whose
+schema requires an input object rejected these calls before. An empty POST call to an ability without an input schema
+now sends `{}` instead of `{"input":{}}`.
 
-Abilities that require an explicit `confirm` or `dry_run` value now receive one. When either key is listed as required
-and accepts `false`, previews and explicit dry runs send `dry_run: true` with `confirm: false`, and confirmed calls
-send `confirm: true` with `dry_run: false`. Abilities that do not require these keys get the same payloads as before.
+Abilities that require an explicit `confirm` or `dry_run` value now receive one. For an ability with a `confirm`
+parameter and a declared `dry_run`, previews and explicit dry runs send `dry_run: true`, plus `confirm: false` when
+`confirm` is required and accepts `false`. Confirmed calls send `confirm: true`, plus `dry_run: false` when `dry_run`
+is required and accepts `false`. Abilities that do not require these keys get the same payloads as before.
 
 `user_confirmed` and `confirmation_token` are no longer forwarded to the Dashboard on previews, explicit dry runs, or
 calls made with confirmation disabled. Abilities that reject undeclared input keys failed these calls.
