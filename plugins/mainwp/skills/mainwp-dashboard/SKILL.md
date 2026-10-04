@@ -104,8 +104,15 @@ These hold regardless of which confirmation path a tool takes:
   argument invalidates the token.
 - A valid token is not approval. Execution needs an explicit user reply
   approving that specific operation. Never run the preview call and the
-  confirmed call in one turn without one, and never treat approval of one
-  operation as approval of the next.
+  confirmed call in one turn without one.
+- Previews shown to the user together can be approved in one explicit reply
+  that covers all of them, and each then executes with its own token. Approval
+  never carries over to an operation the user was not shown: anything new
+  needs its own preview and approval.
+- On Dashboard 6.3 and later the update tools and the tool that removes
+  update holds are destructive and follow this flow. When one request needs several update
+  calls (different items on different sites), preview each, show the previews
+  together, and ask once.
 
 ## Response and session limits
 

@@ -16,14 +16,15 @@ Steps:
 4. Group the remaining updates by risk: security fixes, then bug fixes, then feature releases, and note anything that usually needs a manual step.
 5. Propose an order that puts core before plugins and themes, and puts lower-stakes sites ahead of production ones.
 6. Report backup coverage for the affected sites before recommending anything be applied.
-7. Present the plan and stop. Wait for the user to say which part to run.
+7. Present the plan and stop. On Dashboard 6.3 and later the update tools return a preview: call each update tool the plan needs with `confirm: true`, then show the previews together, with their `plan_summary` lines when present, alongside your ordering, hold and backup notes. The previews are what the user approves. Wait for the user to say which part to run.
 
 Rules:
 
 - Use only the resolved scope: an empty site scope or `"all"` means the Dashboard's full site list, anything else means exactly the sites given. Never synthesize site IDs and never widen a non-empty scope to make the run look complete.
-- Applying updates is destructive. Run an update tool only when the user explicitly asks for that step. On some Dashboards the update tools have no preview or confirmation step, so the user's approval of the plan is the only check: run exactly what was approved. If a tool does return a preview and confirmation step, follow it as returned. Never claim a preview happened when the tool did not provide one.
+- Applying updates is destructive. Run an update tool only when the user explicitly asks for that step. On Dashboard 6.3 and later each update call made with `confirm: true` returns a preview and a confirmation token: one explicit reply approving previews shown together approves each of them, and each executes with its own token. On earlier Dashboards the update tools have no preview or confirmation step, so the user's approval of the plan is the only check: run exactly what was approved. Never claim a preview happened when the tool did not provide one.
+- If a `confirm: true` call returns a result instead of a preview, confirmation is disabled on this server: stop, report exactly what ran, and do not continue.
 - Send an approved plan as one update-execution call only when one set of arguments says exactly what was approved. Its item list is a single list of slugs applied to every selected site, so when the approved items differ between sites, make one call per site, or per group of sites with the same items. Pass the sites explicitly unless the approved plan covers the full site list: an empty site list means every site.
 - Never remove an item from the ignore list to force it through unless the user explicitly asks for that.
-- A policy filter can block update execution outright, and so can safe mode on a Dashboard that marks update tools as destructive. If that happens, say so and leave the plan as the deliverable.
+- A policy filter can block update execution outright. On Dashboard 6.3 and later, which marks update tools as destructive, safe mode blocks them too. If that happens, say so and leave the plan as the deliverable.
 - If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

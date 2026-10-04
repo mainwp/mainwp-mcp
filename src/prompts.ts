@@ -133,9 +133,11 @@ Guide me through this update workflow:
    - Note any updates that require manual intervention
 
 4. **Applying the Approved Plan**
-   - Present the plan and wait for my approval before running any update tool. On some Dashboards the update tools have no preview or confirmation step, so my approval of the plan is the only check: run exactly what I approved
+   - On Dashboard 6.3 and later the update tools return a preview: call each update tool the plan needs with confirm: true, show me the previews together (with their plan_summary lines when present), and ask once. One explicit approving reply covers every preview shown; execute each with user_confirmed: true and its own confirmation_token. Never run anything I was not shown
+   - On earlier Dashboards the update tools have no preview or confirmation step, so my approval of the plan is the only check: present the plan, wait for my approval, and run exactly what I approved
    - Use one run_updates_v1 call only when one set of arguments says exactly what I approved. specific_items is a single slug list applied to every selected site, so when the approved items differ between sites, make one call per site, or per group of sites with the same items. Pass the sites explicitly unless I approved the full site list: an empty site list means every site
    - Never remove an item from the ignore list to force it through unless I explicitly ask for that
+   - If a confirm: true call returns a result instead of a preview, confirmation is disabled on this server: stop, tell me exactly what ran, and do not continue
 
 Please start by checking the current update status.`,
         },

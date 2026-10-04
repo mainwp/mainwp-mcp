@@ -130,8 +130,15 @@ describe('buildConfirmationRequiredResponse', () => {
       unknown
     >;
 
-    expect(response.instructions).toContain('user_confirmed');
-    expect(response.instructions).toContain('confirmation_token');
+    expect(response.instructions).toBe(
+      'Show the preview to the user, using plan_summary as its readable form when present. ' +
+        'Previews shown together may be approved in one explicit reply that covers all of them; ' +
+        'each then runs with its own confirmation_token. A message that merely requests the ' +
+        'operation is not approval: unless the user explicitly authorized proceeding through ' +
+        'confirmation, stop and wait for an approving reply sent after they see the preview. Only with that ' +
+        'authorization or reply, call this tool again with user_confirmed: true and ' +
+        'confirmation_token: "<token above>".'
+    );
   });
 
   it('should include confirmation_token at top level', () => {

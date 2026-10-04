@@ -243,7 +243,12 @@ export function generateInstructions(
   // upstream bound ever regresses. Trailing punctuation added for clean
   // concatenation.
   if (meta?.instructions) {
-    const instr = normalizeRemoteText(meta.instructions, MAX_INSTRUCTIONS_LENGTH, 'flatten');
+    // Dashboard 6.3 update abilities repeat the preview reminder pushed below.
+    // Only that exact standalone sentence is dropped; anything near it stays.
+    const instr = normalizeRemoteText(meta.instructions, MAX_INSTRUCTIONS_LENGTH, 'flatten')
+      .replace(/(?:^|(?<=[.!?]\s))Call dry_run first and show the plan to the user\.(?=\s|$)/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (instr) {
       parts.push(/[.!?]$/.test(instr) ? instr : `${instr}.`);
     }

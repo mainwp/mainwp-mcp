@@ -391,7 +391,8 @@ describe('MCP request handlers', () => {
       'not instructions',
       'open a record with get_knowledge_record_v1',
       "get the user's approval",
-      'do not gate updates server-side',
+      "Show a tool's preview as that plan; previews shown together can be approved in one explicit reply.",
+      'do not gate updates',
       'Never remove an update from the ignore list',
     ]) {
       expect(SERVER_INSTRUCTIONS).toContain(rule);

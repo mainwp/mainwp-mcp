@@ -88,6 +88,19 @@ describe('getPrompt', () => {
     expect(text).toContain('plugins');
   });
 
+  it('pins preview approval and the disabled-confirmation guard in the update workflow', () => {
+    const result = getPrompt('update-workflow', { update_type: 'plugins' });
+    const text = (result.messages[0].content as { text: string }).text;
+
+    for (const rule of [
+      'On Dashboard 6.3 and later the update tools return a preview: call each update tool the plan needs with confirm: true, show me the previews together (with their plan_summary lines when present), and ask once. One explicit approving reply covers every preview shown; execute each with user_confirmed: true and its own confirmation_token. Never run anything I was not shown',
+      'On earlier Dashboards the update tools have no preview or confirmation step, so my approval of the plan is the only check: present the plan, wait for my approval, and run exactly what I approved',
+      'If a confirm: true call returns a result instead of a preview, confirmation is disabled on this server: stop, tell me exactly what ran, and do not continue',
+    ]) {
+      expect(text).toContain(rule);
+    }
+  });
+
   it('should return messages with proper role', () => {
     const result = getPrompt('maintenance-check');
 
