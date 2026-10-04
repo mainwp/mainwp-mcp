@@ -228,7 +228,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       'Alpine Bakery: WordPress 6.8.1 → 6.9',
       'Alpine Bakery: Akismet 5.3.6 → 5.3.7',
       'Alpine Bakery: Bakehouse 2.4.0 → 2.5.0',
-      'Alpine Bakery: Translation akismet-fr_FR → 5.3.7',
+      'Alpine Bakery: Akismet translation → 5.3.7',
       'Beacon Studio: Akismet 5.3.5 → 5.3.7',
       'Held back: Yoast SEO on Alpine Bakery (ignored on this site)',
       'Held back: Yoast SEO on Cedar Nonprofit (ignored on this site)',

@@ -153,7 +153,7 @@ export function makePlanSites(): PlanSite[] {
         makePlanItem('core', 'wordpress', 'WordPress', '6.8.1', '6.9'),
         makePlanItem('plugin', 'akismet/akismet.php', 'Akismet', '5.3.6', '5.3.7'),
         makePlanItem('theme', 'bakehouse', 'Bakehouse', '2.4.0', '2.5.0'),
-        makePlanItem('translation', 'akismet-fr_FR', 'Akismet French', '', '5.3.7'),
+        makePlanItem('translation', 'akismet-fr_FR', 'Akismet', '', '5.3.7'),
       ],
       skipped: [{ ...heldFields, reason: 'ignored_site' }],
     },

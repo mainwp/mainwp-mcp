@@ -256,7 +256,11 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
 }
 
 function itemName(item: ItemFields): string {
-  return item.type === 'translation' ? `Translation ${item.slug}` : item.name || item.slug;
+  // The Dashboard names a translation after the item it translates ("WordPress core", a
+  // plugin name); the slug is a locale or "default" and means little to a user.
+  return item.type === 'translation'
+    ? `${item.name || item.slug} translation`
+    : item.name || item.slug;
 }
 
 function versionChange(item: ItemFields): string {

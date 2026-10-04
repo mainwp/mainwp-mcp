@@ -49,7 +49,7 @@ function envelope() {
       site_name: 'aichild7',
       items: [
         item('core', 'wordpress', 'WordPress', '6.7', '6.8', true),
-        item('translation', 'de_DE', 'German translation', '', '6.8.1', false),
+        item('translation', 'default', 'WordPress core', '', '6.8.1', false),
         item('plugin', 'unknown', 'Unknown version', '', '1.0', null),
       ],
       skipped: [],
@@ -145,7 +145,7 @@ describe('update plan summaries', () => {
       'aichild4: WooCommerce 9.9 → 10.0',
       'aichild4: Twenty Twenty-Five 1.1 → 1.2',
       'aichild7: WordPress 6.7 → 6.8',
-      'aichild7: Translation de_DE → 6.8.1',
+      'aichild7: WordPress core translation → 6.8.1',
       'aichild7: Unknown version → 1.0',
       'Held back: Yoast SEO on aichild4 (ignored on this site)',
       'Held back: Jetpack on aichild4 (ignored globally)',
