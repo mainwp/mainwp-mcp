@@ -193,7 +193,7 @@ Around 70 tools, organized by category (the exact count varies by Dashboard vers
 | Category         | Tools | Reference                                                                                |
 | ---------------- | ----- | ---------------------------------------------------------------------------------------- |
 | Sites            | 30    | [Sites Abilities](https://docs.mainwp.com/api-reference/abilities-api/sites)             |
-| Updates          | 13    | [Updates Abilities](https://docs.mainwp.com/api-reference/abilities-api/updates)         |
+| Updates          | 14    | [Updates Abilities](https://docs.mainwp.com/api-reference/abilities-api/updates)         |
 | Clients          | 11    | [Clients Abilities](https://docs.mainwp.com/api-reference/abilities-api/clients)         |
 | Tags             | 7     | [Tags Abilities](https://docs.mainwp.com/api-reference/abilities-api/tags)               |
 | Batch Operations | 1     | [Batch Operations](https://docs.mainwp.com/api-reference/abilities-api/batch-operations) |
