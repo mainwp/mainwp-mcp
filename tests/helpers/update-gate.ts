@@ -1,6 +1,6 @@
 import type { Ability } from '../../src/abilities.js';
 
-// Dashboard #300: class-mainwp-abilities-updates.php, registration and preview schemas.
+// Mirrors the Dashboard 6.3 update abilities (class-mainwp-abilities-updates.php): registration and preview schemas.
 export const UPDATE_ABILITIES = [
   'mainwp/run-updates-v1',
   'mainwp/update-all-v1',

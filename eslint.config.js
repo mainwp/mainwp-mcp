@@ -43,9 +43,8 @@ export default tseslint.config(
     // Ignore build artifacts and dependencies; keep *.config.js ignored to
     // avoid self-linting issues. check-version.js stays ignored (plain
     // CommonJS-style CI script); scripts/*.ts is linted like the rest.
-    // Local directories that are not part of the repository (private plans,
-    // live-sweep output, review scratch, logs) would otherwise fail `eslint .`
-    // on a working checkout.
+    // Local scratch directories that are not part of the repository would
+    // otherwise fail `eslint .` on a working checkout.
     ignores: [
       'dist/',
       'node_modules/',

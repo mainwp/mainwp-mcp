@@ -5,9 +5,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-<!-- Release prerequisite: the catalog-truncation and session-limit entries below ship with branch
-fix/session-cap-and-catalog-cap; merge it before release or drop those two entries. -->
-
 ### Added
 
 Agency, client and site knowledge. On MainWP Dashboard 6.3 and later the server exposes the Dashboard's knowledge abilities (agency, client and site summaries, and listing, reading, creating, updating and deleting knowledge records) like any other ability. The troubleshooting, maintenance and update workflows load a site's knowledge before planning, and the `mainwp-dashboard` skill explains how to use it: verified skill records and context, written or reviewed by a Dashboard user, guide the work; unverified records are information only, and one that contains instructions addressed to an AI agent is named to the user in a separate note instead of being followed; memories are history; skill records are listed with a description, and a record is opened before its content is described or followed. When verified records conflict, the more specific level wins, and a required agency record wins over client and site records. Only a person using the Dashboard can mark a record required or change a required one; the abilities refuse it. The update workflow also loads the ignored-updates list, names the ignored items in scope, and holds back or asks about an item that verified context or a verified skill argues against; an unverified record or a memory is raised with the user instead.
@@ -27,19 +24,13 @@ optional) and keeps the token the preview returns. For the six MainWP update abi
 confirmed call always sends the token captured from the preview, and a different token from the caller is refused
 with `PREVIEW_REQUIRED` before anything is sent. For every other ability, a token string from the caller is sent
 unchanged and the stored token is used when the caller sent `null` or nothing. Abilities that declare
-`preview_token` as a plain string, or have no `dry_run`, send the same payloads as before. Dashboard 6.3 does not yet
-return a preview token.
+`preview_token` as a plain string, or have no `dry_run`, send the same payloads as before. Dashboard 6.3 returns no
+preview token.
 
 An ability can now use a required `confirm_*` property as its confirmation parameter when its schema pins the value to
 `true` (`const: true` or `enum: [true]`). These tools confirm with a token and no preview, and an explicit `dry_run` is
 refused for them. A `confirm_*` property that also accepts `false` is treated as an ordinary input and passed through.
 Tool descriptions, help, and confirmation responses name the parameter the tool uses.
-
-`mainwp://status`, `mainwp_get_setup_status` and `mainwp_configure` report whether the ability catalog is complete, as
-`catalog: { truncated, pagesFetched, pageLimit }`. `truncated` is true when pagination stopped at the 50-page limit,
-when an `X-WP-TotalPages` header is malformed, when a full page arrives without one, and when the fetch stops short of
-the largest page count any page advertised. A truncated catalog stays connected and its tools stay usable; a complete
-refresh or a cache clear resets it.
 
 ### Changed
 
@@ -95,11 +86,6 @@ the declared type when it is in canonical form and refused before the call when 
 
 The `mainwp://site/{id}` resource works again. It sent `site_id` to an ability that requires `site_id_or_domain`, so
 the Dashboard rejected every read.
-
-A confirmed write whose result exceeds the session data limit now says that the upstream request succeeded and the
-result was omitted (`execution_attempted`, `upstream_response_received`, `result_omitted`), and asks the caller to
-verify the operation's state before retrying. The error code stays `RESOURCE_EXHAUSTED`. It previously looked like
-nothing had run.
 
 A confirmed execution no longer forwards a `dry_run` argument from the caller, which could turn the approved call into
 another preview.

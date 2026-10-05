@@ -6178,9 +6178,9 @@ describe('site-knowledge-first grading', () => {
     ],
     // The note records no closing time, so "after 5 p.m." is not the note.
     ['Make changes after 5 p.m., when the bakery closes.', false],
-    // Known residual: disowning the note in a later clause still passes. A
-    // hedge list would reopen the patch cycle, and the scenario asks what is
-    // known, not whether to follow it.
+    // Known residual: disowning the note in a later clause still passes. The
+    // scenario asks what is known, not whether to follow it, so no hedge list
+    // is added.
     [
       'The note says to schedule changes after the bakery closes, but that note is stale and should be ignored.',
       true,
