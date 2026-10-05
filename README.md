@@ -25,7 +25,7 @@
 
 # Official MainWP MCP Server
 
-The MainWP MCP Server connects Claude, Cursor, OpenAI Codex, VS Code Copilot, and other MCP-compatible AI tools to your MainWP Dashboard, so you can ask in plain English:
+The MainWP MCP Server connects Claude, Cursor, OpenAI Codex, VS Code Copilot, and other MCP-compatible AI tools to MainWP, the self-hosted dashboard for managing many WordPress sites, so you can ask in plain English:
 
 > _"Which sites have pending plugin updates?"_
 >
@@ -61,7 +61,7 @@ How it all works: [Safety & Permissions](https://docs.mainwp.com/mcp-server/safe
 
 Around 70 tools in all, depending on your Dashboard version. See [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
 
-Built for WordPress agencies and site managers who want AI help with their MainWP work.
+Built for agencies and freelancers who manage many WordPress sites and want AI help with updates, maintenance, and client work.
 
 ## Requirements
 
