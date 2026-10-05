@@ -140,13 +140,18 @@ export class FixtureKnowledge {
       };
     };
     if (name === 'mainwp/list-knowledge-v1') {
-      // Agency records are stored with scope_id 0, yet the Dashboard accepts a scope_id filter only as a positive integer or canonical digit string.
+      // Mirrors the Dashboard's positive_int(): agency records are stored with scope_id 0, yet a scope_id filter must be
+      // a positive integer or a canonical digit string no larger than PHP_INT_MAX (larger strings would clamp in PHP).
       const scopeId = input.scope_id;
       if (
         scopeId !== undefined &&
         scopeId !== null &&
         !(Number.isSafeInteger(scopeId) && (scopeId as number) > 0) &&
-        !(typeof scopeId === 'string' && /^[1-9][0-9]*$/.test(scopeId))
+        !(
+          typeof scopeId === 'string' &&
+          /^[1-9][0-9]*$/.test(scopeId) &&
+          BigInt(scopeId) <= 9223372036854775807n
+        )
       )
         return error(
           400,

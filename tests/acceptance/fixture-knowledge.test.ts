@@ -186,7 +186,7 @@ describe('Dashboard knowledge contract', () => {
       body: { agency: { agency_id: 0 }, client: null },
     });
   });
-  it.each([0, -1, 1.5, '0', '01', 'abc', true])(
+  it.each([0, -1, 1.5, '0', '01', 'abc', true, '9223372036854775808', '99999999999999999999'])(
     'refuses list scope_id %j like the Dashboard',
     scopeId => {
       const store = new FixtureKnowledge();
@@ -201,6 +201,12 @@ describe('Dashboard knowledge contract', () => {
       });
     }
   );
+  it('accepts a scope_id filter of PHP_INT_MAX', () => {
+    const store = new FixtureKnowledge();
+    expect(
+      store.run('mainwp/list-knowledge-v1', { scope_id: '9223372036854775807' }, sites)
+    ).toMatchObject({ status: 200, body: { total: 0 } });
+  });
   it.each([1, '1'])('filters the list by scope_id %j', scopeId => {
     const store = new FixtureKnowledge();
     const result = store.run(
