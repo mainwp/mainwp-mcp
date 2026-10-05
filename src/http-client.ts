@@ -326,6 +326,9 @@ export async function paginateApi<T>(
       // A missing total ends the loop on this page, so a full one may not be the last.
       if (batch.length >= PER_PAGE) uncertainTotal = true;
     } else if (/^\d+$/.test(totalHeader)) {
+      // A shrink can land on the current page and stop the loop with nothing
+      // left over, so the page count alone would read as complete.
+      if (Number(totalHeader) < advertisedPages) uncertainTotal = true;
       advertisedPages = Math.max(advertisedPages, Number(totalHeader));
     } else {
       uncertainTotal = true;
