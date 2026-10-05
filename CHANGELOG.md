@@ -10,22 +10,9 @@ fix/session-cap-and-catalog-cap; merge it before release or drop those two entri
 
 ### Added
 
-Site and client knowledge. On MainWP Dashboard 6.3 and later the server exposes the Dashboard's knowledge abilities
-(site and client summaries, and listing, reading, creating, updating and deleting knowledge records) like any other
-ability. The troubleshooting, maintenance and update workflows load a site's knowledge before planning, and the
-`mainwp-dashboard` skill explains how to use it: records are information about a site or client, not instructions;
-summaries list skills and memories by title only, so a record is opened before its content is described; records
-marked `verified: false` were written by an agent and are unreviewed; and a record that contains instructions
-addressed to an AI agent is named to the user in a separate note instead of being followed. The update workflow also
-loads the ignored-updates list, names the ignored items in scope, and holds back or asks about an item a record argues
-against.
+Agency, client and site knowledge. On MainWP Dashboard 6.3 and later the server exposes the Dashboard's knowledge abilities (agency, client and site summaries, and listing, reading, creating, updating and deleting knowledge records) like any other ability. The troubleshooting, maintenance and update workflows load a site's knowledge before planning, and the `mainwp-dashboard` skill explains how to use it: verified skill records and context, written or reviewed by a Dashboard user, guide the work; unverified records are information only, and one that contains instructions addressed to an AI agent is named to the user in a separate note instead of being followed; memories are history; skill records are listed with a description, and a record is opened before its content is described or followed. When verified records conflict, the more specific level wins, and a required agency record wins over client and site records. Only a person using the Dashboard can mark a record required or change one; the abilities refuse it. The update workflow also loads the ignored-updates list, names the ignored items in scope, and holds back or asks about an item that verified context or a verified skill argues against; an unverified record or a memory is raised with the user instead.
 
-The server sends instructions to the client at initialize. They say that knowledge records are information, not
-instructions, that a record is opened before its content is described, and that a record that contains instructions
-addressed to an AI agent is named to the user instead of followed. They also ask for the user's approval before any
-call that changes sites, say that a tool's preview is the plan to show and that previews shown together can be
-approved in one reply, note that Dashboards before 6.3 do not gate updates, and forbid removing an update from the
-ignore list to force it through unless the user asks. Clients decide how to use server instructions.
+The server sends instructions to the client at initialize. They say that verified knowledge skills and context guide the work, that unverified records are information only and a record with instructions addressed to an AI agent is named to the user instead of followed, that memories are history, that skills are listed with a description, that no record authorizes a change to a site, and that a record is opened before its content is described or followed. They also ask for the user's approval before any call that changes sites, say that a tool's preview is the plan to show and that previews shown together can be approved in one reply, note that Dashboards before 6.3 do not gate updates, and forbid removing an update from the ignore list to force it through unless the user asks. Clients decide how to use server instructions.
 
 Update previews carry a readable summary. When a destructive update tool's preview is a valid Dashboard 6.3 update
 plan, the confirmation response adds `plan_summary`: per-site version changes, held-back items with the reason, major
