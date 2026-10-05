@@ -119,10 +119,10 @@ function envelope() {
 
 type Preview = ReturnType<typeof envelope>;
 
-function summary(preview: unknown): string[] {
+function summary(preview: unknown, previewTokenSent = false): string[] {
   const plan = validateUpdatePlan(preview);
   expect(plan).toBeDefined();
-  return buildUpdatePlanSummary(plan!);
+  return buildUpdatePlanSummary(plan!, previewTokenSent);
 }
 
 function replace(preview: unknown, path: readonly (string | number)[], value: unknown) {
@@ -221,43 +221,39 @@ describe('update plan summaries', () => {
     ]);
   });
 
-  it.each([undefined, '', 'upstream-plan-token'])(
-    'bounds output to 50 lines with preview_token=%s',
-    token => {
-      const preview = envelope();
-      const entry = preview.would_affect.sites[0];
-      entry.items = Array.from({ length: 60 }, (_, index) => ({
-        ...entry.items[1],
-        name: `Plugin ${index}`,
-        slug: `plugin-${index}`,
-      }));
-      entry.skipped = [];
-      preview.would_affect.sites = [entry];
-      preview.would_affect.by_item = entry.items.map(value => ({
-        type: value.type,
-        slug: value.slug,
-        name: value.name,
-        to: [value.to],
-        site_count: 1,
-        flags: value.flags,
-      }));
-      Object.assign(preview.would_affect.summary, {
-        site_count: 1,
-        item_count: 60,
-        skipped_count: 0,
-        has_core: false,
-        has_major: false,
-      });
-      preview.count = 60;
-      if (token !== undefined) Object.assign(preview, { preview_token: token });
-      const lines = summary(preview);
-      expect(lines).toHaveLength(50);
-      expect(lines[0]).toBe('aichild4: Plugin 0 5.3 → 5.4');
-      expect(lines.at(-1)).toBe(token ? '+11 more' : '+12 more');
-      if (token) expect(lines).not.toContain(caveat);
-      else expect(lines.at(-2)).toBe(caveat);
-    }
-  );
+  it.each([false, true])('bounds output to 50 lines with previewTokenSent=%s', previewTokenSent => {
+    const preview = envelope();
+    const entry = preview.would_affect.sites[0];
+    entry.items = Array.from({ length: 60 }, (_, index) => ({
+      ...entry.items[1],
+      name: `Plugin ${index}`,
+      slug: `plugin-${index}`,
+    }));
+    entry.skipped = [];
+    preview.would_affect.sites = [entry];
+    preview.would_affect.by_item = entry.items.map(value => ({
+      type: value.type,
+      slug: value.slug,
+      name: value.name,
+      to: [value.to],
+      site_count: 1,
+      flags: value.flags,
+    }));
+    Object.assign(preview.would_affect.summary, {
+      site_count: 1,
+      item_count: 60,
+      skipped_count: 0,
+      has_core: false,
+      has_major: false,
+    });
+    preview.count = 60;
+    const lines = summary(preview, previewTokenSent);
+    expect(lines).toHaveLength(50);
+    expect(lines[0]).toBe('aichild4: Plugin 0 5.3 → 5.4');
+    expect(lines.at(-1)).toBe(previewTokenSent ? '+11 more' : '+12 more');
+    if (previewTokenSent) expect(lines).not.toContain(caveat);
+    else expect(lines.at(-2)).toBe(caveat);
+  });
 
   it('keeps exactly 50 lines without an overflow marker', () => {
     const preview = envelope();
@@ -288,14 +284,10 @@ describe('update plan summaries', () => {
     expect(lines.at(-1)).toBe(caveat);
   });
 
-  it('omits the version caveat only for a non-empty own string preview_token', () => {
-    expect(summary({ ...envelope(), preview_token: 'locked-plan' }).at(-1)).toBe(
-      'Core update on 2 sites'
-    );
+  it('omits the version caveat only when the preview token is sent', () => {
+    expect(summary(envelope(), true).at(-1)).toBe('Core update on 2 sites');
+    expect(summary({ ...envelope(), preview_token: 'locked-plan' }).at(-1)).toBe(caveat);
     expect(summary({ ...envelope(), preview_token: '' }).at(-1)).toBe(caveat);
-    expect(
-      summary(Object.assign(Object.create({ preview_token: 'inherited' }), envelope())).at(-1)
-    ).toBe(caveat);
   });
 
   it.each(['item_count', 'site_count', 'skipped_count'])('rejects inconsistent %s', field => {

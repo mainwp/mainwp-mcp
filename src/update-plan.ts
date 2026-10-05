@@ -45,7 +45,6 @@ export interface UpdatePlan {
   siteCount: number;
   truncated: boolean;
   hasCore: boolean;
-  hasPreviewToken: boolean;
 }
 
 const MAX_FIELD_LENGTH = 80;
@@ -334,7 +333,6 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
     siteCount,
     truncated,
     hasCore,
-    hasPreviewToken: typeof previewToken === 'string' && previewToken.length > 0,
   };
 }
 
@@ -366,7 +364,8 @@ function skipPhrase(reason: SkipReason): string {
   }
 }
 
-export function buildUpdatePlanSummary(plan: UpdatePlan): string[] {
+/** `previewTokenSent`: the confirmed call carries the preview's token, which pins these versions. */
+export function buildUpdatePlanSummary(plan: UpdatePlan, previewTokenSent: boolean): string[] {
   const lines: string[] = [];
   let lineCount = 0;
   const append = (line: string) => {
@@ -401,7 +400,7 @@ export function buildUpdatePlanSummary(plan: UpdatePlan): string[] {
       `Partial site list: showing ${visibleSites} of ${plan.siteCount} sites with updates.`
     );
   }
-  if (!plan.hasPreviewToken) ending.push(VERSION_CAVEAT);
+  if (!previewTokenSent) ending.push(VERSION_CAVEAT);
   if (lineCount + ending.length <= MAX_LINES) return [...lines, ...ending];
   // Keep aggregate notices and the caveat when plan lines are cut; the overflow marker stays last.
   const visibleLines = MAX_LINES - ending.length - 1;

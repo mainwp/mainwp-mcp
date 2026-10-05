@@ -450,6 +450,69 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     }
   );
 
+  describe('version caveat and preview_token', () => {
+    const versionCaveat =
+      'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.';
+    const sentToken = 'fixture_preview_token_0123456789';
+
+    function declarePreviewToken(ability: string) {
+      const entry = catalog.find(candidate => candidate.name === ability)!;
+      (entry.input_schema!.properties as Record<string, unknown>).preview_token = {
+        type: ['string', 'null'],
+      };
+    }
+
+    // The Dashboard only pins versions through a token the confirmed call sends.
+    it.each([
+      { label: 'too short', declared: true, token: 'short-token' },
+      { label: 'outside the character set', declared: true, token: `${sentToken}/` },
+      { label: 'undeclared by the ability', declared: false, token: sentToken },
+      { label: 'absent', declared: true, token: undefined },
+    ])('keeps the caveat when the preview_token is $label', async ({ declared, token }) => {
+      if (declared) declarePreviewToken('mainwp/run-updates-v1');
+      if (token !== undefined) hostilePreview = { ...makeUpdatePreview(), preview_token: token };
+      const client = await connect();
+      const data = await preview(client);
+      expect(data.plan_summary.at(-1)).toBe(versionCaveat);
+      const executed = await call(
+        client,
+        'run_updates_v1',
+        confirmation(batchArgs, data.confirmation_token)
+      );
+      expect(executed.result.isError).toBeUndefined();
+      expect(requests[1].input).toEqual({ ...batchArgs, confirm: true });
+    });
+
+    it('keeps the caveat when MainWP is not the primary namespace', async () => {
+      declarePreviewToken('mainwp/run-updates-v1');
+      hostilePreview = { ...makeUpdatePreview(), preview_token: sentToken };
+      const client = await connect({ abilityNamespaces: ['acme', 'mainwp'] });
+      const data = await preview(client, 'mainwp__run_updates_v1');
+      expect(data.plan_summary.at(-1)).toBe(versionCaveat);
+    });
+
+    it.each(UPDATE_ABILITIES)(
+      'omits the caveat when %s sends the captured preview_token',
+      async ability => {
+        declarePreviewToken(ability);
+        hostilePreview = { ...makeUpdatePreview(), preview_token: sentToken };
+        const client = await connect();
+        const batch = ability === UPDATE_ABILITIES[0] || ability === UPDATE_ABILITIES[1];
+        const args = batch ? batchArgs : { site_id_or_domain: 1 };
+        const data = await preview(client, toolName(ability), args);
+        expect(data.plan_summary.length).toBeGreaterThan(0);
+        expect(data.plan_summary).not.toContain(versionCaveat);
+        const executed = await call(
+          client,
+          toolName(ability),
+          confirmation(args, data.confirmation_token)
+        );
+        expect(executed.result.isError).toBeUndefined();
+        expect(requests[1].input).toEqual({ ...args, preview_token: sentToken, confirm: true });
+      }
+    );
+  });
+
   const hostileCases: Array<{
     label: string;
     corrupt: (preview: ReturnType<typeof makeUpdatePreview>) => unknown;

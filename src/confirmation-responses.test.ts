@@ -114,10 +114,12 @@ describe('buildConfirmationRequiredResponse', () => {
   const preview = { affected_sites: [1, 2, 3], total: 3 };
 
   it('should include status and preview data', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
-      string,
-      unknown
-    >;
+    const response = buildConfirmationRequiredResponse(
+      ctx,
+      preview,
+      'test-token-uuid',
+      false
+    ) as Record<string, unknown>;
 
     expect(response.status).toBe('CONFIRMATION_REQUIRED');
     expect(response.next_action).toBe('show_preview_and_confirm');
@@ -125,10 +127,12 @@ describe('buildConfirmationRequiredResponse', () => {
   });
 
   it('should include instructions for confirmation', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
-      string,
-      unknown
-    >;
+    const response = buildConfirmationRequiredResponse(
+      ctx,
+      preview,
+      'test-token-uuid',
+      false
+    ) as Record<string, unknown>;
 
     expect(response.instructions).toBe(
       'Show the preview to the user, using plan_summary as its readable form when present. ' +
@@ -143,16 +147,18 @@ describe('buildConfirmationRequiredResponse', () => {
   });
 
   it('should include confirmation_token at top level', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as Record<
-      string,
-      unknown
-    >;
+    const response = buildConfirmationRequiredResponse(
+      ctx,
+      preview,
+      'test-token-uuid',
+      false
+    ) as Record<string, unknown>;
 
     expect(response.confirmation_token).toBe('test-token-uuid');
   });
 
   it('should include metadata with expiry', () => {
-    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid') as {
+    const response = buildConfirmationRequiredResponse(ctx, preview, 'test-token-uuid', false) as {
       metadata: Record<string, unknown>;
     };
 

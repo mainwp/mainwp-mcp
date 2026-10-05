@@ -193,6 +193,34 @@ export function capturePreviewToken(
   return token;
 }
 
+const BOUND_PREVIEW_TOKEN_ABILITIES = [
+  'mainwp/run-updates-v1',
+  'mainwp/update-all-v1',
+  'mainwp/update-site-core-v1',
+  'mainwp/update-site-plugins-v1',
+  'mainwp/update-site-themes-v1',
+  'mainwp/update-site-translations-v1',
+];
+
+/**
+ * Whether the confirmed call always sends the token captured from this
+ * ability's preview. Only these MainWP updates bind it; other abilities let a
+ * caller's own token win, so their preview's token may never go out.
+ */
+function bindsPreviewToken(
+  config: Config,
+  ability: Ability,
+  usesPreviewToken: boolean,
+  upstreamToken: string | undefined
+): boolean {
+  return (
+    usesPreviewToken &&
+    typeof upstreamToken === 'string' &&
+    config.abilityNamespaces[0] === 'mainwp' &&
+    BOUND_PREVIEW_TOKEN_ABILITIES.includes(ability.name)
+  );
+}
+
 /**
  * Clean up expired preview keys and enforce maximum preview limit.
  */
@@ -380,8 +408,15 @@ export async function handleConfirmationFlow(
       usesPreviewToken
     );
     const token = crypto.randomUUID();
+    // The Dashboard pins the previewed versions only through a token the
+    // confirmed call is sure to send.
     const confirmationResponse = canPreview
-      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
+      ? buildConfirmationRequiredResponse(
+          ctx,
+          previewResult,
+          token,
+          bindsPreviewToken(config, ability, usesPreviewToken, upstreamToken)
+        )
       : buildNoPreviewAvailableResponse(ctx, token);
     const previewResponse = formatJson(config, confirmationResponse);
 
@@ -526,18 +561,7 @@ export async function handleConfirmationFlow(
     const upstreamToken = previewEntry.upstreamToken;
     pendingPreviews.delete(previewKey);
     tokenIndex.delete(confirmationToken);
-    const bindPreviewToken =
-      usesPreviewToken &&
-      typeof upstreamToken === 'string' &&
-      config.abilityNamespaces[0] === 'mainwp' &&
-      [
-        'mainwp/run-updates-v1',
-        'mainwp/update-all-v1',
-        'mainwp/update-site-core-v1',
-        'mainwp/update-site-plugins-v1',
-        'mainwp/update-site-themes-v1',
-        'mainwp/update-site-translations-v1',
-      ].includes(ability.name);
+    const bindPreviewToken = bindsPreviewToken(config, ability, usesPreviewToken, upstreamToken);
     if (
       bindPreviewToken &&
       effectiveArgs.preview_token !== null &&

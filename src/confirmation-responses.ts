@@ -126,12 +126,15 @@ export function buildNoPreviewAvailableResponse(ctx: ConfirmationContext, token:
 }
 
 /**
- * Response when a preview is generated and confirmation is required
+ * Response when a preview is generated and confirmation is required.
+ * `previewTokenSent` says whether the confirmed call will carry the preview's
+ * own `preview_token`; a token in the preview alone pins nothing.
  */
 export function buildConfirmationRequiredResponse(
   ctx: ConfirmationContext,
   preview: unknown,
-  token: string
+  token: string,
+  previewTokenSent: boolean
 ): object {
   const plan = validateUpdatePlan(preview);
   return {
@@ -139,7 +142,7 @@ export function buildConfirmationRequiredResponse(
     next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
-    ...(plan ? { plan_summary: buildUpdatePlanSummary(plan) } : {}),
+    ...(plan ? { plan_summary: buildUpdatePlanSummary(plan, previewTokenSent) } : {}),
     confirmation_token: token,
     instructions:
       'Show the preview to the user, using plan_summary as its readable form when present. ' +
