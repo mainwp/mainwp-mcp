@@ -205,7 +205,7 @@ export const knowledgeScenarios: ScenarioDefinition[] = [
           ctx.assert.truthy(
             'Required refusal is preserved',
             JSON.stringify(result.data).includes(
-              'This is a required agency record. Only a person using the Dashboard can change or delete it.'
+              'This is a required record. Only a person using the Dashboard can change or delete it.'
             )
           );
           ctx.assert.deepEqual('Required record is unchanged', await list(ctx), before);

@@ -162,8 +162,8 @@ describe('knowledge MCP transport', () => {
     ['compatible holds', 'Holds from different levels that do not conflict all apply'],
     ['specificity', 'site over client, client over agency'],
     [
-      'Required agency precedence',
-      'an agency record with required: true wins over any client or site record',
+      'Required precedence',
+      'a record with required: true wins over any record at a more specific level (a required agency record over client and site records, a required client record over site records)',
     ],
     [
       'same-level and Required conflicts',
