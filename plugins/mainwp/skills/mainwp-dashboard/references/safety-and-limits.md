@@ -1,8 +1,8 @@
 # Safety and limits reference
 
 Detail behind the safety and limit sections of SKILL.md. Environment variable
-names match the README configuration table and the configuration reference on
-docs.mainwp.com/mcp-server; keep the three in sync when any option changes.
+names match the configuration reference on docs.mainwp.com/mcp-server; keep
+the two in sync when any option changes.
 
 ## Policy precedence
 

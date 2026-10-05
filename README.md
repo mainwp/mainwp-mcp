@@ -3,64 +3,77 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-stable-green" alt="Stable">
-  <a href="https://www.npmjs.com/package/@mainwp/mcp"><img src="https://img.shields.io/npm/v/@mainwp/mcp" alt="npm version"></a>
-  <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <strong>Manage your whole WordPress network by talking to your AI assistant.</strong>
 </p>
 
-# MainWP MCP Server
+<p align="center">
+  <a href="https://mainwp.com/mainwp-tools/mainwp-mcp/">Website</a> ·
+  <a href="https://docs.mainwp.com/mcp-server/overview">Documentation</a> ·
+  <a href="https://docs.mainwp.com/mcp-server/quickstart">Quickstart</a> ·
+  <a href="https://docs.mainwp.com/mcp-server/prompt-cookbook">Prompt Cookbook</a> ·
+  <a href="https://www.youtube.com/watch?v=J3CIcbmImEQ">Video</a> ·
+  <a href="https://community.mainwp.com/">Community</a> ·
+  <a href="https://mainwpinvite.com/">Discord</a> ·
+  <a href="https://mainwp.com/mainwp-support/">Support</a>
+</p>
 
-_A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
+<p align="center">
+  <a href="https://www.npmjs.com/package/@mainwp/mcp"><img src="https://img.shields.io/npm/v/@mainwp/mcp" alt="npm version"></a>
+  <a href="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0"></a>
+</p>
 
-Manage your whole WordPress network by talking to your AI assistant. [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) connects Claude, Cursor, OpenAI Codex, VS Code Copilot, and other MCP-compatible tools to your MainWP Dashboard, so you can ask in plain English:
+# Official MainWP MCP Server
+
+The MainWP MCP Server connects Claude, Cursor, OpenAI Codex, VS Code Copilot, and other MCP-compatible AI tools to your MainWP Dashboard, so you can ask in plain English:
 
 > _"Which sites have pending plugin updates?"_
 >
 > _"Update WooCommerce everywhere it's behind."_
 >
 > _"Which client sites are disconnected right now?"_
+>
+> _"Check what we know about this client's sites before you update anything."_
 
-The server is a small program that runs on your own computer, alongside your AI tool. Nothing new is installed on your Dashboard or your child sites. Your Dashboard stays in control: it exposes only the tools you allow, and by default anything classified as destructive stops for your confirmation before it runs.
+It runs on your own computer, next to your AI tool. Nothing new is installed on your Dashboard or your child sites.
 
 <p align="center">
   <img src="docs/images/mainwp-mcp-talk-to-your-sites.png" alt="Terminal conversation through the MainWP MCP server: asking how many sites am I managing, then updating WooCommerce on every site where it is behind" width="800">
 </p>
 
-## What You Can Do
+## You stay in control
 
-- **Site Management**: List sites, check connection status, sync data, add or remove child sites
-- **Update Management**: See pending updates across all sites, apply core/plugin/theme updates
-- **Plugin and Theme Control**: View installed plugins and themes, activate or deactivate them
-- **Client Organization**: Manage client records, assign sites to clients, track costs
-- **Bulk Operations**: Sync, reconnect, or check connectivity across dozens of sites at once
+- **Changes wait for your approval.** Deleting a site, plugin, or theme shows you a preview first and runs only after you say yes. On Dashboard 6.3 and later, updates work the same way. Update confirmation is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/).
+- **Safe mode** blocks destructive operations entirely while you get comfortable.
+- **You choose the tools.** Allow and block lists decide which tools your AI can see at all.
+- **Your credentials stay with you.** The server signs in with a WordPress Application Password that you can revoke at any time, and it talks only to your Dashboard.
 
-Built for WordPress agencies and site managers who want AI assistance with their MainWP workflows.
+How it all works: [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety).
 
-## Documentation
+## What you can do
 
-Full documentation lives at **[docs.mainwp.com/mcp-server](https://docs.mainwp.com/mcp-server/overview)**:
+- **Sites:** list, sync, check connectivity, add, reconnect, or remove child sites
+- **Updates:** see pending core, plugin, theme, and translation updates across the network, and apply them
+- **Plugins and themes:** see what is installed, activate, deactivate, or delete
+- **Clients and tags:** manage client records, assign sites, and track costs
+- **Knowledge:** agency, client, and site notes, skills, and memories your AI reads before it works. Knowledge is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/).
+- **Guided workflows:** network summaries, site reports, security audits, and update plans
 
-- [Quickstart](https://docs.mainwp.com/mcp-server/quickstart) with screenshots, if this is your first MCP server
-- [Setup for every AI client](https://docs.mainwp.com/mcp-server/clients): Claude Desktop, Claude Code, Cursor, VS Code Copilot, OpenAI Codex, ZenCoder, and others
-- [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety): the confirmation flow, safe mode, and tool filtering
-- [Prompt Cookbook](https://docs.mainwp.com/mcp-server/prompt-cookbook): ready-to-use prompts by task
-- [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration) and [Troubleshooting](https://docs.mainwp.com/mcp-server/troubleshooting)
+Around 70 tools in all, depending on your Dashboard version. See [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
 
-## Quick Start
+Built for WordPress agencies and site managers who want AI help with their MainWP work.
 
-**Requirements:** Node.js >=20.19.0 and MainWP Dashboard 6.0+. Abilities with a required input that may be null need MainWP Dashboard 6.2 or later.
+## Requirements
 
-**1. Create an Application Password.** This is a separate password WordPress issues for tools like this one; it never changes your login and you can revoke it at any time.
+- Node.js 20.19 or later on the computer that runs your AI tool
+- MainWP Dashboard 6.0 or later, reachable over HTTPS (some tools need a newer Dashboard; the [Quickstart](https://docs.mainwp.com/mcp-server/quickstart) lists which)
+- An MCP-compatible AI client
 
-1. Log into your MainWP Dashboard as an administrator
-2. Go to **Users > Profile** (click your username in the top right)
-3. Scroll to the **Application Passwords** section
-4. Enter a name like "MainWP MCP Server" and click **Add New Application Password**
-5. Copy the generated password immediately (it is only shown once; spaces are fine either way)
+## Get started
 
-> **Tip:** Create a dedicated WordPress user for API access rather than using your main admin account. It keeps the audit trail clean and is easy to revoke later.
+**1. Create an Application Password.** In your MainWP Dashboard, go to **Users > Profile > Application Passwords**, add one named "MainWP MCP Server", and copy it. It is separate from your login password, and you can revoke it at any time. A dedicated WordPress user for API access keeps the audit trail clean.
 
-**2. Add the server to your AI tool.** For Claude Desktop and most other MCP clients, the config block looks like this:
+**2. Add the server to your AI tool.** For Claude Desktop and most other MCP clients:
 
 ```json
 {
@@ -78,140 +91,39 @@ Full documentation lives at **[docs.mainwp.com/mcp-server](https://docs.mainwp.c
 }
 ```
 
-Config file locations and variants for each client are in the [client setup guide](https://docs.mainwp.com/mcp-server/clients). Prefer a central credentials file, or manage several Dashboards? See the [configuration reference](https://docs.mainwp.com/mcp-server/reference/configuration#configuration-file).
+**3. Restart your AI tool and ask** "List all my sites". A working setup returns your child sites by name and URL.
 
-**3. Restart your AI tool and ask:** "List all my sites". A working setup returns your child sites by name and URL.
+Config file locations for each client are in the [client setup guide](https://docs.mainwp.com/mcp-server/clients). Every setting is in the [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration).
 
-> **Start bounded.** You don't have to expose every tool on day one. Grant the smallest set your workflow needs and widen from there. See [Restrict Available Tools](https://docs.mainwp.com/mcp-server/guides/restrict-tools).
-
-### Claude Code plugin
-
-Claude Code can install the server, an agent skill, and a set of `/mainwp:*` workflow commands in two steps:
+**Using Claude Code?** The plugin installs the server, an agent skill, and ten `/mainwp:*` workflow commands:
 
 ```text
 /plugin marketplace add mainwp/mainwp-mcp
 /plugin install mainwp@mainwp-mcp
 ```
 
-Credentials still come from your environment. The plugin carries no credential values; the server inherits `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` from the environment Claude Code runs it in. If you already added a `mainwp` server by hand, move everything in its `env` block (credentials and any `MAINWP_*` settings such as safe mode or tool filters) into the environment that launches Claude Code, then remove that entry: Claude Code treats the plugin's server as a duplicate and never starts it, so the hand-added entry silently wins. Setup details are at [docs.mainwp.com/mcp-server](https://docs.mainwp.com/mcp-server/clients); the plugin's own conventions are in [docs/plugin.md](docs/plugin.md).
+Credentials still come from your environment. See [Claude Code plugin](https://docs.mainwp.com/mcp-server/claude-code-plugin).
 
-Alongside the server, the plugin installs the `mainwp-dashboard` agent skill. It loads automatically when a task involves managing sites through MainWP and teaches the agent how this server behaves: the tool catalog comes from your Dashboard at runtime, destructive operations stop for user confirmation, safe mode blocks destructive calls at execution, and tool filtering can remove tools on purpose. The plugin also registers ten workflow commands:
+## Documentation
 
-| Command                     | What it does                                                            |
-| --------------------------- | ----------------------------------------------------------------------- |
-| `/mainwp:setup`             | Diagnose the MCP connection and configuration without exposing secrets  |
-| `/mainwp:tools`             | Show what your Dashboard exposes, grouped by capability                 |
-| `/mainwp:network-summary`   | Executive summary of the network: site counts, update totals, health    |
-| `/mainwp:site-report`       | Detailed report for one site: overview, updates, health, next actions   |
-| `/mainwp:troubleshoot-site` | Diagnose one site: connectivity, sync health, pending updates, errors   |
-| `/mainwp:update-workflow`   | Plan a safe update run: what to update, in what order, on which sites   |
-| `/mainwp:security-audit`    | Security-focused audit: outdated core, plugins, themes                  |
-| `/mainwp:backup-status`     | Backup coverage and freshness across managed sites                      |
-| `/mainwp:maintenance-check` | Maintenance sweep across every site, ranked by urgency                  |
-| `/mainwp:performance-check` | Performance indicators for one site or the network, from Dashboard data |
+Full documentation lives at **[docs.mainwp.com/mcp-server](https://docs.mainwp.com/mcp-server/overview)**:
 
-For development, clone and build instead of npx:
+- [Quickstart](https://docs.mainwp.com/mcp-server/quickstart), with screenshots, if this is your first MCP server
+- [Client setup](https://docs.mainwp.com/mcp-server/clients) for Claude Desktop, Claude Code, Cursor, VS Code Copilot, OpenAI Codex, and others
+- [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety) and [Restrict Available Tools](https://docs.mainwp.com/mcp-server/guides/restrict-tools)
+- [Prompt Cookbook](https://docs.mainwp.com/mcp-server/prompt-cookbook): ready-to-use prompts by task
+- [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration), including setup from the chat when no credentials are configured
+- [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools), [Security Model](https://docs.mainwp.com/mcp-server/reference/security), and [Troubleshooting](https://docs.mainwp.com/mcp-server/troubleshooting)
 
-```bash
-git clone https://github.com/mainwp/mainwp-mcp.git
-cd mainwp-mcp
-npm ci
-npm run build
-```
+## Community
 
-## First-run setup
-
-If the server starts without a Dashboard URL or credentials, it does not fail to launch. It connects to your AI client in **setup mode**: the MainWP tools stay hidden and two setup tools take their place, so you can finish the configuration in the conversation instead of hunting through stderr.
-
-- `mainwp_get_setup_status` reports what is missing and returns the setup instructions for your assistant to relay. If credentials are present but the Dashboard was unreachable at startup, calling it again retries the connection with the credentials already loaded.
-- `mainwp_configure` takes a Dashboard URL, username, and Application Password, verifies them against the Dashboard, and saves them.
-
-Two ways to finish setup:
-
-**Adding the credentials yourself is the recommended path.** Put `MAINWP_URL`, `MAINWP_USER`, and `MAINWP_APP_PASSWORD` in the `env` block of this server's entry in your MCP client config (see [Quick Start](#quick-start)) or in `~/.config/mainwp-mcp/settings.json`, then restart the client. The password never passes through the conversation.
-
-**Pasting them in chat is also fine.** Your assistant collects the three values and calls `mainwp_configure`. The server verifies them, writes them to `~/.config/mainwp-mcp/settings.json` with owner-only permissions (0600, in a 0700 directory), and scrubs the password from its own logs and from every response. An Application Password is separate from your WordPress login password and you can revoke it from your profile at any time. Worth knowing before you choose: the password also becomes part of your chat history, which your AI client and provider may retain. If that bothers you later, revoke the password and create a new one.
-
-Once configuration succeeds, the full tool list appears in the same session for clients that honor MCP list-changed notifications. Clients that do not refresh on their own need a reconnect or restart.
-
-`mainwp_configure` refuses rather than saving something that would be ignored or overridden:
-
-- Any connection environment variable (`MAINWP_URL`, `MAINWP_USER`, `MAINWP_APP_PASSWORD`, `MAINWP_TOKEN`) is set. Environment variables outrank the file it writes, so finish setup there.
-- A `settings.json` exists in the server's working directory. That file is loaded first and would permanently shadow the saved credentials.
-- The server already has credentials loaded, whether or not they are currently working. Setup will not replace existing credentials from chat. If the connection is failing, `mainwp_get_setup_status` retries with the credentials already loaded; to change them, edit the config file or the client's `env` block. If the Dashboard rejected the credentials, `mainwp_get_setup_status` does not retry; it names the rejected user (for a username and Application Password login) and where each value came from, so you know which one to fix.
-
-It writes only those three connection fields, never security settings, and blocking `mainwp_configure` through `MAINWP_BLOCKED_TOOLS` removes chat-based setup entirely while leaving the manual path documented.
-
-### Why setup will not replace credentials you already have
-
-Chat-based setup can get you connected the first time, but it can never overwrite a connection you set up yourself. That line is deliberate, and it is worth knowing where it costs you something.
-
-The reason is that an assistant acts on text, and text can come from places you did not intend. A page it read, a site name, or an ability description returned by a server could carry instructions aimed at the assistant rather than at you. If setup could overwrite a working configuration, that kind of injected instruction could quietly repoint your server at someone else's Dashboard, and every command you ran afterwards would go there. Restricting setup to the case where there is nothing to overwrite removes that possibility, because a server that has no credentials has nothing worth stealing.
-
-A tempting middle ground is to allow it when the stored credentials are provably wrong, since the Dashboard rejected them with an authentication error. We do not do that, because it would let the remote side decide when your local configuration may be replaced: a Dashboard that had been compromised, or a connection someone was tampering with, could reject a valid login on purpose to unlock the replacement path, without ever knowing your password.
-
-The cost is real, and it lands in one place. If you rotate the Application Password in WordPress, or the stored one is wrong for any other reason, retrying will not help, because the retry reuses the same credentials the Dashboard is already refusing. You have to put the new password in `~/.config/mainwp-mcp/settings.json` or your client's `env` block yourself and restart the client. That is the same edit you would have made to set the server up manually in the first place, and it takes a minute.
-
-## Configuration
-
-| Variable                           | Required       | Default    | Description                                                                                            |
-| ---------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
-| `MAINWP_URL`                       | Yes            |            | Base URL of your MainWP Dashboard                                                                      |
-| `MAINWP_USER`                      | For basic auth |            | WordPress admin username                                                                               |
-| `MAINWP_APP_PASSWORD`              | For basic auth |            | WordPress Application Password                                                                         |
-| `MAINWP_TOKEN`                     | No             |            | Compatibility only; the Abilities API is expected to reject bearer tokens. Use an Application Password |
-| `MAINWP_SKIP_SSL_VERIFY`           | No             | `false`    | Skip SSL verification (dev only)                                                                       |
-| `MAINWP_ALLOW_HTTP`                | No             | `false`    | Allow HTTP URLs (credentials sent in plain text)                                                       |
-| `MAINWP_SAFE_MODE`                 | No             | `false`    | Block destructive operations                                                                           |
-| `MAINWP_REQUIRE_USER_CONFIRMATION` | No             | `true`     | Require two-step confirmation for destructive operations                                               |
-| `MAINWP_ALLOWED_TOOLS`             | No             |            | Whitelist of tools to expose                                                                           |
-| `MAINWP_BLOCKED_TOOLS`             | No             |            | Blacklist of tools to hide                                                                             |
-| `MAINWP_SCHEMA_VERBOSITY`          | No             | `standard` | `standard` or `compact`                                                                                |
-| `MAINWP_RESPONSE_FORMAT`           | No             | `compact`  | Response JSON formatting: `compact` or `pretty`                                                        |
-| `MAINWP_RATE_LIMIT`                | No             | `60`       | Maximum API requests per minute (`0` disables)                                                         |
-| `MAINWP_REQUEST_TIMEOUT`           | No             | `30000`    | Request timeout in milliseconds                                                                        |
-| `MAINWP_MAX_RESPONSE_SIZE`         | No             | `10485760` | Maximum single response size in bytes (10MB)                                                           |
-| `MAINWP_MAX_SESSION_DATA`          | No             | `52428800` | Maximum cumulative session data in bytes (50MB)                                                        |
-| `MAINWP_RETRY_ENABLED`             | No             | `true`     | Enable automatic retry for transient errors                                                            |
-| `MAINWP_MAX_RETRIES`               | No             | `2`        | Total retry attempts including initial request                                                         |
-| `MAINWP_RETRY_BASE_DELAY`          | No             | `1000`     | Base delay between retries in milliseconds                                                             |
-| `MAINWP_RETRY_MAX_DELAY`           | No             | `2000`     | Maximum delay between retries in milliseconds                                                          |
-| `MAINWP_ABILITY_NAMESPACES`        | No             | `mainwp`   | Comma-separated ability namespace allowlist                                                            |
-
-"Required" means required to connect to a Dashboard, not required to start. With no URL and no credentials the server still launches in setup mode and you can supply all three values from the conversation instead. See [First-run setup](#first-run-setup).
-
-> **⚠️ Security Warning: SSL Verification**
->
-> Setting `MAINWP_SKIP_SSL_VERIFY=true` disables SSL certificate verification, making your connection vulnerable to man-in-the-middle (MITM) attacks. Only use for local development with self-signed certificates or isolated test environments. Never use in production or on untrusted networks.
-
-Instead of environment variables, you can use a `settings.json` file in the working directory or `~/.config/mainwp-mcp/settings.json`; environment variables override file settings. A working-directory `settings.json` cannot loosen security settings: `requireUserConfirmation: false`, `skipSslVerify: true`, and `allowHttp: true` are ignored there with a warning on stderr. Set those through environment variables or the per-user file. Field names, the settings-to-variable mapping, and per-setting detail are in the [Configuration Reference](https://docs.mainwp.com/mcp-server/reference/configuration).
-
-## Tools
-
-Around 70 tools, organized by category (the exact count varies by Dashboard version):
-
-| Category         | Tools | Reference                                                                                                                                       |
-| ---------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sites            | 30    | [Sites Abilities](https://docs.mainwp.com/api-reference/abilities-api/sites)                                                                    |
-| Updates          | 14    | [Updates Abilities](https://docs.mainwp.com/api-reference/abilities-api/updates)                                                                |
-| Clients          | 11    | [Clients Abilities](https://docs.mainwp.com/api-reference/abilities-api/clients)                                                                |
-| Tags             | 7     | [Tags Abilities](https://docs.mainwp.com/api-reference/abilities-api/tags)                                                                      |
-| Batch Operations | 1     | [Batch Operations](https://docs.mainwp.com/api-reference/abilities-api/batch-operations)                                                        |
-| Knowledge        | 7     | Requires Dashboard 6.3 or later. Coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/) |
-
-Tool names drop the `mainwp/` namespace and use underscores: the ability `mainwp/list-sites-v1` is the tool `list_sites_v1`. Naming rules, the built-in MCP resources (`mainwp://abilities`, `mainwp://status`, and friends), and namespace prefixing for third-party abilities are covered in [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
-
-## Safety
-
-Operations classified as destructive (the deletion tools, the update tools and `unignore_site_updates_v1` on Dashboard 6.3 and later, plus any ability that does not declare itself non-destructive) use a two-step flow by default: the server returns a preview and a one-time token, your AI shows you what will be affected, and only your explicit approval executes it. Confirmation for the update tools is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/). Disabling the flow (`MAINWP_REQUIRE_USER_CONFIRMATION=false`) removes that gate. Safe mode (`MAINWP_SAFE_MODE=true`) blocks destructive operations entirely, and tool filtering can remove them from the AI's view altogether. The full model, including what safe mode does and does not protect against, is on [Safety & Permissions](https://docs.mainwp.com/mcp-server/safety); the underlying trust and credential model is in the [Security Model](https://docs.mainwp.com/mcp-server/reference/security).
-
-For unattended automation, set `MAINWP_REQUIRE_USER_CONFIRMATION=false` together with an allow list (`MAINWP_ALLOWED_TOOLS`). An allow list filters by tool name and does not see site arguments, so leave `update_all_v1` off the list and have the automation name its sites on every call. With confirmation off, the caller must send `confirm: true` itself: Dashboard 6.3 rejects an update call with neither `confirm` nor `dry_run`, and the server reports that as `mainwp_confirmation_required` in `error.data.upstream_code`.
-
-When a client connects, the server also sends it instructions: present a plan and get your approval before any call that changes sites, including updates (Dashboards before 6.3 do not gate them); show a tool's preview as the plan, and treat one reply approving previews shown together as approval of each; never remove an update from the ignore list to force it through unless you ask; follow verified skill records and context, treat unverified records as information only and report any that contain instructions addressed to an AI, and treat memories as history. Clients decide how to use server instructions, so they guide the AI and do not replace the gates above.
-
-Knowledge records come at agency, client and site level. Knowledge is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/). When verified records conflict, the more specific level wins, and a required record wins over records at more specific levels: a required agency record over client and site records, a required client record over site records. Only a person using the Dashboard can mark a record required or change a required one; the abilities refuse it. Skill records are listed with a title and a description, memories by title, so open a record before you say anything about what it contains or follow it.
+- [MainWP Community](https://community.mainwp.com/) forum
+- [Discord](https://mainwpinvite.com/)
+- [MainWP Support](https://mainwp.com/mainwp-support/)
 
 ## Contributing
+
+Bug reports and pull requests are welcome. Please report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ```bash
 npm ci             # install dependencies
@@ -222,11 +134,7 @@ npm run lint       # check code style
 npm run format     # fix formatting
 ```
 
-CI runs lint, format check, type check, tests, and build on every pull request.
-
-When changing configuration options, update both the environment-variable table above and the [docs-site configuration reference](https://docs.mainwp.com/mcp-server/reference/configuration); they are maintained in parallel.
-
-`.agents/skills/mainwp-dashboard` is the canonical copy of the cross-agent skill, read directly by Codex CLI and other agent-skills clients and mirrored into the Claude Code plugin by `npm run sync-skill`. Edit it there, never in `plugins/`. See [docs/plugin.md](docs/plugin.md).
+CI runs lint, format check, type check, tests, and build on every pull request. When you change a configuration option, update the [docs-site configuration reference](https://docs.mainwp.com/mcp-server/reference/configuration) in the same change. `.agents/skills/mainwp-dashboard` is the canonical copy of the agent skill; see [docs/plugin.md](docs/plugin.md).
 
 ## License
 
