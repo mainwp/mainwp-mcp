@@ -7623,15 +7623,19 @@
         },
         "scope_id": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
         },
         "scope_type": {
           "type": "string",
-          "enum": ["site", "client"]
+          "enum": ["agency", "site", "client"]
         },
         "type": {
           "type": "string",
           "enum": ["context", "skill", "memory"]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
         },
         "title": {
           "type": "string",
@@ -7658,6 +7662,9 @@
         "verified": {
           "type": "boolean"
         },
+        "required": {
+          "type": "boolean"
+        },
         "created_by": {
           "type": "integer"
         },
@@ -7681,12 +7688,14 @@
         "scope_id",
         "scope_type",
         "type",
+        "description",
         "title",
         "body",
         "caller_note",
         "revision",
         "source",
         "verified",
+        "required",
         "created_by",
         "created_at",
         "updated_by",
@@ -7708,7 +7717,7 @@
   {
     "name": "mainwp/get-site-knowledge-v1",
     "label": "Get Site Knowledge",
-    "description": "Load the knowledge summary for one site: its context records in full, plus its skills and memories as a list without bodies, and the client's records the same way when the site belongs to a client. Call this first, then get-knowledge-record for a body you need. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
+    "description": "Load the knowledge summary for one site: its context records in full, plus its skills (with title and description) and memories as a list without bodies, with agency records in a separate block, and the client's records the same way when the site belongs to a client. Call this first, then open a skill with get-knowledge-record when its description fits the task. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -7738,15 +7747,19 @@
               },
               "scope_id": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 0
               },
               "scope_type": {
                 "type": "string",
-                "enum": ["site", "client"]
+                "enum": ["agency", "site", "client"]
               },
               "type": {
                 "type": "string",
                 "enum": ["context"]
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
               },
               "title": {
                 "type": "string",
@@ -7773,78 +7786,7 @@
               "verified": {
                 "type": "boolean"
               },
-              "created_by": {
-                "type": "integer"
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "updated_by": {
-                "type": "integer"
-              },
-              "updated_at": {
-                "type": "string",
-                "format": "date-time"
-              }
-            },
-            "required": [
-              "id",
-              "scope_id",
-              "scope_type",
-              "type",
-              "title",
-              "body",
-              "caller_note",
-              "revision",
-              "source",
-              "verified",
-              "created_by",
-              "created_at",
-              "updated_by",
-              "updated_at"
-            ]
-          }
-        },
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "scope_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "scope_type": {
-                "type": "string",
-                "enum": ["site", "client"]
-              },
-              "type": {
-                "type": "string",
-                "enum": ["skill", "memory"]
-              },
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              },
-              "caller_note": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "revision": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "source": {
-                "type": "string",
-                "enum": ["ui", "ability"]
-              },
-              "verified": {
+              "required": {
                 "type": "boolean"
               },
               "created_by": {
@@ -7867,11 +7809,96 @@
               "scope_id",
               "scope_type",
               "type",
+              "description",
+              "title",
+              "body",
+              "caller_note",
+              "revision",
+              "source",
+              "verified",
+              "required",
+              "created_by",
+              "created_at",
+              "updated_by",
+              "updated_at"
+            ]
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "scope_id": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scope_type": {
+                "type": "string",
+                "enum": ["agency", "site", "client"]
+              },
+              "type": {
+                "type": "string",
+                "enum": ["skill", "memory"]
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "caller_note": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": ["ui", "ability"]
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "created_by": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updated_by": {
+                "type": "integer"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "scope_id",
+              "scope_type",
+              "type",
+              "description",
               "title",
               "caller_note",
               "revision",
               "source",
               "verified",
+              "required",
               "created_by",
               "created_at",
               "updated_by",
@@ -7882,12 +7909,12 @@
         "notice": {
           "type": "string"
         },
-        "client": {
-          "type": ["object", "null"],
+        "agency": {
+          "type": "object",
           "properties": {
-            "client_id": {
+            "agency_id": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 0
             },
             "context": {
               "type": "array",
@@ -7900,15 +7927,19 @@
                   },
                   "scope_id": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 0
                   },
                   "scope_type": {
                     "type": "string",
-                    "enum": ["site", "client"]
+                    "enum": ["agency", "site", "client"]
                   },
                   "type": {
                     "type": "string",
                     "enum": ["context"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
                   },
                   "title": {
                     "type": "string",
@@ -7935,78 +7966,7 @@
                   "verified": {
                     "type": "boolean"
                   },
-                  "created_by": {
-                    "type": "integer"
-                  },
-                  "created_at": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "updated_by": {
-                    "type": "integer"
-                  },
-                  "updated_at": {
-                    "type": "string",
-                    "format": "date-time"
-                  }
-                },
-                "required": [
-                  "id",
-                  "scope_id",
-                  "scope_type",
-                  "type",
-                  "title",
-                  "body",
-                  "caller_note",
-                  "revision",
-                  "source",
-                  "verified",
-                  "created_by",
-                  "created_at",
-                  "updated_by",
-                  "updated_at"
-                ]
-              }
-            },
-            "items": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "scope_id": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "scope_type": {
-                    "type": "string",
-                    "enum": ["site", "client"]
-                  },
-                  "type": {
-                    "type": "string",
-                    "enum": ["skill", "memory"]
-                  },
-                  "title": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
-                  },
-                  "caller_note": {
-                    "type": "string",
-                    "maxLength": 200
-                  },
-                  "revision": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "source": {
-                    "type": "string",
-                    "enum": ["ui", "ability"]
-                  },
-                  "verified": {
+                  "required": {
                     "type": "boolean"
                   },
                   "created_by": {
@@ -8029,11 +7989,276 @@
                   "scope_id",
                   "scope_type",
                   "type",
+                  "description",
+                  "title",
+                  "body",
+                  "caller_note",
+                  "revision",
+                  "source",
+                  "verified",
+                  "required",
+                  "created_by",
+                  "created_at",
+                  "updated_by",
+                  "updated_at"
+                ]
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "scope_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "scope_type": {
+                    "type": "string",
+                    "enum": ["agency", "site", "client"]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["skill", "memory"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "caller_note": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["ui", "ability"]
+                  },
+                  "verified": {
+                    "type": "boolean"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "created_by": {
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_by": {
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope_id",
+                  "scope_type",
+                  "type",
+                  "description",
                   "title",
                   "caller_note",
                   "revision",
                   "source",
                   "verified",
+                  "required",
+                  "created_by",
+                  "created_at",
+                  "updated_by",
+                  "updated_at"
+                ]
+              }
+            }
+          },
+          "required": ["agency_id", "context", "items"]
+        },
+        "client": {
+          "type": ["object", "null"],
+          "properties": {
+            "client_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "context": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "scope_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "scope_type": {
+                    "type": "string",
+                    "enum": ["agency", "site", "client"]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["context"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 10000
+                  },
+                  "caller_note": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["ui", "ability"]
+                  },
+                  "verified": {
+                    "type": "boolean"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "created_by": {
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_by": {
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope_id",
+                  "scope_type",
+                  "type",
+                  "description",
+                  "title",
+                  "body",
+                  "caller_note",
+                  "revision",
+                  "source",
+                  "verified",
+                  "required",
+                  "created_by",
+                  "created_at",
+                  "updated_by",
+                  "updated_at"
+                ]
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "scope_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "scope_type": {
+                    "type": "string",
+                    "enum": ["agency", "site", "client"]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["skill", "memory"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "caller_note": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["ui", "ability"]
+                  },
+                  "verified": {
+                    "type": "boolean"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "created_by": {
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_by": {
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope_id",
+                  "scope_type",
+                  "type",
+                  "description",
+                  "title",
+                  "caller_note",
+                  "revision",
+                  "source",
+                  "verified",
+                  "required",
                   "created_by",
                   "created_at",
                   "updated_by",
@@ -8045,7 +8270,7 @@
           "required": ["client_id", "context", "items"]
         }
       },
-      "required": ["site_id", "context", "items", "notice", "client"]
+      "required": ["site_id", "context", "items", "notice", "agency", "client"]
     },
     "meta": {
       "annotations": {
@@ -8061,7 +8286,7 @@
   {
     "name": "mainwp/get-client-knowledge-v1",
     "label": "Get Client Knowledge",
-    "description": "Load the knowledge summary for one client: its context records in full, plus its skills and memories as a list without bodies. Site records are never included; load them per site. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_client_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
+    "description": "Load the knowledge summary for one client: its context records in full, plus its skills (with title and description) and memories as a list without bodies, with agency records in a separate block. Open a skill with get-knowledge-record when its description fits the task. Site records are never included; load them per site. Memories are evidence about the past, not current state. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_client_not_found, mainwp_access_denied, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -8091,15 +8316,19 @@
               },
               "scope_id": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 0
               },
               "scope_type": {
                 "type": "string",
-                "enum": ["site", "client"]
+                "enum": ["agency", "site", "client"]
               },
               "type": {
                 "type": "string",
                 "enum": ["context"]
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
               },
               "title": {
                 "type": "string",
@@ -8126,78 +8355,7 @@
               "verified": {
                 "type": "boolean"
               },
-              "created_by": {
-                "type": "integer"
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "updated_by": {
-                "type": "integer"
-              },
-              "updated_at": {
-                "type": "string",
-                "format": "date-time"
-              }
-            },
-            "required": [
-              "id",
-              "scope_id",
-              "scope_type",
-              "type",
-              "title",
-              "body",
-              "caller_note",
-              "revision",
-              "source",
-              "verified",
-              "created_by",
-              "created_at",
-              "updated_by",
-              "updated_at"
-            ]
-          }
-        },
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "scope_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "scope_type": {
-                "type": "string",
-                "enum": ["site", "client"]
-              },
-              "type": {
-                "type": "string",
-                "enum": ["skill", "memory"]
-              },
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              },
-              "caller_note": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "revision": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "source": {
-                "type": "string",
-                "enum": ["ui", "ability"]
-              },
-              "verified": {
+              "required": {
                 "type": "boolean"
               },
               "created_by": {
@@ -8220,11 +8378,96 @@
               "scope_id",
               "scope_type",
               "type",
+              "description",
+              "title",
+              "body",
+              "caller_note",
+              "revision",
+              "source",
+              "verified",
+              "required",
+              "created_by",
+              "created_at",
+              "updated_by",
+              "updated_at"
+            ]
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "scope_id": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scope_type": {
+                "type": "string",
+                "enum": ["agency", "site", "client"]
+              },
+              "type": {
+                "type": "string",
+                "enum": ["skill", "memory"]
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "caller_note": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": ["ui", "ability"]
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "created_by": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updated_by": {
+                "type": "integer"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "scope_id",
+              "scope_type",
+              "type",
+              "description",
               "title",
               "caller_note",
               "revision",
               "source",
               "verified",
+              "required",
               "created_by",
               "created_at",
               "updated_by",
@@ -8234,9 +8477,189 @@
         },
         "notice": {
           "type": "string"
+        },
+        "agency": {
+          "type": "object",
+          "properties": {
+            "agency_id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "context": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "scope_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "scope_type": {
+                    "type": "string",
+                    "enum": ["agency", "site", "client"]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["context"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 10000
+                  },
+                  "caller_note": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["ui", "ability"]
+                  },
+                  "verified": {
+                    "type": "boolean"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "created_by": {
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_by": {
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope_id",
+                  "scope_type",
+                  "type",
+                  "description",
+                  "title",
+                  "body",
+                  "caller_note",
+                  "revision",
+                  "source",
+                  "verified",
+                  "required",
+                  "created_by",
+                  "created_at",
+                  "updated_by",
+                  "updated_at"
+                ]
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "scope_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "scope_type": {
+                    "type": "string",
+                    "enum": ["agency", "site", "client"]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["skill", "memory"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "caller_note": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["ui", "ability"]
+                  },
+                  "verified": {
+                    "type": "boolean"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "created_by": {
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_by": {
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "scope_id",
+                  "scope_type",
+                  "type",
+                  "description",
+                  "title",
+                  "caller_note",
+                  "revision",
+                  "source",
+                  "verified",
+                  "required",
+                  "created_by",
+                  "created_at",
+                  "updated_by",
+                  "updated_at"
+                ]
+              }
+            }
+          },
+          "required": ["agency_id", "context", "items"]
         }
       },
-      "required": ["client_id", "context", "items", "notice"]
+      "required": ["client_id", "context", "items", "notice", "agency"]
     },
     "meta": {
       "annotations": {
@@ -8252,7 +8675,7 @@
   {
     "name": "mainwp/list-knowledge-v1",
     "label": "List Knowledge",
-    "description": "List knowledge records the current user can see, without bodies. Filter by scope, type or a text query on title and body. total is computed under the same filters. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_db_error.",
+    "description": "Lists knowledge records at the agency, client or site level that the caller can read. Records have no bodies. Filter by scope, type, verified or a text query on title, description and body. total is computed under the same filters. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": ["object", "null"],
@@ -8264,7 +8687,7 @@
         },
         "scope_type": {
           "type": "string",
-          "enum": ["site", "client"]
+          "enum": ["agency", "site", "client"]
         },
         "type": {
           "type": "string",
@@ -8285,13 +8708,16 @@
           "minimum": 1,
           "maximum": 100,
           "default": 20
+        },
+        "verified": {
+          "type": "boolean"
         }
       },
       "required": []
     },
     "output_schema": {
       "type": "object",
-      "required": ["items", "page", "per_page", "total"],
+      "required": ["items", "page", "per_page", "total", "notice"],
       "properties": {
         "items": {
           "type": "array",
@@ -8304,15 +8730,19 @@
               },
               "scope_id": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 0
               },
               "scope_type": {
                 "type": "string",
-                "enum": ["site", "client"]
+                "enum": ["agency", "site", "client"]
               },
               "type": {
                 "type": "string",
                 "enum": ["context", "skill", "memory"]
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
               },
               "title": {
                 "type": "string",
@@ -8332,6 +8762,9 @@
                 "enum": ["ui", "ability"]
               },
               "verified": {
+                "type": "boolean"
+              },
+              "required": {
                 "type": "boolean"
               },
               "created_by": {
@@ -8354,11 +8787,13 @@
               "scope_id",
               "scope_type",
               "type",
+              "description",
               "title",
               "caller_note",
               "revision",
               "source",
               "verified",
+              "required",
               "created_by",
               "created_at",
               "updated_by",
@@ -8374,6 +8809,9 @@
         },
         "total": {
           "type": "integer"
+        },
+        "notice": {
+          "type": "string"
         }
       }
     },
@@ -8391,7 +8829,7 @@
   {
     "name": "mainwp/create-knowledge-record-v1",
     "label": "Create Knowledge Record",
-    "description": "Save a new knowledge record on a site or a client. Site-specific details belong on the site; pass scope_type client only for knowledge that applies to every site of the client. Requires confirm: true or dry_run: true; dry_run returns exactly what would be saved. Records saved by an agent are stored as source ability, verified false. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_client_not_found, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_db_error.",
+    "description": "Save a new knowledge record at the agency, client or site level. Site-specific details belong on the site; pass scope_type client only for knowledge that applies to every site of the client. Requires confirm: true or dry_run: true; dry_run returns exactly what would be saved. Records saved by an agent are stored as source ability, verified false. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_site_not_found, mainwp_client_not_found, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -8402,11 +8840,15 @@
         },
         "scope_type": {
           "type": "string",
-          "enum": ["site", "client"]
+          "enum": ["agency", "site", "client"]
         },
         "type": {
           "type": "string",
           "enum": ["context", "skill", "memory"]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
         },
         "title": {
           "type": "string",
@@ -8431,7 +8873,7 @@
           "default": false
         }
       },
-      "required": ["scope_type", "scope_id", "type", "title", "body"]
+      "required": ["scope_type", "type", "title", "body"]
     },
     "output_schema": {
       "oneOf": [
@@ -8444,15 +8886,19 @@
             },
             "scope_id": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 0
             },
             "scope_type": {
               "type": "string",
-              "enum": ["site", "client"]
+              "enum": ["agency", "site", "client"]
             },
             "type": {
               "type": "string",
               "enum": ["context", "skill", "memory"]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1024
             },
             "title": {
               "type": "string",
@@ -8479,6 +8925,9 @@
             "verified": {
               "type": "boolean"
             },
+            "required": {
+              "type": "boolean"
+            },
             "created_by": {
               "type": "integer"
             },
@@ -8499,12 +8948,14 @@
             "scope_id",
             "scope_type",
             "type",
+            "description",
             "title",
             "body",
             "caller_note",
             "revision",
             "source",
             "verified",
+            "required",
             "created_by",
             "created_at",
             "updated_by",
@@ -8523,15 +8974,19 @@
               "properties": {
                 "scope_id": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 0
                 },
                 "scope_type": {
                   "type": "string",
-                  "enum": ["site", "client"]
+                  "enum": ["agency", "site", "client"]
                 },
                 "type": {
                   "type": "string",
                   "enum": ["context", "skill", "memory"]
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024
                 },
                 "title": {
                   "type": "string",
@@ -8554,17 +9009,22 @@
                 "verified": {
                   "type": "boolean",
                   "enum": [false]
+                },
+                "required": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "scope_id",
                 "scope_type",
                 "type",
+                "description",
                 "title",
                 "body",
                 "caller_note",
                 "source",
-                "verified"
+                "verified",
+                "required"
               ]
             }
           },
@@ -8577,7 +9037,7 @@
         "readonly": false,
         "destructive": true,
         "idempotent": false,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Destructive: this changes what every connected AI agent reads at the agency, client or site level later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
       },
       "show_in_rest": true,
       "public": false
@@ -8586,7 +9046,7 @@
   {
     "name": "mainwp/update-knowledge-record-v1",
     "label": "Update Knowledge Record",
-    "description": "Replace the title, body, type or caller_note of a knowledge record. expected_revision must match the stored revision; a mismatch answers a conflict with the current revision. Requires confirm: true or dry_run: true; dry_run returns the current and the proposed record side by side. caller_note describes this write; omit it and the stored note is cleared. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_conflict, mainwp_knowledge_db_error.",
+    "description": "Replace the title, description, body, type or caller_note of a knowledge record. expected_revision must match the stored revision; a mismatch answers a conflict with the current revision. Requires confirm: true or dry_run: true; dry_run returns the current and the proposed record side by side. caller_note describes this write; omit it and the stored note is cleared. Possible errors: ability_invalid_input, ability_invalid_permissions, mainwp_permission_denied, mainwp_invalid_input, mainwp_knowledge_not_found, mainwp_access_denied, mainwp_confirmation_required, mainwp_knowledge_invalid, mainwp_knowledge_conflict, mainwp_knowledge_db_error.",
     "category": "mainwp-knowledge",
     "input_schema": {
       "type": "object",
@@ -8602,6 +9062,10 @@
         "type": {
           "type": "string",
           "enum": ["context", "skill", "memory"]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
         },
         "title": {
           "type": "string",
@@ -8639,15 +9103,19 @@
             },
             "scope_id": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 0
             },
             "scope_type": {
               "type": "string",
-              "enum": ["site", "client"]
+              "enum": ["agency", "site", "client"]
             },
             "type": {
               "type": "string",
               "enum": ["context", "skill", "memory"]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1024
             },
             "title": {
               "type": "string",
@@ -8674,6 +9142,9 @@
             "verified": {
               "type": "boolean"
             },
+            "required": {
+              "type": "boolean"
+            },
             "created_by": {
               "type": "integer"
             },
@@ -8694,12 +9165,14 @@
             "scope_id",
             "scope_type",
             "type",
+            "description",
             "title",
             "body",
             "caller_note",
             "revision",
             "source",
             "verified",
+            "required",
             "created_by",
             "created_at",
             "updated_by",
@@ -8722,15 +9195,19 @@
                 },
                 "scope_id": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 0
                 },
                 "scope_type": {
                   "type": "string",
-                  "enum": ["site", "client"]
+                  "enum": ["agency", "site", "client"]
                 },
                 "type": {
                   "type": "string",
                   "enum": ["context", "skill", "memory"]
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024
                 },
                 "title": {
                   "type": "string",
@@ -8757,6 +9234,9 @@
                 "verified": {
                   "type": "boolean"
                 },
+                "required": {
+                  "type": "boolean"
+                },
                 "created_by": {
                   "type": "integer"
                 },
@@ -8777,12 +9257,14 @@
                 "scope_id",
                 "scope_type",
                 "type",
+                "description",
                 "title",
                 "body",
                 "caller_note",
                 "revision",
                 "source",
                 "verified",
+                "required",
                 "created_by",
                 "created_at",
                 "updated_by",
@@ -8798,15 +9280,19 @@
                 },
                 "scope_id": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 0
                 },
                 "scope_type": {
                   "type": "string",
-                  "enum": ["site", "client"]
+                  "enum": ["agency", "site", "client"]
                 },
                 "type": {
                   "type": "string",
                   "enum": ["context", "skill", "memory"]
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024
                 },
                 "title": {
                   "type": "string",
@@ -8833,6 +9319,9 @@
                 "verified": {
                   "type": "boolean"
                 },
+                "required": {
+                  "type": "boolean"
+                },
                 "created_by": {
                   "type": "integer"
                 },
@@ -8853,12 +9342,14 @@
                 "scope_id",
                 "scope_type",
                 "type",
+                "description",
                 "title",
                 "body",
                 "caller_note",
                 "revision",
                 "source",
                 "verified",
+                "required",
                 "created_by",
                 "created_at",
                 "updated_by",
@@ -8875,7 +9366,7 @@
         "readonly": false,
         "destructive": true,
         "idempotent": false,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Destructive: this changes what every connected AI agent reads at the agency, client or site level later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
       },
       "show_in_rest": true,
       "public": false
@@ -8944,15 +9435,19 @@
                 },
                 "scope_id": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 0
                 },
                 "scope_type": {
                   "type": "string",
-                  "enum": ["site", "client"]
+                  "enum": ["agency", "site", "client"]
                 },
                 "type": {
                   "type": "string",
                   "enum": ["context", "skill", "memory"]
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024
                 },
                 "title": {
                   "type": "string",
@@ -8979,6 +9474,9 @@
                 "verified": {
                   "type": "boolean"
                 },
+                "required": {
+                  "type": "boolean"
+                },
                 "created_by": {
                   "type": "integer"
                 },
@@ -8999,12 +9497,14 @@
                 "scope_id",
                 "scope_type",
                 "type",
+                "description",
                 "title",
                 "body",
                 "caller_note",
                 "revision",
                 "source",
                 "verified",
+                "required",
                 "created_by",
                 "created_at",
                 "updated_by",
@@ -9021,7 +9521,7 @@
         "readonly": false,
         "destructive": true,
         "idempotent": true,
-        "instructions": "Destructive: this changes what every connected AI client reads about the site or client later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
+        "instructions": "Destructive: this changes what every connected AI agent reads at the agency, client or site level later. Preview with dry_run: true and show the user the exact content before calling with confirm: true."
       },
       "show_in_rest": true,
       "public": false
