@@ -186,6 +186,30 @@ describe('Dashboard knowledge contract', () => {
       body: { agency: { agency_id: 0 }, client: null },
     });
   });
+  it.each([0, -1, 1.5, '0', '01', 'abc', true])(
+    'refuses list scope_id %j like the Dashboard',
+    scopeId => {
+      const store = new FixtureKnowledge();
+      expect(
+        store.run('mainwp/list-knowledge-v1', { scope_type: 'agency', scope_id: scopeId }, sites)
+      ).toMatchObject({
+        status: 400,
+        body: {
+          code: 'mainwp_invalid_input',
+          message: 'Provide a valid scope and positive integer identifiers and revisions.',
+        },
+      });
+    }
+  );
+  it.each([1, '1'])('filters the list by scope_id %j', scopeId => {
+    const store = new FixtureKnowledge();
+    const result = store.run(
+      'mainwp/list-knowledge-v1',
+      { scope_type: 'site', scope_id: scopeId },
+      sites
+    );
+    expect(result).toMatchObject({ status: 200, body: { total: 2 } });
+  });
   it.each([true, false])('filters agency records by verified=%s without scope_id', verified => {
     const store = new FixtureKnowledge();
     const expected = store.records.filter(
