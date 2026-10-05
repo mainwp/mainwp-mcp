@@ -188,7 +188,7 @@ export const knowledgeScenarios: ScenarioDefinition[] = [
   {
     id: 'knowledge-required-protection',
     purpose:
-      'Only a person using the Dashboard can mark a record required or change one; the abilities refuse it.',
+      'Only a person using the Dashboard can mark a record required or change a required one; the abilities refuse it.',
     kind: 'write',
     targets: ['fixture'],
     preconditions: () => ({ launch: { env: { MAINWP_REQUIRE_USER_CONFIRMATION: 'false' } } }),
