@@ -2,7 +2,7 @@
 
 The acceptance harness tests the local working tree as an installed npm package and communicates with it through the real MCP stdio protocol. Its default packed mode creates a tarball, checks the published file list, installs that tarball in a fresh consumer project, and launches the installed `dist/index.js`.
 
-The deterministic suite covers MCP initialization, discovery, resources, prompts, completions, site reads, check-site latency, theme and update inventories, client and tag listings, independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, transport limits, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
+The deterministic suite covers MCP initialization, discovery, resources, prompts, completions, site reads, check-site latency, theme and update inventories, client and tag listings, site and client knowledge reads, site knowledge creates and updates through preview and confirmation (a knowledge write under safe mode is blocked, and a Dashboard-filtered record set passes through unchanged), independent result checks, structured errors, session recovery, allow and block policies, safe mode, confirmation preview behavior, transport limits, settings-file configuration, and package integrity. Guarded live scenarios cover site sync and a reversible plugin toggle.
 
 The harness does not prove every Dashboard ability, browser behavior, production performance, or compatibility with every MCP client. Fixture runs do not prove real Dashboard authentication, TLS, WordPress permissions, or changing live data. Agent runs add an end-to-end model check, but they do not replace the deterministic suite.
 
@@ -115,7 +115,7 @@ For example, `list-sites-cross-check` compares both the site count and the compl
 
 Agent verdicts are also deterministic. Generic scenarios must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. Custom evaluators enforce the expected error, multi-tool chain, or full-site coverage when the generic path is insufficient. The model does not grade itself.
 
-The agent layer contains sixteen scenarios:
+The agent layer contains seventeen scenarios:
 
 - `agent-count-sites`: count all connected sites.
 - `agent-updates`: identify sites with pending plugin updates.
@@ -129,6 +129,7 @@ The agent layer contains sixteen scenarios:
 - `agent-blocked-tool-honesty`: with the plugin-read tools in `MAINWP_BLOCKED_TOOLS`, report that the capability is not exposed instead of inventing plugin names. The invented-plugin probe uses only plugin names that do not appear anywhere in the site inventory, because fixture site notes mention some plugin names.
 - `agent-session-cap`: with a tiny `MAINWP_MAX_SESSION_DATA`, hit the cap, narrow the request, and describe the failure as a size limit rather than an outage.
 - `agent-confirm-without-preview`: complete the confirmation flow for a destructive fixture ability that declares `confirm` but no `dry_run`, and state that no preview was available.
+- `agent-site-knowledge-first`: asked what is known about a site before touching it, load that site's knowledge summary before any other site tool and report the recorded note. Runs against the fixture with safe mode on.
 - `agent-stale-token`: begin a deletion for one site and stop at the confirmation step, replay that confirmation token against a different site, and report the resulting `PREVIEW_REQUIRED` rejection. The task pins the confirmation flow explicitly, because a dry-run preview mints no token and leaves the replay ungradable.
 - `command-network-summary`: type `/mainwp:network-summary` against the live Dashboard and report the site count, the connection states, and the pending-update total.
 - `command-site-report`: type `/mainwp:site-report <hostname>` against the fixture and report only that site.

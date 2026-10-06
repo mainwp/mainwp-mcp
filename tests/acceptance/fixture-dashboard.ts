@@ -1,8 +1,17 @@
+import { FixtureKnowledge } from './fixture-knowledge.js';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { ownSchema, propertySchema } from '../../src/security.js';
+import {
+  UPDATE_ABILITIES,
+  makeDashboard63Abilities,
+  makePlanItem,
+  makeUpdatePreview,
+  makeExecutedUpdates,
+  type PlanSite,
+} from '../helpers/update-gate.js';
 
 export const FIXTURE_USERNAME = 'fixture-user';
 export const FIXTURE_APP_PASSWORD = 'fixture app password';
@@ -428,6 +437,13 @@ export function getFixtureFaultMode(
  * advertised-routes-resolve scenario holds this list to what really routes.
  */
 export const FIXTURE_ROUTED_ABILITIES = [
+  'mainwp/get-knowledge-record-v1',
+  'mainwp/get-site-knowledge-v1',
+  'mainwp/get-client-knowledge-v1',
+  'mainwp/list-knowledge-v1',
+  'mainwp/create-knowledge-record-v1',
+  'mainwp/update-knowledge-record-v1',
+  'mainwp/delete-knowledge-record-v1',
   'mainwp/list-sites-v1',
   'mainwp/get-sites-basic-v1',
   'mainwp/count-sites-v1',
@@ -437,6 +453,9 @@ export const FIXTURE_ROUTED_ABILITIES = [
   'mainwp/get-site-updates-v1',
   'mainwp/list-updates-v1',
   'mainwp/list-ignored-updates-v1',
+  ...UPDATE_ABILITIES,
+  'mainwp/set-ignored-updates-v1',
+  'mainwp/unignore-site-updates-v1',
   'mainwp/get-site-security-v1',
   'mainwp/get-site-changes-v1',
   'mainwp/check-site-v1',
@@ -457,8 +476,17 @@ async function runAbility(
   sites: FixtureSite[],
   previewTokens: Map<string, string>,
   response: ServerResponse,
+  knowledge: FixtureKnowledge,
   transport?: FixtureTransport
 ): Promise<void> {
+  if (
+    abilityName.includes('knowledge') &&
+    FIXTURE_ROUTED_ABILITIES.some(name => name === abilityName)
+  ) {
+    const result = knowledge.run(abilityName, input, sites);
+    json(response, result.status, result.body);
+    return;
+  }
   const faultMode = getFixtureFaultMode(abilityName, input);
   if (faultMode === 'oversized') {
     json(response, 200, { payload: 'x'.repeat(FIXTURE_OVERSIZED_BYTES) });
@@ -639,6 +667,206 @@ async function runAbility(
         }))
     );
     json(response, 200, { ignored, total: ignored.length, errors: [] });
+    return;
+  }
+
+  if (UPDATE_ABILITIES.some(name => name === abilityName)) {
+    if (input.dry_run === true && input.confirm === true) {
+      json(response, 400, {
+        code: 'mainwp_invalid_input',
+        message: 'Cannot specify both dry_run and confirm.',
+        data: { status: 400 },
+      });
+      return;
+    }
+    const batch = abilityName === 'mainwp/run-updates-v1' || abilityName === 'mainwp/update-all-v1';
+    const selected = batch
+      ? filterSites(sites, input.site_ids_or_domains)
+      : filterSites(sites, [input.site_id_or_domain]);
+    if (!selected) return notFound(response, 'The requested MainWP site was not found.');
+    if (input.dry_run !== true && input.confirm !== true) {
+      json(response, 400, {
+        code: 'mainwp_confirmation_required',
+        message:
+          'Updates require confirm: true. Call with dry_run: true first to preview the plan.',
+        data: { status: 400 },
+      });
+      return;
+    }
+    const types = batch
+      ? requestedUpdateTypes(input)
+      : requestedUpdateTypes({ types: [abilityName.split('update-site-')[1].slice(0, -3)] });
+    const requested =
+      abilityName === 'mainwp/update-all-v1'
+        ? []
+        : Array.isArray(batch ? input.specific_items : input.slugs)
+          ? ((batch ? input.specific_items : input.slugs) as string[])
+          : [];
+    const planSites: PlanSite[] = selected.map(site => {
+      const entry: PlanSite = {
+        site_id: site.id,
+        site_url: site.url,
+        site_name: site.name,
+        items: [],
+        skipped: [],
+      };
+      for (const update of siteUpdates(site, types)) {
+        if (requested.length && !requested.includes(update.slug)) continue;
+        const item = makePlanItem(
+          update.type,
+          update.slug,
+          update.name,
+          update.current_version,
+          update.new_version,
+          requested.includes(update.slug)
+        );
+        const held = site.ignored_updates.some(
+          hold => hold.type === update.type && hold.slug === update.slug
+        );
+        if (held) {
+          const { flags: _flags, ...fields } = item;
+          entry.skipped.push({ ...fields, reason: 'ignored_site' });
+        } else entry.items.push(item);
+      }
+      return entry;
+    });
+    const preview = makeUpdatePreview(
+      planSites,
+      batch &&
+        (!Array.isArray(input.site_ids_or_domains) || input.site_ids_or_domains.length === 0),
+      requested
+    );
+    if (input.dry_run === true) {
+      json(response, 200, preview);
+      return;
+    }
+    for (const entry of planSites) {
+      const site = selected.find(candidate => candidate.id === entry.site_id)!;
+      for (const item of entry.items) {
+        if (item.type === 'core') {
+          site.wp_version = item.to;
+          site.core_update = null;
+        } else {
+          const inventory = item.type === 'plugin' ? site.plugins : site.themes;
+          const installed = inventory.find(candidate => candidate.slug === item.slug)!;
+          installed.version = item.to;
+          installed.update_version = null;
+        }
+      }
+    }
+    json(response, 200, makeExecutedUpdates(preview));
+    return;
+  }
+
+  if (abilityName === 'mainwp/set-ignored-updates-v1') {
+    if (input.action === 'unignore') {
+      json(response, 400, {
+        code: 'mainwp_unignore_moved',
+        message:
+          'Removing an item from the ignored list needs confirmation. Use mainwp/unignore-site-updates-v1.',
+        data: { status: 400, replacement: 'mainwp/unignore-site-updates-v1' },
+      });
+      return;
+    }
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    const type = input.type;
+    if (
+      input.action !== 'ignore' ||
+      (type !== 'core' && type !== 'plugin' && type !== 'theme') ||
+      typeof input.slug !== 'string'
+    ) {
+      json(response, 400, {
+        code: 'mainwp_invalid_input',
+        message: 'Invalid update hold.',
+        data: { status: 400 },
+      });
+      return;
+    }
+    if (!site.ignored_updates.some(hold => hold.type === type && hold.slug === input.slug)) {
+      const pending = siteUpdates(site, new Set([type])).find(item => item.slug === input.slug);
+      site.ignored_updates.push({
+        type,
+        slug: input.slug,
+        name: pending?.name ?? input.slug,
+        ignored_version: pending?.new_version ?? '',
+      });
+    }
+    json(response, 200, {
+      success: true,
+      action: 'ignore',
+      site_id: site.id,
+      type,
+      slug: input.slug,
+    });
+    return;
+  }
+
+  if (abilityName === 'mainwp/unignore-site-updates-v1') {
+    const type = input.type;
+    if (
+      (input.dry_run === true && input.confirm === true) ||
+      (type !== 'core' && type !== 'plugin' && type !== 'theme') ||
+      (type !== 'core' &&
+        (!Array.isArray(input.slugs) ||
+          !input.slugs.length ||
+          input.slugs.some(slug => typeof slug !== 'string' || !slug)))
+    ) {
+      json(response, 400, {
+        code: 'mainwp_invalid_input',
+        message: 'Invalid hold removal input.',
+        data: { status: 400 },
+      });
+      return;
+    }
+    const site = findSite(sites, input.site_id_or_domain);
+    if (!site) return notFound(response, 'The requested MainWP site was not found.');
+    if (input.dry_run !== true && input.confirm !== true) {
+      json(response, 400, {
+        code: 'mainwp_confirmation_required',
+        message:
+          'Removing a hold requires confirm: true. Call with dry_run: true first to preview it.',
+        data: { status: 400 },
+      });
+      return;
+    }
+    const slugs = type === 'core' ? ['wordpress'] : [...new Set(input.slugs as string[])];
+    const holds = slugs.map(slug => {
+      const hold = site.ignored_updates.find(item => item.type === type && item.slug === slug);
+      const pending = siteUpdates(site, new Set([type])).find(item => item.slug === slug);
+      return {
+        type,
+        slug,
+        name: hold?.name ?? pending?.name ?? slug,
+        held: Boolean(hold),
+        still_held_by: null,
+        pending: pending ? { from: pending.current_version, to: pending.new_version } : null,
+      };
+    });
+    const removed = holds.filter(hold => hold.held).map(hold => hold.slug);
+    if (input.dry_run === true) {
+      json(response, 200, {
+        dry_run: true,
+        would_affect: { site_id: site.id, site_url: site.url, site_name: site.name, holds },
+        count: removed.length,
+        warnings: removed.length
+          ? [
+              'Removing a hold makes the update eligible for the next run, including update-all and queued runs.',
+            ]
+          : [],
+        errors: [],
+      });
+      return;
+    }
+    site.ignored_updates = site.ignored_updates.filter(
+      hold => hold.type !== type || !removed.includes(hold.slug)
+    );
+    json(response, 200, {
+      dry_run: false,
+      removed,
+      not_held: holds.filter(hold => !hold.held).map(hold => hold.slug),
+      count: removed.length,
+    });
     return;
   }
 
@@ -882,8 +1110,13 @@ async function runAbility(
 export async function startFixtureDashboard(
   options: FixtureDashboardOptions = {}
 ): Promise<FixtureDashboard> {
+  const updateAbilities = makeDashboard63Abilities();
+  const updateNames = new Set(updateAbilities.map(ability => ability.name));
   const abilities = [
-    ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as unknown[]),
+    ...(JSON.parse(fs.readFileSync(ABILITIES_PATH, 'utf8')) as Array<{ name: string }>).filter(
+      ability => !updateNames.has(ability.name)
+    ),
+    ...updateAbilities,
     requiredConfirmAbility,
     previewTokenAbility,
     ...(
@@ -898,6 +1131,7 @@ export async function startFixtureDashboard(
   // request handler reads this binding at call time.
   let sites = loadSites();
   const previewTokens = new Map<string, string>();
+  let knowledge = new FixtureKnowledge();
   const expectedAuthorization = `Basic ${Buffer.from(
     `${FIXTURE_USERNAME}:${FIXTURE_APP_PASSWORD}`
   ).toString('base64')}`;
@@ -931,6 +1165,20 @@ export async function startFixtureDashboard(
           }>
         ).find(candidate => candidate.name === abilityName);
         const schema = ability?.input_schema;
+        const requiredMethod =
+          abilityName === 'mainwp/unignore-site-updates-v1'
+            ? 'DELETE'
+            : UPDATE_ABILITIES.some(name => name === abilityName)
+              ? 'POST'
+              : undefined;
+        if (requiredMethod && request.method !== requiredMethod) {
+          json(response, 405, {
+            code: 'rest_no_route',
+            message: `This ability requires ${requiredMethod}.`,
+            data: { status: 405 },
+          });
+          return;
+        }
         const { input, body } = await parseInput(request, url, schema);
         if (abilityName === FIXTURE_NULLABLE_DELETE_ABILITY) {
           const requiredSchema = schema as {
@@ -959,6 +1207,7 @@ export async function startFixtureDashboard(
           FIXTURE_ROUTED_ABILITIES.some(candidate => candidate === abilityName) &&
           schema &&
           !Object.hasOwn(schema, 'default') &&
+          !(Array.isArray(schemaType) && schemaType.includes('null')) &&
           (schemaType === 'object' || (Array.isArray(schemaType) && schemaType.includes('object')))
         ) {
           // The WP run controller reads a missing GET/DELETE input as null.
@@ -974,6 +1223,7 @@ export async function startFixtureDashboard(
           sites,
           previewTokens,
           response,
+          knowledge,
           abilityName === FIXTURE_NULLABLE_DELETE_ABILITY
             ? {
                 method: request.method ?? '',
@@ -1023,6 +1273,7 @@ export async function startFixtureDashboard(
     reset: () => {
       sites = loadSites();
       previewTokens.clear();
+      knowledge = new FixtureKnowledge();
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

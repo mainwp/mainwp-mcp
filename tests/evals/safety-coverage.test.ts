@@ -16,6 +16,7 @@ import { getTools, clearToolsCache } from '../../src/tools.js';
 import { generateInstructions, buildSafetyTags } from '../../src/tool-schema.js';
 import { clearCache, initRateLimiter } from '../../src/abilities.js';
 import type { Ability } from '../../src/abilities.js';
+import { declaresUsableBooleanParam } from '../../src/policy.js';
 import { makeBaseConfig } from '../helpers/config.js';
 
 import abilitiesFixture from './fixtures/abilities-full.json' with { type: 'json' };
@@ -93,13 +94,19 @@ describe('Safety Coverage', () => {
   });
 
   describe('destructive tool safety parameters', () => {
-    it('every destructive ability should have confirm parameter in schema', () => {
+    it('every destructive ability should declare a usable boolean confirm', () => {
       const violations: string[] = [];
 
       for (const ability of abilities) {
         if (ability.meta?.annotations?.destructive) {
           const props = ability.input_schema?.properties as Record<string, unknown> | undefined;
-          if (!props || !('confirm' in props)) {
+          const declaredType = (props?.confirm as { type?: unknown } | undefined)?.type;
+          const isBooleanType =
+            declaredType === 'boolean' ||
+            (Array.isArray(declaredType) &&
+              declaredType.length === 1 &&
+              declaredType[0] === 'boolean');
+          if (!declaresUsableBooleanParam(props, 'confirm') || !isBooleanType) {
             violations.push(ability.name);
           }
         }
@@ -107,17 +114,23 @@ describe('Safety Coverage', () => {
 
       expect(
         violations,
-        `Destructive abilities missing confirm param: ${violations.join(', ')}`
+        `Destructive abilities without usable boolean confirm: ${violations.join(', ')}`
       ).toEqual([]);
     });
 
-    it('every destructive ability with confirm should also have dry_run', () => {
+    it('every destructive ability should declare a usable boolean dry_run', () => {
       const violations: string[] = [];
 
       for (const ability of abilities) {
         if (ability.meta?.annotations?.destructive) {
           const props = ability.input_schema?.properties as Record<string, unknown> | undefined;
-          if (props && 'confirm' in props && !('dry_run' in props)) {
+          const declaredType = (props?.dry_run as { type?: unknown } | undefined)?.type;
+          const isBooleanType =
+            declaredType === 'boolean' ||
+            (Array.isArray(declaredType) &&
+              declaredType.length === 1 &&
+              declaredType[0] === 'boolean');
+          if (!declaresUsableBooleanParam(props, 'dry_run') || !isBooleanType) {
             violations.push(ability.name);
           }
         }
@@ -125,7 +138,7 @@ describe('Safety Coverage', () => {
 
       expect(
         violations,
-        `Destructive+confirm abilities missing dry_run: ${violations.join(', ')}`
+        `Destructive abilities without usable boolean dry_run: ${violations.join(', ')}`
       ).toEqual([]);
     });
 

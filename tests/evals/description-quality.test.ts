@@ -6,7 +6,7 @@
  * - Destructive tools mention danger/safety/confirmation
  * - Read-only tools indicate their read-only nature
  * - No duplicate descriptions within the same category
- * - No description exceeds 1200 characters
+ * - No description exceeds 1200 characters (1850 for destructive tools)
  * - Compact mode preserves the primary verb/action word
  */
 
@@ -147,19 +147,24 @@ describe('Description Quality', () => {
       ).toEqual([]);
     });
 
-    it('no description should exceed 1200 characters', async () => {
+    it('no description should exceed 1200 characters, or 1850 for a destructive tool', async () => {
       mockAbilitiesFetch();
       const tools = await getTools({ ...baseConfig, schemaVerbosity: 'standard' });
 
+      // Destructive tools carry 552-629 characters of confirmation guidance
+      // and safety tags that this server appends to the ability's own text.
       const violations: string[] = [];
       for (const tool of tools) {
         const len = tool.description?.length ?? 0;
-        if (len > 1200) {
-          violations.push(`${tool.name} (${len} chars)`);
+        const limit = tool.annotations?.destructiveHint === true ? 1850 : 1200;
+        if (len > limit) {
+          violations.push(`${tool.name} (${len} chars, limit ${limit})`);
         }
       }
 
-      expect(violations, `Descriptions exceeding 1200 chars: ${violations.join(', ')}`).toEqual([]);
+      expect(violations, `Descriptions over their length limit: ${violations.join(', ')}`).toEqual(
+        []
+      );
     });
   });
 

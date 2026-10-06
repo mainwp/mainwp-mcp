@@ -129,7 +129,8 @@ function canonicalize(value: unknown): unknown {
  * user_confirmed, dry_run) from the key to ensure preview and execution calls match.
  * With `usesPreviewToken`, `preview_token` is left out as well: the ability
  * issues it in its own dry run, so it is null on the preview and a string on
- * the confirmed call, and the Dashboard decides whether that string is valid.
+ * the confirmed call. Eligible MainWP updates bind it when MainWP is primary;
+ * other abilities let the Dashboard validate the caller's token.
  * Prefixed with the config identity hash: the preview maps are module-level,
  * so without the scope a token issued against one dashboard/principal could
  * confirm the same tool and arguments against another createServer(config)
@@ -190,6 +191,34 @@ export function capturePreviewToken(
     if (bound === 'minLength' ? token.length < limit : token.length > limit) return undefined;
   }
   return token;
+}
+
+const BOUND_PREVIEW_TOKEN_ABILITIES = [
+  'mainwp/run-updates-v1',
+  'mainwp/update-all-v1',
+  'mainwp/update-site-core-v1',
+  'mainwp/update-site-plugins-v1',
+  'mainwp/update-site-themes-v1',
+  'mainwp/update-site-translations-v1',
+];
+
+/**
+ * Whether the confirmed call always sends the token captured from this
+ * ability's preview. Only these MainWP updates bind it; other abilities let a
+ * caller's own token win, so their preview's token may never go out.
+ */
+function bindsPreviewToken(
+  config: Config,
+  ability: Ability,
+  usesPreviewToken: boolean,
+  upstreamToken: string | undefined
+): boolean {
+  return (
+    usesPreviewToken &&
+    typeof upstreamToken === 'string' &&
+    config.abilityNamespaces[0] === 'mainwp' &&
+    BOUND_PREVIEW_TOKEN_ABILITIES.includes(ability.name)
+  );
 }
 
 /**
@@ -379,8 +408,15 @@ export async function handleConfirmationFlow(
       usesPreviewToken
     );
     const token = crypto.randomUUID();
+    // The Dashboard pins the previewed versions only through a token the
+    // confirmed call is sure to send.
     const confirmationResponse = canPreview
-      ? buildConfirmationRequiredResponse(ctx, previewResult, token)
+      ? buildConfirmationRequiredResponse(
+          ctx,
+          previewResult,
+          token,
+          bindsPreviewToken(config, ability, usesPreviewToken, upstreamToken)
+        )
       : buildNoPreviewAvailableResponse(ctx, token);
     const previewResponse = formatJson(config, confirmationResponse);
 
@@ -521,27 +557,56 @@ export async function handleConfirmationFlow(
       };
     }
 
-    // Preview is valid - proceed with execution
+    // Consume the confirmation even when the upstream token does not match.
     const upstreamToken = previewEntry.upstreamToken;
     pendingPreviews.delete(previewKey);
     tokenIndex.delete(confirmationToken);
+    const bindPreviewToken = bindsPreviewToken(config, ability, usesPreviewToken, upstreamToken);
+    if (
+      bindPreviewToken &&
+      effectiveArgs.preview_token !== null &&
+      effectiveArgs.preview_token !== undefined &&
+      effectiveArgs.preview_token !== upstreamToken
+    ) {
+      logger.warning('Confirmation failed - preview token does not match preview', { toolName });
+      return {
+        action: 'respond',
+        response: [
+          {
+            type: 'text',
+            text: formatJson(
+              config,
+              buildPreviewRequiredResponse(
+                ctx,
+                'The preview token does not match this preview. Generate a new preview before confirming.'
+              )
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
     const previewAge = Date.now() - previewEntry.ts;
     logger.info('User confirmation validated', { toolName, previewAge });
 
     // Confirmation credentials belong to this server, not the upstream ability.
+    // Drop dry_run too: the preview key ignores it, so the token also binds a
+    // call carrying one, and a string "true" forwarded here would make the
+    // approved execution a preview on a Dashboard that reads it as a boolean.
     const {
       user_confirmed: _user_confirmed,
       confirmation_token: _confirmation_token,
+      dry_run: _confirmedDryRun,
       ...confirmedArgs
     } = effectiveArgs;
     delete confirmedArgs.confirm;
     delete confirmedArgs[confirmationParam!];
-    // A token string from the caller always wins: it may come from a later
-    // dry run that replaced the one stored here. The stored token only fills
-    // in for a caller that repeated the preview arguments.
+    // Other abilities keep caller-wins for tokens from a later dry run.
     if (
       usesPreviewToken &&
-      (confirmedArgs.preview_token === null || confirmedArgs.preview_token === undefined) &&
+      (bindPreviewToken ||
+        confirmedArgs.preview_token === null ||
+        confirmedArgs.preview_token === undefined) &&
       upstreamToken !== undefined
     ) {
       confirmedArgs.preview_token = upstreamToken;

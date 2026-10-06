@@ -1,5 +1,6 @@
 import type { AcceptanceClient } from '../lib/client.js';
 import { FIXTURE_CONFIRM_ONLY_ABILITY, FIXTURE_ROUTED_ABILITIES } from '../fixture-dashboard.js';
+import { UPDATE_ABILITIES } from '../../helpers/update-gate.js';
 import { BoundedPagination } from '../lib/pagination.js';
 import type { IndependentVerifier, VerifiedSite } from '../lib/verify.js';
 import type {
@@ -391,19 +392,42 @@ export const advertisedRoutesResolve: ScenarioDefinition = {
       []
     );
 
-    // Minimal input suffices, and the accepted outcomes are whitelisted: a
-    // routed ability answers with data or one of the two errors an empty input
-    // provokes. Anything else (rest_no_route, a fixture fault, a malformed
-    // body) is a failure rather than a resolution nobody looked at.
+    // Preview gated routes without changing sites. Probe the moved ignore action
+    // with its replacement error; other routes keep the empty-input error checks.
     const failures: Array<{ name: string; error: string }> = [];
     for (const name of checkable) {
       try {
-        await ctx.verifier.execute(name, {});
+        await ctx.verifier.execute(
+          name,
+          name.includes('knowledge')
+            ? {
+                site_id: 1,
+                client_id: 101,
+                record_id: 1,
+                expected_revision: 1,
+                scope_type: 'site',
+                scope_id: 1,
+                type: 'context',
+                title: 'Route probe',
+                body: 'Route probe body',
+                dry_run: true,
+              }
+            : UPDATE_ABILITIES.some(ability => ability === name)
+              ? name === 'mainwp/run-updates-v1' || name === 'mainwp/update-all-v1'
+                ? { site_ids_or_domains: [1], dry_run: true }
+                : { site_id_or_domain: 1, dry_run: true }
+              : name === 'mainwp/unignore-site-updates-v1'
+                ? { site_id_or_domain: 1, type: 'plugin', slugs: ['hello.php'], dry_run: true }
+                : name === 'mainwp/set-ignored-updates-v1'
+                  ? { site_id_or_domain: 1, type: 'plugin', slug: 'hello.php', action: 'unignore' }
+                  : {}
+        );
       } catch (error) {
         const message = String(error);
         if (
           !message.includes('mainwp_site_not_found') &&
-          !message.includes('fixture_write_disabled')
+          !message.includes('fixture_write_disabled') &&
+          !(name === 'mainwp/set-ignored-updates-v1' && message.includes('mainwp_unignore_moved'))
         ) {
           failures.push({ name, error: message.slice(0, 300) });
         }

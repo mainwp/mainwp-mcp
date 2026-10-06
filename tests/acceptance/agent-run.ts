@@ -396,7 +396,99 @@ async function pluginUpdateSiteUrls(
   return updateSiteUrls.sort();
 }
 
+const KNOWLEDGE_NOTE_PHRASE =
+  /\b(?:(?:after|once)\s+(?:the\s+)?(?:bakery|shop|store|business)\s+(?:has\s+|is\s+)?clos(?:es|ed)|after\s+closing\s+(?:time|hours))\b/i;
+const NEGATION =
+  /\b(?:no|not|never|nothing|none|without|avoid\w*|refrain\w*|skip\w*|forbid\w*|prohibit\w*)\b|n't\b/i;
+
+/**
+ * The site's context record says to schedule changes after the bakery closes.
+ * An answer carries it when a clause holds that phrase ("after"/"once" the
+ * business closes, or "after closing time/hours") and none of the NEGATION
+ * words; a reversal worded outside that list still passes. Clauses split on
+ * sentence punctuation, dashes, line breaks, a comma before
+ * "and"/"but"/"so"/"then" and a comma before "not", so an unrelated negative
+ * in its own clause ("No issues were found, and ...", "..., not during
+ * opening hours") does not reject the answer. A negative in the phrase's own
+ * clause always does, whether it reverses the note ("Changes after the
+ * bakery closes are generally not allowed") or not ("... so customers are
+ * not disrupted"): telling those apart needs meaning a regex does not have,
+ * and a false fail is the safe direction. Curly apostrophes count as
+ * straight ones. A later clause that disowns the note (", but that note is
+ * stale", ", not anymore") still passes; correctMcpResult separately
+ * requires the record body.
+ */
+export function answerCarriesKnowledgeNote(text: string): boolean {
+  return text
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .split(/[.;:!?\n\u2013\u2014]|,\s*(?:and|but|so|then)\b|,\s*(?=not\b)/i)
+    .some(clause => KNOWLEDGE_NOTE_PHRASE.test(clause) && !NEGATION.test(clause));
+}
+
 export const agentScenarios: AgentScenario[] = [
+  {
+    id: 'agent-site-knowledge-first',
+    target: 'fixture',
+    serverEnv: { MAINWP_SAFE_MODE: 'true' },
+    task: truth =>
+      `What do we know about site ${truth.siteId} (${truth.siteUrl}) before I touch it?`,
+    expectedTools: ['get_site_knowledge_v1'],
+    groundTruth: async verifier => {
+      const site = (await verifier.listSites()).find(site => site.id === 1);
+      if (!site) throw new Error('Knowledge scenario needs fixture site 1');
+      return {
+        siteId: site.id,
+        siteUrl: site.url,
+        siteName: site.name,
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
+      };
+    },
+    stateGuard: readOnlyStateGuard,
+    evaluate: async (truth, collected, verifier) => {
+      const scenario = agentScenarios.find(
+        scenario => scenario.id === 'agent-site-knowledge-first'
+      )!;
+      const evaluation = evaluate(scenario, truth, collected);
+      const knowledgeUses = collected.toolUses.filter(tool =>
+        toolFamilyMatches(tool.name, ['get_site_knowledge_v1'])
+      );
+      const firstMainwpUse = collected.toolUses[0];
+      const firstIsKnowledge =
+        firstMainwpUse !== undefined &&
+        toolFamilyMatches(firstMainwpUse.name, ['get_site_knowledge_v1']);
+      // The first call has to load this site's knowledge; a summary of another
+      // site first, then this one later, is not "knowledge first".
+      const targeted =
+        firstIsKnowledge &&
+        firstMainwpUse.input !== null &&
+        typeof firstMainwpUse.input === 'object' &&
+        Number((firstMainwpUse.input as Record<string, unknown>).site_id) === truth.siteId;
+      const results = toolResultsForUses(knowledgeUses, collected.toolResults);
+      const expectedBody = 'Schedule changes after the bakery closes.';
+      evaluation.rightCapability = {
+        pass: firstIsKnowledge,
+        evidence: collected.toolUses.map(tool => tool.name),
+      };
+      evaluation.rightArguments = {
+        pass: targeted,
+        evidence: knowledgeUses.map(tool => tool.input),
+      };
+      evaluation.correctMcpResult = {
+        pass:
+          results.length > 0 &&
+          results.every(result => !result.isError) &&
+          JSON.stringify(results).includes(expectedBody),
+        evidence: results,
+      };
+      const guard = await readOnlyStateGuard(truth, verifier);
+      evaluation.stateChange = { pass: guard.ok, evidence: guard.evidence };
+      evaluation.faithfulFinalAnswer = {
+        pass: answerCarriesKnowledgeNote(collected.finalText),
+        evidence: collected.finalText,
+      };
+      return { evaluation };
+    },
+  },
   {
     id: 'agent-count-sites',
     target: 'live',
@@ -2269,7 +2361,11 @@ export async function fixtureStateSnapshot(verifier: IndependentVerifier): Promi
   for (const site of sites) {
     details.push(await verifier.execute('mainwp/get-site-v1', { site_id_or_domain: site.id }));
   }
-  return canonicalJson({ sites, details });
+  return canonicalJson({
+    sites,
+    details,
+    knowledge: await verifier.execute('mainwp/list-knowledge-v1', { per_page: 100 }),
+  });
 }
 
 /** True when a successful result carries the independently verified total. */

@@ -6,7 +6,7 @@
  * - Standard mode < 30K tokens
  * - Compact mode < 20K tokens
  * - Compact saves >= 20% vs standard
- * - No single tool exceeds 600 tokens
+ * - No single tool exceeds 600 tokens (900 for destructive tools)
  * - Outputs per-category breakdown via console.warn
  */
 
@@ -138,18 +138,25 @@ describe('Token Budget', () => {
     expect(savings).toBeGreaterThanOrEqual(20);
   });
 
-  it('no single tool should exceed 600 tokens', async () => {
+  it('no single tool should exceed 600 tokens, or 900 for a destructive tool', async () => {
     mockAbilitiesFetch();
     const tools = await getTools({ ...baseConfig, schemaVerbosity: 'standard' });
 
+    // This server adds 254-275 tokens to every destructive tool (the
+    // confirmation guidance, safety tags and the user_confirmed and
+    // confirmation_token parameters), so the 600 tokens the ability itself
+    // may use get that allowance on top.
     const violations: string[] = [];
     for (const tool of tools) {
       const tokens = estimateTokens(JSON.stringify(tool));
-      if (tokens > 600) {
-        violations.push(`${tool.name} (${tokens} tokens)`);
+      const limit = tool.annotations?.destructiveHint === true ? 900 : 600;
+      if (tokens > limit) {
+        violations.push(`${tool.name} (${tokens} tokens, limit ${limit})`);
       }
     }
 
-    expect(violations, `Tools exceeding 600 token limit: ${violations.join(', ')}`).toEqual([]);
+    expect(violations, `Tools exceeding per-tool token limits: ${violations.join(', ')}`).toEqual(
+      []
+    );
   });
 });
