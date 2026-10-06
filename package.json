@@ -70,7 +70,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "undici": "^7.24.5"
   },
   "devDependencies": {
