@@ -1,6 +1,6 @@
 {
   "name": "@mainwp/mcp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Official MainWP MCP server: manage your WordPress sites from Claude, Cursor, Codex, and other AI tools, with previews and approval before destructive changes",
   "mcpName": "io.github.mainwp/mainwp-mcp",
   "type": "module",

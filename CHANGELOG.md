@@ -3,7 +3,7 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-06
 
 ### Added
 
@@ -32,6 +32,12 @@ An ability can now use a required `confirm_*` property as its confirmation param
 `true` (`const: true` or `enum: [true]`). These tools confirm with a token and no preview, and an explicit `dry_run` is
 refused for them. A `confirm_*` property that also accepts `false` is treated as an ordinary input and passed through.
 Tool descriptions, help, and confirmation responses name the parameter the tool uses.
+
+`mainwp://status`, `mainwp_get_setup_status` and `mainwp_configure` report whether the ability catalog is complete, as
+`catalog: { truncated, pagesFetched, pageLimit }`. `truncated` is true when pagination stopped at the 50-page limit,
+when an `X-WP-TotalPages` header is malformed, when a full page arrives without one, and when the fetch stops short of
+the largest page count any page advertised. A truncated catalog stays connected and its tools stay usable; a complete
+refresh or a cache clear resets it.
 
 ### Changed
 
@@ -75,7 +81,7 @@ text, such as base64.
 On GET and DELETE calls, boolean inputs are sent as `1` and `0` instead of `true` and `false` when the ability's
 schema plainly declares the position as a boolean. WordPress 6.9 and 7.0 pass query values through as raw strings, and
 PHP code that tests a flag by truthiness reads the string `"false"` as true. Undeclared keys, positions under `anyOf`,
-`oneOf` or `allOf`, and type lists that name `integer`, `number`, `string` or `array` before `boolean` keep
+`oneOf` or `allOf`, items of arrays that declare `uniqueItems`, and type lists that name `integer`, `number`, `string` or `array` before `boolean` keep
 `true`/`false`.
 
 Abilities with a required input that may be `null` now receive their input as JSON, so a `null` stays `null`: GET
@@ -89,6 +95,11 @@ the declared type when it is in canonical form and refused before the call when 
 The `mainwp://site/{id}` resource works again. It sent `site_id` to an ability that requires `site_id_or_domain`, so
 the Dashboard rejected every read.
 
+A confirmed write whose result exceeds the session data limit now says that the upstream request succeeded and the
+result was omitted (`execution_attempted`, `upstream_response_received`, `result_omitted`), and asks the caller to
+verify the operation's state before retrying. The error code stays `RESOURCE_EXHAUSTED`. It previously looked like
+nothing had run.
+
 A confirmed execution no longer forwards a `dry_run` argument from the caller, which could turn the approved call into
 another preview.
 
@@ -97,7 +108,8 @@ strings of at most 255 characters with no control characters. Integer-typed and 
 rule.
 
 Calls with no arguments now send an input parameter when the ability declares an input schema: an empty `input`
-parameter on GET and DELETE when the schema has no default, and an empty `input` object on POST. Abilities whose
+parameter on GET and DELETE when the schema has no default, and an empty `input` object on POST. Abilities that take
+their input as JSON send `input_json={}` on GET and a `{"input":{}}` body on DELETE instead. Abilities whose
 schema requires an input object rejected these calls before. An empty POST call to an ability without an input schema
 now sends `{}` instead of `{"input":{}}`.
 
