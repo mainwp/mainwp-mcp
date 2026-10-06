@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mainwp/mainwp-mcp",
+  "title": "MainWP",
+  "description": "Manage WordPress sites in MainWP from AI tools, with approval before destructive changes by default.",
+  "websiteUrl": "https://docs.mainwp.com/mcp-server",
+  "repository": {
+    "url": "https://github.com/mainwp/mainwp-mcp",
+    "source": "github"
+  },
+  "version": "1.4.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@mainwp/mcp",
+      "version": "1.4.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "MAINWP_URL",
+          "description": "Address of your MainWP Dashboard, such as https://dashboard.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "MAINWP_USER",
+          "description": "WordPress username of the Dashboard administrator (the login name, not the display name)",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "MAINWP_APP_PASSWORD",
+          "description": "WordPress Application Password for that user, not their login password",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
