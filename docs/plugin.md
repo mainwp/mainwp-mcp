@@ -103,21 +103,20 @@ server prints when the variable is genuinely absent. The `${VAR:-}` form avoids
 the literal, but it clobbers genuinely set inherited values with empty. Plain
 inheritance keeps unset variables unset and set variables intact.
 
-## Config option changes are a three-way update
+## Config option changes are a two-way update
 
-Adding, removing, or changing a configuration option updates all three of
-these in the same change:
+Adding, removing, or changing a configuration option updates both of these in
+the same change:
 
-1. The environment-variable table in `README.md`.
-2. The docs-site configuration reference
+1. The docs-site configuration reference
    (<https://docs.mainwp.com/mcp-server/reference/configuration>, source in the
    `mainwp/docs` repo).
-3. `.agents/skills/mainwp-dashboard/references/safety-and-limits.md`, when the
+2. `.agents/skills/mainwp-dashboard/references/safety-and-limits.md`, when the
    option's semantics are something the skill teaches: safe mode, confirmation
    gating, tool filtering, response and pagination caps, retry behavior.
 
 Then run `npm run sync-skill` so the plugin mirror matches. A config change
-that skips step 3 leaves the agent teaching behavior the server no longer has.
+that skips step 2 leaves the agent teaching behavior the server no longer has.
 
 ## Codex CLI and other agent-skills clients
 
@@ -147,7 +146,7 @@ env_vars = [
 ```
 
 That list is the common set, not all of them. Add any other `MAINWP_*`
-variable you use from the README configuration table.
+variable you use from the configuration reference.
 
 `env_vars` is a list of variable names passed through from the parent
 environment; no values appear in the TOML. Codex also supports an `env` table
