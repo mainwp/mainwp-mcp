@@ -71,7 +71,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "undici": "^7.24.5"
+    "undici": "^7.30.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
