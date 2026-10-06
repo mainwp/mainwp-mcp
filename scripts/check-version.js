@@ -3,7 +3,9 @@
  * Version Consistency Check Script
  *
  * Ensures that the version in package.json matches the SERVER_VERSION constant
- * in src/index.ts. This is a CI quality gate to prevent version drift.
+ * in src/index.ts and both versions in server.json. This is a CI quality gate
+ * to prevent version drift. mcp-publisher publishes whatever server.json says,
+ * so a stale entry would list a version that npm does not have.
  *
  * Usage: node scripts/check-version.js
  * Exit codes: 0 = versions match, 1 = mismatch or error
@@ -46,25 +48,45 @@ function getSourceVersion() {
 }
 
 /**
+ * Extract the server and npm package versions from server.json
+ */
+function getRegistryVersions() {
+  const serverPath = join(rootDir, 'server.json');
+  const serverJson = JSON.parse(readFileSync(serverPath, 'utf8'));
+  const npmPackage = (serverJson.packages ?? []).find(pkg => pkg.registryType === 'npm');
+  if (!npmPackage) {
+    throw new Error('Could not find the npm package entry in server.json');
+  }
+
+  return { server: serverJson.version, npmPackage: npmPackage.version };
+}
+
+/**
  * Main version check
  */
 function main() {
   try {
     const packageVersion = getPackageVersion();
     const sourceVersion = getSourceVersion();
+    const registryVersions = getRegistryVersions();
 
     console.log(`package.json version: ${packageVersion}`);
     console.log(`src/index.ts version: ${sourceVersion}`);
+    console.log(`server.json version: ${registryVersions.server}`);
+    console.log(`server.json npm package version: ${registryVersions.npmPackage}`);
 
-    if (packageVersion === sourceVersion) {
+    const versions = [sourceVersion, registryVersions.server, registryVersions.npmPackage];
+    if (versions.every(version => version === packageVersion)) {
       console.log('\n✓ Versions match');
       process.exit(0);
     } else {
       console.error('\n✗ Version mismatch detected!');
-      console.error('Please update both package.json and src/index.ts to have the same version.');
+      console.error('Please update every location below to the same version.');
       console.error('\nLocations to update:');
       console.error('  - package.json: "version" field');
       console.error('  - src/index.ts: SERVER_VERSION constant');
+      console.error('  - server.json: "version" field');
+      console.error('  - server.json: "version" of the npm entry in "packages"');
       process.exit(1);
     }
   } catch (error) {
