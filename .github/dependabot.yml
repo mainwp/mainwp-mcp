@@ -20,3 +20,10 @@ updates:
       # supports (>=20.19.0). Revisit when Node 20 support is dropped.
       - dependency-name: 'undici'
         update-types: ['version-update:semver-major']
+      # vitest 5 requires Node 22.12+, and CI still tests the Node 20 floor
+      # in engines. vitest and @vitest/coverage-v8 pin each other, so they
+      # move together when Node 20 support is dropped.
+      - dependency-name: 'vitest'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@vitest/coverage-v8'
+        update-types: ['version-update:semver-major']
