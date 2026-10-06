@@ -145,6 +145,9 @@ Refreshed the dependency lockfile within declared ranges to clear published advi
 `undici` 7.29.1, `fast-uri` 3.1.8, `hono` 4.13.11, `ip-address` 10.7.2, `qs` 6.16.0, `proxy-addr` 2.0.8, `zod` 4.6.5,
 `jose` 6.2.12, and `ajv` 8.20.0. `npm audit` reports 0 vulnerabilities. `package.json` is unchanged.
 
+`@modelcontextprotocol/sdk` now requires 1.32.1 or later, which clears advisory GHSA-6qxp-vccf-f47h. The advisory
+covers the SDK's OAuth client, which this server does not use.
+
 ## [1.3.0] - 2026-08-07
 
 ### Added
