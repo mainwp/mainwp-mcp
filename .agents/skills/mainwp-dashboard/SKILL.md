@@ -19,7 +19,8 @@ tools. Never assume a capability exists, and never name a tool from memory.
 Before multi-step or network-wide work, read the resources:
 
 - `mainwp://status` forces a catalog refresh and reports connectivity, ability
-  count, and cumulative session data used.
+  count, whether the catalog was truncated (`catalog.truncated`), and
+  cumulative session data used.
 - `mainwp://help` gives categories, which tools are destructive, and which
   declare `dry_run` or `confirm`. `mainwp://help/tool/{tool_name}` is the
   per-tool detail.
@@ -101,8 +102,9 @@ counter only resets when a new server session starts, so check `sessionData` in
 
 ## Partial data stays partial
 
-The ability catalog is fetched sequentially and capped at 50 pages of 100. Hitting the cap only logs a warning the user may
-never see, so a very large Dashboard can present a truncated catalog. Anything
+The ability catalog is fetched sequentially and capped at 50 pages of 100. A
+very large Dashboard can present a truncated catalog that still connects and
+works; `mainwp://status` then reports `catalog.truncated: true`. Anything
 obtained from a capped, paged, or filtered read stays labeled partial: never
 present it as a complete inventory, and get totals from an ability that reports
 totals rather than counting rows.

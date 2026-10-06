@@ -29,6 +29,8 @@ import {
   paginateApi,
   MAX_ERROR_BODY_BYTES,
   MAX_URL_LENGTH,
+  MAX_PAGES,
+  type PaginationMetadata,
 } from './http-client.js';
 import { withSecretRedaction, type Logger } from './logging.js';
 import { abilityNameToToolName, RESERVED_TOOL_NAMES } from './naming.js';
@@ -374,17 +376,35 @@ const abilitiesCache: CacheSlot<Ability[]> = emptySlot();
 const categoriesCache: CacheSlot<Category[]> = emptySlot();
 
 /**
- * Derived lookup indexes, keyed by the exact abilities array they were built
- * from. WeakMap (not module-level variables) so a caller that awaited one
- * fetch can never read indexes committed by a concurrent fetch for a
- * different config — the array reference it holds always resolves to its own
- * matching indexes. Entries are garbage-collected with their arrays.
+ * Derived lookup indexes and catalog metadata, keyed by the exact abilities
+ * array they were built from. WeakMap (not module-level variables) so a
+ * caller that awaited one fetch can never read indexes committed by a
+ * concurrent fetch for a different config — the array reference it holds
+ * always resolves to its own matching indexes. Entries are garbage-collected with their arrays.
  */
 interface AbilityIndexes {
   byName: Map<string, Ability>;
   byToolName: Map<string, Ability>;
+  catalog: PaginationMetadata;
 }
 const abilityIndexes = new WeakMap<Ability[], AbilityIndexes>();
+
+export function getAbilityCatalogMetadata(abilities: Ability[]): PaginationMetadata {
+  const indexes = abilityIndexes.get(abilities);
+  if (!indexes) throw new Error('Ability snapshot has no catalog metadata');
+  return { ...indexes.catalog };
+}
+
+export function getCachedAbilityCatalogMetadata(config: Config | null): PaginationMetadata {
+  if (
+    config &&
+    abilitiesCache.data !== null &&
+    abilitiesCache.signature === cacheSignature(config)
+  ) {
+    return getAbilityCatalogMetadata(abilitiesCache.data);
+  }
+  return { truncated: false, pagesFetched: 0, pageLimit: MAX_PAGES };
+}
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -624,7 +644,7 @@ export async function fetchAbilities(
         config.maxResponseSize,
         logger
       ),
-    process: allAbilities => {
+    process: ({ items: allAbilities, truncated, pagesFetched, pageLimit }) => {
       const newAbilities = allAbilities.filter(a => {
         // Hostile-input guard: a null entry or non-string name would throw
         // below and poison the whole catalog refresh instead of being skipped.
@@ -798,6 +818,7 @@ export async function fetchAbilities(
           abilityIndexes.set(safeAbilities, {
             byName: newAbilitiesIndex,
             byToolName: newToolNameIndex,
+            catalog: { truncated, pagesFetched, pageLimit },
           });
           // Notify callbacks if abilities changed
           if (hasChanged && hadCachedAbilities) {
@@ -838,7 +859,7 @@ export async function fetchCategories(
     // prefixes) and normalize the remote text — the mainwp://categories
     // resource returns these objects verbatim, so they get the same boundary
     // treatment as ability fields.
-    process: allCategories => ({
+    process: ({ items: allCategories }) => ({
       data: allCategories
         .filter(
           c =>

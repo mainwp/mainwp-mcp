@@ -16,7 +16,13 @@ import {
 } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
-import { McpErrorFactory, formatErrorResponse, getErrorMessage } from './errors.js';
+import {
+  MCP_ERROR_CODES,
+  McpError,
+  McpErrorFactory,
+  formatErrorResponse,
+  getErrorMessage,
+} from './errors.js';
 import { Logger, withRequestId, withSecretRedaction } from './logging.js';
 import {
   trackSessionData,
@@ -337,12 +343,27 @@ export async function executeTool(
     // Format the result as JSON for the AI to parse
     const formattedResult = formatJson(config, result);
 
-    const responseBytes = trackSessionData(
-      formattedResult,
-      config,
-      callLogger,
-      'for tool response'
-    );
+    let responseBytes: number;
+    try {
+      responseBytes = trackSessionData(formattedResult, config, callLogger, 'for tool response');
+    } catch (error) {
+      if (
+        decision === 'needs-confirmation' &&
+        args.user_confirmed === true &&
+        error instanceof McpError &&
+        error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED
+      ) {
+        throw McpErrorFactory.resourceExhausted(
+          "The confirmed request received a successful upstream response, but its result was omitted because of the session limit. Verify the operation's state before retrying.",
+          {
+            execution_attempted: true,
+            upstream_response_received: true,
+            result_omitted: true,
+          }
+        );
+      }
+      throw error;
+    }
 
     const durationMs = Math.round(performance.now() - startTime);
     callLogger.info('Tool execution succeeded', {

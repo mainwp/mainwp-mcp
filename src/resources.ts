@@ -13,6 +13,8 @@ import { Config, formatJson } from './config.js';
 import {
   fetchAbilities,
   fetchCategories,
+  getAbilityCatalogMetadata,
+  getCachedAbilityCatalogMetadata,
   executeAbility,
   getAbilityByToolName,
   type Ability,
@@ -146,12 +148,14 @@ export async function handleReadResource(
           connected: true,
           dashboardHost: redactedHost,
           abilitiesCount: abilities.length,
+          catalog: getAbilityCatalogMetadata(abilities),
           sessionData: getSessionDataUsage(config),
         });
       } catch (error) {
         return jsonResource({
           connected: false,
           dashboardHost: redactedHost,
+          catalog: getCachedAbilityCatalogMetadata(config),
           error: sanitizeError(getErrorMessage(error)),
         });
       }

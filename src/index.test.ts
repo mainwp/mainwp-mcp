@@ -1161,6 +1161,122 @@ describe('setup mode handlers', () => {
     await server.close();
   });
 
+  it('reports catalog truncation in mainwp://status while staying connected', async () => {
+    mockFetch.mockImplementation(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(new URL(url).searchParams.get('page') === '1' ? sampleAbilities : []),
+          { headers: { 'X-WP-TotalPages': '51' } }
+        )
+    );
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    const { client, server } = await connectState(state);
+    try {
+      const result = await client.readResource({ uri: 'mainwp://status' });
+      const status = JSON.parse((result.contents as Array<{ text: string }>)[0].text) as Record<
+        string,
+        unknown
+      >;
+      expect(status).toMatchObject({
+        connected: true,
+        abilitiesCount: 2,
+        catalog: { truncated: true, pagesFetched: 50, pageLimit: 50 },
+      });
+      expect(state.state).toBe('ready');
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain('list_sites_v1');
+      expect(mockFetch).toHaveBeenCalledTimes(50);
+      expect(
+        mockFetch.mock.calls.some(([url]) => new URL(String(url)).searchParams.get('page') === '51')
+      ).toBe(false);
+
+      mockFetch.mockImplementation(async () => new Response(JSON.stringify(sampleAbilities)));
+      const refreshed = await client.readResource({ uri: 'mainwp://status' });
+      const completeStatus = JSON.parse(
+        (refreshed.contents as Array<{ text: string }>)[0].text
+      ) as Record<string, unknown>;
+      expect(completeStatus.catalog).toEqual({ truncated: false, pagesFetched: 1, pageLimit: 50 });
+      const setup = setupStatus(
+        toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+      );
+      expect(setup).toMatchObject({ state: 'ready', catalog: completeStatus.catalog });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('reports cached catalog truncation in ready setup status and keeps tools listed', async () => {
+    mockFetch.mockImplementation(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(new URL(url).searchParams.get('page') === '1' ? sampleAbilities : []),
+          { headers: { 'X-WP-TotalPages': '51' } }
+        )
+    );
+    const state = await startupState();
+    const { client, server } = await connectState(state);
+    try {
+      expect(state.state).toBe('ready');
+      const status = setupStatus(
+        toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+      );
+      expect(status).toMatchObject({
+        state: 'ready',
+        catalog: { truncated: true, pagesFetched: 50, pageLimit: 50 },
+      });
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain('list_sites_v1');
+      expect(mockFetch).toHaveBeenCalledTimes(50);
+
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+      const stale = await client.readResource({ uri: 'mainwp://status' });
+      const staleStatus = JSON.parse((stale.contents as Array<{ text: string }>)[0].text) as Record<
+        string,
+        unknown
+      >;
+      expect(staleStatus).toMatchObject({ connected: true, catalog: status.catalog });
+      clearCache();
+      const cleared = setupStatus(
+        toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+      );
+      expect(cleared).toMatchObject({
+        state: 'ready',
+        catalog: { truncated: false, pagesFetched: 0, pageLimit: 50 },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('recovers to ready setup status with a truncated catalog', async () => {
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Network error');
+    mockFetch.mockImplementation(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(new URL(url).searchParams.get('page') === '1' ? sampleAbilities : []),
+          { headers: { 'X-WP-TotalPages': '51' } }
+        )
+    );
+    const { client, server } = await connectState(state);
+    try {
+      const status = setupStatus(
+        toolText(await client.callTool({ name: 'mainwp_get_setup_status' }))
+      );
+      expect(status).toMatchObject({
+        state: 'ready',
+        abilitiesCount: 2,
+        catalog: { truncated: true, pagesFetched: 50, pageLimit: 50 },
+      });
+      expect(state.state).toBe('ready');
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain('list_sites_v1');
+      expect(mockFetch).toHaveBeenCalledTimes(50);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it('does not retry a rejected login when setup status is requested again', async () => {
     mockFetch.mockResolvedValueOnce(rejectedResponse('invalid_username'));
     const state = await startupState();

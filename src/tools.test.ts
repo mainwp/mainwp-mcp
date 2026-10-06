@@ -2482,6 +2482,44 @@ describe('confirmation flow - full cycle', () => {
       }
     });
 
+    it('reports a confirmed upstream response omitted by the session limit and refuses token replay', async () => {
+      const config = makeBaseConfig({ maxSessionData: 2048 });
+      const client = await connectedClient(config);
+      const token = await preview(client, 1);
+      const usageBefore = getSessionDataUsage(config).used;
+      expect(usageBefore).toBeGreaterThan(0);
+      expect(usageBefore).toBeLessThan(config.maxSessionData);
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ queued: true, payload: 'x'.repeat(4096) }))
+      );
+
+      const confirmed = await confirm(client, 1, token);
+      expect(confirmed.isError).toBe(true);
+      expect.soft(responseData(confirmed).error).toEqual({
+        code: MCP_ERROR_CODES.RESOURCE_EXHAUSTED,
+        message:
+          "The confirmed request received a successful upstream response, but its result was omitted because of the session limit. Verify the operation's state before retrying.",
+        data: {
+          execution_attempted: true,
+          upstream_response_received: true,
+          result_omitted: true,
+        },
+      });
+      expect.soft(getSessionDataUsage(config).used).toBe(usageBefore);
+      expect(getPendingPreviewCounts()).toEqual({ previews: 0, tokens: 0 });
+      expect(upstreamInputs()).toEqual([
+        { input: { site_id: 1, dry_run: true } },
+        { input: { site_id: 1, confirm: true } },
+      ]);
+
+      const replay = await confirm(client, 1, token);
+      expect(replay.isError).toBe(true);
+      expect(responseData(replay).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs().filter(({ input }) => input.dry_run !== true)).toEqual([
+        { input: { site_id: 1, confirm: true } },
+      ]);
+    });
+
     it('does not publish a first preview when session accounting fails', async () => {
       const client = await connectedClient(makeBaseConfig({ maxSessionData: 2048 }));
       dryRunResult = { payload: 'x'.repeat(4096) };

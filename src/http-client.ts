@@ -19,7 +19,19 @@ export const MAX_ERROR_BODY_BYTES = 65536;
 export const MAX_URL_LENGTH = 8000;
 
 /** Maximum number of pages to fetch during pagination — prevents unbounded requests */
-const MAX_PAGES = 50;
+export const MAX_PAGES = 50;
+
+const PER_PAGE = 100;
+
+export interface PaginationMetadata {
+  truncated: boolean;
+  pagesFetched: number;
+  pageLimit: number;
+}
+
+export interface PaginatedResult<T> extends PaginationMetadata {
+  items: T[];
+}
 
 interface ResponseDeadline {
   timeoutId?: ReturnType<typeof setTimeout>;
@@ -275,13 +287,19 @@ export async function paginateApi<T>(
   label: string,
   maxResponseSize: number,
   logger?: Logger
-): Promise<T[]> {
+): Promise<PaginatedResult<T>> {
   let page = 1;
   let capped = false;
+  // The truncated flag must not read "complete" unless the headers say so: a
+  // total advertised on an earlier page, a total that is not a plain digit
+  // string, or a full page with no total at all means pages may remain even
+  // where the loop stopped early.
+  let advertisedPages = 0;
+  let uncertainTotal = false;
   const allItems: T[] = [];
 
   while (true) {
-    const response = await customFetch(`${endpoint}?per_page=100&page=${page}`);
+    const response = await customFetch(`${endpoint}?per_page=${PER_PAGE}&page=${page}`);
 
     if (!response.ok) {
       const errorText = await readLimitedBody(response, MAX_ERROR_BODY_BYTES);
@@ -303,7 +321,19 @@ export async function paginateApi<T>(
     const batch = parsed as T[];
     allItems.push(...batch);
 
-    const totalPages = parseInt(response.headers.get('X-WP-TotalPages') || '1', 10);
+    const totalHeader = response.headers.get('X-WP-TotalPages');
+    if (totalHeader === null) {
+      // A missing total ends the loop on this page, so a full one may not be the last.
+      if (batch.length >= PER_PAGE) uncertainTotal = true;
+    } else if (/^\d+$/.test(totalHeader)) {
+      // A shrink can land on the current page and stop the loop with nothing
+      // left over, so the page count alone would read as complete.
+      if (Number(totalHeader) < advertisedPages) uncertainTotal = true;
+      advertisedPages = Math.max(advertisedPages, Number(totalHeader));
+    } else {
+      uncertainTotal = true;
+    }
+    const totalPages = parseInt(totalHeader || '1', 10);
     if (page >= totalPages) break;
     if (page >= MAX_PAGES) {
       capped = true;
@@ -320,5 +350,10 @@ export async function paginateApi<T>(
     logger?.info(`Fetched ${allItems.length} ${label} across ${page} pages`);
   }
 
-  return allItems;
+  return {
+    items: allItems,
+    truncated: capped || uncertainTotal || advertisedPages > page,
+    pagesFetched: page,
+    pageLimit: MAX_PAGES,
+  };
 }

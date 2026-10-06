@@ -21,7 +21,13 @@ import {
   type ConnectionKey,
   type PolicyConfig,
 } from './config.js';
-import { clearCache, initRateLimiter, type Ability } from './abilities.js';
+import {
+  clearCache,
+  getAbilityCatalogMetadata,
+  getCachedAbilityCatalogMetadata,
+  initRateLimiter,
+  type Ability,
+} from './abilities.js';
 import { clearPendingPreviews } from './confirmation.js';
 import { looksLikeApplicationPassword } from './credential-diagnostics.js';
 import { CredentialRejectedError, validateCredentials } from './credential-check.js';
@@ -319,6 +325,7 @@ function rejectedStatusResult(state: ConfigState, config: Config): ToolCallResul
   return setupResult(policy, {
     state: 'credentials_rejected',
     dashboardHost: hostOf(config.dashboardUrl),
+    catalog: getCachedAbilityCatalogMetadata(config),
     ...(config.authType === 'basic' &&
     config.username &&
     !looksLikeApplicationPassword(config.username)
@@ -548,6 +555,7 @@ async function handleSetupStatus(
         return setupResult(policy, {
           state: 'degraded',
           dashboardHost: hostOf(config.dashboardUrl),
+          catalog: getCachedAbilityCatalogMetadata(config),
           problem: reason,
           note: 'Another setup operation is already running, so the connection was not retried. Ask again once it finishes.',
           guidance: degradedGuidance(reason),
@@ -569,6 +577,7 @@ async function handleSetupStatus(
           return setupResult(policy, {
             state: 'degraded',
             dashboardHost: hostOf(config.dashboardUrl),
+            catalog: getCachedAbilityCatalogMetadata(config),
             problem: reason,
             guidance: degradedGuidance(reason),
           });
@@ -582,6 +591,7 @@ async function handleSetupStatus(
           state: 'ready',
           dashboardHost: hostOf(config.dashboardUrl),
           abilitiesCount: abilities.length,
+          catalog: getAbilityCatalogMetadata(abilities),
           message: `Connected to ${hostOf(config.dashboardUrl)}. The MainWP tools are available now.`,
           clientRefreshNote: CLIENT_REFRESH_NOTE,
         });
@@ -597,6 +607,7 @@ async function handleSetupStatus(
       state: 'ready',
       dashboardHost: hostOf(config.dashboardUrl),
       message: 'The MainWP MCP server is already connected. No setup is needed.',
+      catalog: getCachedAbilityCatalogMetadata(config),
     });
   }
 
@@ -834,6 +845,7 @@ async function handleConfigure(
         status: 'connected',
         dashboardHost: hostOf(dashboardUrl),
         abilitiesCount: abilities.length,
+        catalog: getAbilityCatalogMetadata(abilities),
         message: `Connected to ${hostOf(dashboardUrl)}. ${abilities.length} MainWP tools are available now.`,
         savedTo: savedPath,
         storageNote:
