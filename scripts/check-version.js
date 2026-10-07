@@ -3,7 +3,7 @@
  * Version Consistency Check Script
  *
  * Ensures that the version in package.json matches the SERVER_VERSION constant
- * in src/index.ts and both versions in server.json. This is a CI quality gate
+ * in src/index.ts, manifest.json and both versions in server.json. This is a CI quality gate
  * to prevent version drift. mcp-publisher publishes whatever server.json says,
  * so a stale entry would list a version that npm does not have.
  *
@@ -69,13 +69,22 @@ function main() {
     const packageVersion = getPackageVersion();
     const sourceVersion = getSourceVersion();
     const registryVersions = getRegistryVersions();
+    const manifestVersion = JSON.parse(
+      readFileSync(join(rootDir, 'manifest.json'), 'utf8')
+    ).version;
 
     console.log(`package.json version: ${packageVersion}`);
     console.log(`src/index.ts version: ${sourceVersion}`);
     console.log(`server.json version: ${registryVersions.server}`);
     console.log(`server.json npm package version: ${registryVersions.npmPackage}`);
+    console.log(`manifest.json version: ${manifestVersion}`);
 
-    const versions = [sourceVersion, registryVersions.server, registryVersions.npmPackage];
+    const versions = [
+      sourceVersion,
+      registryVersions.server,
+      registryVersions.npmPackage,
+      manifestVersion,
+    ];
     if (versions.every(version => version === packageVersion)) {
       console.log('\n✓ Versions match');
       process.exit(0);
@@ -87,6 +96,7 @@ function main() {
       console.error('  - src/index.ts: SERVER_VERSION constant');
       console.error('  - server.json: "version" field');
       console.error('  - server.json: "version" of the npm entry in "packages"');
+      console.error('  - manifest.json: "version" field');
       process.exit(1);
     }
   } catch (error) {

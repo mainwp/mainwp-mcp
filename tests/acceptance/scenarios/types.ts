@@ -6,7 +6,7 @@ import { BoundedPagination } from '../lib/pagination.js';
 import type { IndependentVerifier, VerifiedPluginResponse, VerifiedSite } from '../lib/verify.js';
 
 export type AcceptanceTarget = 'live' | 'fixture';
-export type AcceptanceMode = 'packed' | 'source';
+export type AcceptanceMode = 'packed' | 'source' | 'bundle';
 export type ScenarioStatus = 'passed' | 'failed' | 'skipped' | 'unverified';
 
 export interface AssertionResult {
@@ -151,6 +151,7 @@ export interface ScenarioResult {
   assertions: AssertionResult[];
   reason?: string;
   error?: string;
+  toolCount?: number;
 }
 
 export async function mcpListAllSites(client: AcceptanceClient): Promise<VerifiedSite[]> {
