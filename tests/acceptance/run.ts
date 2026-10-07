@@ -142,10 +142,7 @@ function baseServerEnv(
     MAINWP_RATE_LIMIT: '0',
     ...(target === 'fixture'
       ? { MAINWP_ALLOW_HTTP: 'true' }
-      : {
-          MAINWP_ALLOW_HTTP: process.env.MAINWP_ALLOW_HTTP === 'true' ? 'true' : 'false',
-          MAINWP_SKIP_SSL_VERIFY: skipSslVerify ? 'true' : 'false',
-        }),
+      : { MAINWP_SKIP_SSL_VERIFY: skipSslVerify ? 'true' : 'false' }),
   };
 }
 

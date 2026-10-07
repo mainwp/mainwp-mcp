@@ -137,7 +137,7 @@ describe('acceptance runner', () => {
       args: bundle.launch.args,
       env: bundle.launch.env,
     });
-    expect(launch.env.MAINWP_ALLOW_HTTP).toBe('true');
+    expect(launch.env).not.toHaveProperty('MAINWP_ALLOW_HTTP');
     expect(launch.env).not.toHaveProperty('MAINWP_URL');
     expect(launch.env).not.toHaveProperty('MAINWP_USER');
     expect(launch.env).not.toHaveProperty('MAINWP_APP_PASSWORD');

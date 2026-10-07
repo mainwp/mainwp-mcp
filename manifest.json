@@ -14,7 +14,7 @@
   },
   "documentation": "https://docs.mainwp.com/mcp-server",
   "support": "https://github.com/mainwp/mainwp-mcp/issues",
-  "icon": "docs/images/mainwp-mcp-logo-2026.png",
+  "icon": "docs/images/mainwp-mcp-icon-512.png",
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
