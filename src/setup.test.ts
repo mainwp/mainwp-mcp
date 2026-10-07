@@ -84,6 +84,9 @@ function resultText(result: { content: Array<{ text: string }> }): string {
 
 const noopNotify = async () => {};
 
+// Where a Claude Desktop extension user edits the values the bundle passes as env.
+const DESKTOP_CONFIGURE_ROUTE = 'Settings > Extensions > MainWP > Configure';
+
 describe('validateConfigureUrl', () => {
   it('normalizes an https URL and strips trailing slashes', () => {
     expect(validateConfigureUrl('https://dash.example.com/', false)).toBe(
@@ -226,6 +229,7 @@ describe('mainwp_configure preconditions', () => {
       expect(status).not.toHaveProperty('chatSetupAvailable');
       expect(status.guidance).not.toMatch(/paste/i);
       expect(status.relayInstructions).toContain('Do not ask for credentials in chat');
+      expect(status.guidance).toContain(DESKTOP_CONFIGURE_ROUTE);
     }
   );
 
@@ -295,6 +299,7 @@ describe('mainwp_configure preconditions', () => {
 
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain('ALREADY_CONFIGURED');
+    expect(resultText(result)).toContain(DESKTOP_CONFIGURE_ROUTE);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -889,6 +894,7 @@ describe('mainwp_get_setup_status', () => {
     );
 
     expect(resultText(result)).toContain('If the credentials themselves are wrong');
+    expect(JSON.parse(resultText(result)).guidance).toContain(DESKTOP_CONFIGURE_ROUTE);
   });
 
   it('stays degraded and reports the reason when the retry fails', async () => {
@@ -902,5 +908,29 @@ describe('mainwp_get_setup_status', () => {
     expect(state.state).toBe('degraded');
     expect(notify).not.toHaveBeenCalled();
     expect(resultText(result)).toContain('Network error');
+  });
+
+  it('reports the certificate cause code when the degraded retry fails', async () => {
+    mockFetch.mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: { code: 'DEPTH_ZERO_SELF_SIGNED_CERT', message: 'leaked-cause-detail' },
+      })
+    );
+    const state = ConfigState.fromConfig(makeBaseConfig());
+    state.markDegraded('Credential validation failed: fetch failed');
+
+    const result = await executeSetupTool(
+      state,
+      SETUP_STATUS_TOOL,
+      {},
+      makeMockLogger(),
+      noopNotify
+    );
+
+    const status = JSON.parse(resultText(result));
+    expect(status.state).toBe('degraded');
+    expect(status.problem).toContain('fetch failed (DEPTH_ZERO_SELF_SIGNED_CERT)');
+    expect(status.problem).toContain('not trusted by the Node.js');
+    expect(resultText(result)).not.toContain('leaked-cause-detail');
   });
 });
