@@ -3,6 +3,9 @@
 # do not re-flag them. Each carries its rationale inline.
 
 reviews:
+  auto_review:
+    auto_pause_after_reviewed_commits: 1  # pause automatic incremental reviews early; post @coderabbitai review when the branch is ready
+
   path_instructions:
     - path: 'src/resources.ts'
       instructions: >-
