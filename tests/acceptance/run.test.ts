@@ -1,15 +1,19 @@
 import fs from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startFixtureDashboard } from './fixture-dashboard.js';
 import { createArtifacts, type Artifacts } from './lib/artifacts.js';
+import { extractBundle, type ExtractedBundle } from './lib/bundle.js';
+import { packAndInstall } from './lib/pack.js';
 import { launchServer, type ServerConnection } from './lib/server.js';
-import { runAcceptance } from './run.js';
+import { parseArgs, runAcceptance } from './run.js';
 import type { ScenarioDefinition } from './scenarios/types.js';
 
 const probes = vi.hoisted(() => ({ scenarios: [] as ScenarioDefinition[] }));
 
 vi.mock('./lib/server.js', () => ({ launchServer: vi.fn() }));
 vi.mock('./lib/artifacts.js', () => ({ createArtifacts: vi.fn() }));
+vi.mock('./lib/bundle.js', () => ({ extractBundle: vi.fn() }));
+vi.mock('./lib/pack.js', () => ({ packAndInstall: vi.fn() }));
 vi.mock('./scenarios/index.js', () => ({ scenarios: probes.scenarios }));
 // The real fixture runs; the wrapper only lets a test reach the instance the
 // runner started.
@@ -25,6 +29,15 @@ const seededSiteIds = (
 ).map(site => site.id);
 
 probes.scenarios.push(
+  {
+    id: 'bundle-discovery-probe',
+    purpose: 'Discover tools using the manifest launch configuration.',
+    kind: 'read',
+    targets: ['live'],
+    run: async ctx => {
+      ctx.assert.truthy('bundle tools are discovered', (await ctx.client.listTools()).tools.length);
+    },
+  },
   {
     id: 'fixture-mutating-probe',
     purpose: 'Delete the first fixture site, as fixture-confirmation-flow does.',
@@ -54,6 +67,8 @@ probes.scenarios.push(
   }
 );
 
+afterEach(() => vi.unstubAllEnvs());
+
 function stubArtifacts(): Artifacts {
   return {
     runId: 'run-test',
@@ -66,6 +81,87 @@ function stubArtifacts(): Artifacts {
 }
 
 describe('acceptance runner', () => {
+  it('accepts bundle mode with a default or explicit archive', () => {
+    expect(parseArgs(['--mode', 'bundle']).bundle).toMatch(/test-results\/mcpb\/mainwp-mcp\.mcpb$/);
+    expect(parseArgs(['--mode', 'bundle', '--bundle', '/tmp/custom.mcpb'])).toMatchObject({
+      mode: 'bundle',
+      bundle: '/tmp/custom.mcpb',
+    });
+    expect(() => parseArgs(['--mode', 'packed', '--bundle', '/tmp/custom.mcpb'])).toThrow(
+      '--bundle requires --mode bundle'
+    );
+  });
+
+  it('launches the bundle configuration and records its hash, entry point and tool count', async () => {
+    vi.stubEnv('MAINWP_URL', 'https://dashboard.example.com');
+    vi.stubEnv('MAINWP_USER', 'test-user');
+    vi.stubEnv('MAINWP_APP_PASSWORD', 'test-password');
+    vi.stubEnv('MAINWP_ALLOW_HTTP', 'true');
+    const artifacts = stubArtifacts();
+    const bundle: ExtractedBundle = {
+      filename: 'custom.mcpb',
+      sha256: 'bundle-sha256',
+      extractDir: '/extracted',
+      launch: {
+        entry: '/extracted/dist/index.js',
+        command: 'manifest-node',
+        args: ['/extracted/dist/index.js', '--manifest-argument'],
+        env: { BUNDLE_USER: 'test-user' },
+      },
+      cleanup: vi.fn(),
+    };
+    vi.mocked(extractBundle).mockResolvedValue(bundle);
+    vi.mocked(createArtifacts).mockResolvedValue(artifacts);
+    vi.mocked(launchServer).mockResolvedValue({
+      client: { listTools: async () => ({ tools: [{ name: 'bundle-tool' }] }) },
+      cwd: '/acceptance/cwd',
+      home: '/acceptance/home',
+      close: async () => {},
+    } as ServerConnection);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    expect(
+      await runAcceptance([
+        '--mode',
+        'bundle',
+        '--bundle',
+        '/tmp/custom.mcpb',
+        '--scenario',
+        'bundle-discovery-probe',
+      ])
+    ).toBe(0);
+    const launch = vi.mocked(launchServer).mock.calls[0][0];
+    expect(launch).toMatchObject({
+      entry: bundle.launch.entry,
+      command: bundle.launch.command,
+      args: bundle.launch.args,
+      env: bundle.launch.env,
+    });
+    expect(launch.env).not.toHaveProperty('MAINWP_ALLOW_HTTP');
+    expect(launch.env).not.toHaveProperty('MAINWP_URL');
+    expect(launch.env).not.toHaveProperty('MAINWP_USER');
+    expect(launch.env).not.toHaveProperty('MAINWP_APP_PASSWORD');
+    expect(packAndInstall).not.toHaveBeenCalled();
+    expect(vi.mocked(artifacts.writeJson).mock.lastCall?.[1]).toMatchObject({
+      mode: 'bundle',
+      target: 'live',
+      bundle: { filename: 'custom.mcpb', sha256: bundle.sha256, entryPoint: bundle.launch.entry },
+      scenarios: [{ id: 'bundle-discovery-probe', status: 'passed', toolCount: 1 }],
+    });
+    expect(bundle.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('fails bundle mode when extraction fails without falling back to a packed or source entry', async () => {
+    vi.stubEnv('MAINWP_URL', 'https://dashboard.example.com');
+    vi.stubEnv('MAINWP_USER', 'test-user');
+    vi.stubEnv('MAINWP_APP_PASSWORD', 'test-password');
+    vi.mocked(createArtifacts).mockResolvedValue(stubArtifacts());
+    vi.mocked(extractBundle).mockRejectedValue(new Error('bundle extraction failed'));
+    await expect(runAcceptance(['--mode', 'bundle'])).rejects.toThrow('bundle extraction failed');
+    expect(launchServer).not.toHaveBeenCalled();
+    expect(packAndInstall).not.toHaveBeenCalled();
+  });
+
   it('resets the fixture before each scenario', async () => {
     const artifacts = stubArtifacts();
     vi.mocked(createArtifacts).mockResolvedValue(artifacts);

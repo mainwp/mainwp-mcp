@@ -1,0 +1,60 @@
+{
+  "manifest_version": "0.4",
+  "name": "mainwp-mcp",
+  "display_name": "MainWP",
+  "version": "1.4.0",
+  "description": "Manage WordPress sites through your MainWP Dashboard, with confirmation before destructive changes.",
+  "author": {
+    "name": "MainWP",
+    "url": "https://mainwp.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mainwp/mainwp-mcp"
+  },
+  "documentation": "https://docs.mainwp.com/mcp-server",
+  "support": "https://github.com/mainwp/mainwp-mcp/issues",
+  "icon": "docs/images/mainwp-mcp-icon-512.png",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "MAINWP_URL": "${user_config.dashboard_url}",
+        "MAINWP_USER": "${user_config.username}",
+        "MAINWP_APP_PASSWORD": "${user_config.app_password}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "license": "GPL-3.0",
+  "compatibility": {
+    "runtimes": {
+      "node": ">=20.19.0"
+    }
+  },
+  "user_config": {
+    "dashboard_url": {
+      "type": "string",
+      "title": "Dashboard URL",
+      "description": "The HTTPS URL of your MainWP Dashboard, including its path if installed in a subdirectory.",
+      "required": true
+    },
+    "username": {
+      "type": "string",
+      "title": "WordPress username",
+      "description": "The WordPress username associated with the Application Password on your Dashboard.",
+      "required": true
+    },
+    "app_password": {
+      "type": "string",
+      "title": "WordPress Application Password",
+      "description": "An Application Password created for this connection in your Dashboard's WordPress user profile.",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}

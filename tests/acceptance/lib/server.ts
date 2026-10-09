@@ -47,6 +47,8 @@ class RecordingTransport implements Transport {
 export interface ServerLaunchOptions {
   scenario: string;
   entry: string;
+  command?: string;
+  args?: string[];
   env: Record<string, string>;
   artifacts: Artifacts;
   runner: CommandRunner;
@@ -94,9 +96,11 @@ export async function launchServer(options: ServerLaunchOptions): Promise<Server
 
   const commandStarted = performance.now();
   let stderr = '';
+  const command = options.command ?? process.execPath;
+  const args = options.args ?? [options.entry];
   const inner = new StdioClientTransport({
-    command: process.execPath,
-    args: [options.entry],
+    command,
+    args,
     cwd,
     env: isolatedEnvironment(home, options.env),
     stderr: 'pipe',
@@ -134,7 +138,7 @@ export async function launchServer(options: ServerLaunchOptions): Promise<Server
     } finally {
       options.artifacts.flushServerStderr(options.scenario);
       options.runner.record({
-        argv: [process.execPath, options.entry],
+        argv: [command, ...args],
         cwd,
         exitCode: 1,
         durationMs: Math.round(performance.now() - commandStarted),
@@ -162,7 +166,7 @@ export async function launchServer(options: ServerLaunchOptions): Promise<Server
         } finally {
           options.artifacts.flushServerStderr(options.scenario);
           options.runner.record({
-            argv: [process.execPath, options.entry],
+            argv: [command, ...args],
             cwd,
             exitCode: closeFailed ? 1 : 0,
             durationMs: Math.round(performance.now() - commandStarted),

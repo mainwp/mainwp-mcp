@@ -247,6 +247,11 @@ function hostOf(url: string): string {
   }
 }
 
+// A Claude Desktop extension has no client config file to edit: Desktop holds
+// the values and passes them to this server as environment variables.
+const DESKTOP_EXTENSION_FIX =
+  'In the Claude Desktop extension, change the values under Settings > Extensions > MainWP > Configure, then turn the extension off and on.';
+
 function manualSetupBlock(): string {
   return `Option 1 (recommended): add the credentials yourself. The password never passes through this chat. Put these in the "env" block of this server's entry in your MCP client config, then restart the client:
 
@@ -292,7 +297,7 @@ function degradedGuidance(reason: string): string {
 
 The credentials are still loaded. Ask me to check again once the Dashboard is reachable and I will retry with them; call ${SETUP_STATUS_TOOL} to run that retry.
 
-If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client.`;
+If the credentials themselves are wrong, fix them where they are configured (the "env" block of this server's entry in your MCP client config, or ~/.config/mainwp-mcp/settings.json) and restart the client. ${DESKTOP_EXTENSION_FIX}`;
 }
 
 // When reason already names the overridden keys, the generic precedence
@@ -303,7 +308,7 @@ function rejectedGuidance(reason: string, overrideNamed: boolean): string {
     : ' A value there wins over ~/.config/mainwp-mcp/settings.json, so correcting only the file has no effect.';
   return `The MainWP MCP server has credentials, but the Dashboard rejected them: ${reason}
 
-Fix the value where the Sources list says it comes from, then restart the client. "The environment" means the "env" block of this server's entry in your MCP client config.${precedence}`;
+Fix the value where the Sources list says it comes from, then restart the client. "The environment" means the "env" block of this server's entry in your MCP client config.${precedence} ${DESKTOP_EXTENSION_FIX}`;
 }
 
 // The startup stderr line naming the override never reaches an MCP client,
@@ -655,7 +660,7 @@ async function handleConfigure(
     return refusal(
       policy,
       'ALREADY_CONFIGURED',
-      `This server already has MainWP credentials loaded, so setup will not replace them from chat. ${next} To change the credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client.`
+      `This server already has MainWP credentials loaded, so setup will not replace them from chat. ${next} To change the credentials, edit ${trustedSettingsPath()} (or the "env" block of this server's entry in your MCP client config) and restart the client. ${DESKTOP_EXTENSION_FIX}`
     );
   }
 

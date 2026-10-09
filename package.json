@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:mcpb": "npm run check-version && npm run build && node --import tsx scripts/build-mcpb.ts",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
@@ -74,6 +75,7 @@
     "undici": "^7.30.0"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.0",

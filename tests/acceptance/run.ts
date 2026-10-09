@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createArtifacts, type Artifacts } from './lib/artifacts.js';
 import { CommandRunner } from './lib/commands.js';
+import { extractBundle, type ExtractedBundle } from './lib/bundle.js';
 import {
   FIXTURE_APP_PASSWORD,
   FIXTURE_USERNAME,
@@ -37,6 +38,7 @@ interface CliOptions {
   writes: boolean;
   list: boolean;
   keepConsumer: boolean;
+  bundle?: string;
 }
 
 interface RunResults {
@@ -47,6 +49,7 @@ interface RunResults {
   endedAt: string;
   scenarios: ScenarioResult[];
   totals: Record<'passed' | 'failed' | 'skipped' | 'unverified', number>;
+  bundle?: { filename: string; sha256: string; entryPoint: string };
 }
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -55,12 +58,13 @@ function usage(): string {
   return `Usage: npx tsx tests/acceptance/run.ts [options]
 
 Options:
-  --mode packed|source    Server package mode (default: packed)
+  --mode packed|source|bundle  Server package mode (default: packed)
+  --bundle <path>         Bundle archive (default: test-results/mcpb/mainwp-mcp.mcpb)
   --target live|fixture  Dashboard target (default: live)
   --scenario <id>        Run one scenario; repeat for multiple scenarios
   --writes               Enable host-guarded state-changing scenarios
   --list                 List scenarios and exit
-  --keep-consumer        Preserve the temporary packed consumer project
+  --keep-consumer        Preserve the temporary consumer project or extracted bundle
   --help                 Show this help
 `;
 }
@@ -79,13 +83,19 @@ export function parseArgs(args: string[]): CliOptions {
     writes: false,
     list: false,
     keepConsumer: false,
+    bundle: path.join(REPO_ROOT, 'test-results/mcpb/mainwp-mcp.mcpb'),
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--mode') {
       const value = requiredValue(args, index, arg);
-      if (value !== 'packed' && value !== 'source') throw new Error(`Invalid --mode: ${value}`);
+      if (value !== 'packed' && value !== 'source' && value !== 'bundle') {
+        throw new Error(`Invalid --mode: ${value}`);
+      }
       options.mode = value;
+      index += 1;
+    } else if (arg === '--bundle') {
+      options.bundle = path.resolve(requiredValue(args, index, arg));
       index += 1;
     } else if (arg === '--target') {
       const value = requiredValue(args, index, arg);
@@ -107,6 +117,9 @@ export function parseArgs(args: string[]): CliOptions {
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+  if (args.includes('--bundle') && options.mode !== 'bundle') {
+    throw new Error('--bundle requires --mode bundle');
   }
   return options;
 }
@@ -175,7 +188,8 @@ export async function runScenario(
   packageVersion: string,
   packedPackage: PackedPackage | null,
   artifacts: Artifacts,
-  runner: CommandRunner
+  runner: CommandRunner,
+  bundle: ExtractedBundle | null = null
 ): Promise<ScenarioResult> {
   const started = performance.now();
   const base = {
@@ -235,13 +249,31 @@ export async function runScenario(
   }
 
   const launch = precondition.launch ?? {};
+  if (bundle && launch.omitCredentialEnv) {
+    return {
+      ...base,
+      status: 'skipped',
+      durationMs: 0,
+      assertions: [],
+      reason: 'This scenario omits credentials supplied by the bundle manifest.',
+    };
+  }
   const env = launch.omitCredentialEnv ? {} : baseServerEnv(options.target, credentials);
+  if (options.mode === 'bundle') {
+    if (!bundle) throw new Error('Bundle mode requires an extracted bundle');
+    // Discovery must prove the manifest's credential mapping, without an env fallback.
+    delete env.MAINWP_URL;
+    delete env.MAINWP_USER;
+    delete env.MAINWP_APP_PASSWORD;
+    Object.assign(env, bundle.launch.env);
+  }
   Object.assign(env, launch.env ?? {});
   const assertions = new AssertionRecorder();
   let connection;
   let scenarioContext: ScenarioContext | undefined;
   let scenarioError: string | undefined;
   const relaunched: RelaunchedServer[] = [];
+  let toolCount: number | undefined;
   try {
     const launchOptions = {
       scenario: definition.id,
@@ -250,8 +282,12 @@ export async function runScenario(
       artifacts,
       runner,
       settings: launch.settings,
+      ...(bundle ? { command: bundle.launch.command, args: bundle.launch.args } : {}),
     };
     connection = await launchServer(launchOptions);
+    if (bundle) {
+      toolCount = (await connection.client.listTools()).tools.length;
+    }
     const launchedHome = connection.home;
     scenarioContext = {
       client: connection.client,
@@ -329,6 +365,7 @@ export async function runScenario(
     status: scenarioError || failedAssertions.length > 0 ? 'failed' : 'passed',
     durationMs: Math.round(performance.now() - started),
     assertions: assertions.results,
+    ...(toolCount !== undefined ? { toolCount } : {}),
     ...(scenarioError ? { error: scenarioError } : {}),
     ...(failedAssertions.length > 0
       ? { reason: `${failedAssertions.length} assertion(s) failed.` }
@@ -381,6 +418,7 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
       scenarios: options.scenarioIds,
       writes: options.writes,
       keepConsumer: options.keepConsumer,
+      ...(options.mode === 'bundle' ? { bundle: options.bundle } : {}),
     });
     verifier = new IndependentVerifier(
       resolvedCredentials,
@@ -393,13 +431,27 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
     throw error;
   }
   let packedPackage: PackedPackage | null = null;
+  let bundle: ExtractedBundle | null = null;
   let runResults: RunResults | undefined;
 
   try {
     if (options.mode === 'packed') {
       packedPackage = await packAndInstall(REPO_ROOT, runner, artifacts, options.keepConsumer);
+    } else if (options.mode === 'bundle') {
+      bundle = await extractBundle(
+        options.bundle ?? path.join(REPO_ROOT, 'test-results/mcpb/mainwp-mcp.mcpb'),
+        resolvedCredentials,
+        runner,
+        options.keepConsumer
+      );
     }
-    const entry = packedPackage?.installedEntry ?? path.join(REPO_ROOT, 'dist', 'index.js');
+    const bundleResult = bundle
+      ? { filename: bundle.filename, sha256: bundle.sha256, entryPoint: bundle.launch.entry }
+      : undefined;
+    const entry =
+      bundle?.launch.entry ??
+      packedPackage?.installedEntry ??
+      path.join(REPO_ROOT, 'dist', 'index.js');
     const results: ScenarioResult[] = [];
     for (const scenario of selected) {
       // Scenarios that change fixture state must not decide what later ones see.
@@ -413,11 +465,18 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
         artifacts.manifest.packageVersion,
         packedPackage,
         artifacts,
-        runner
+        runner,
+        bundle
       );
       results.push(result);
       process.stdout.write(`${result.status.toUpperCase()} ${result.id}\n`);
-      artifacts.writeJson('results.json', { scenarios: results, totals: summarize(results) });
+      artifacts.writeJson('results.json', {
+        mode: options.mode,
+        target: options.target,
+        bundle: bundleResult,
+        scenarios: results,
+        totals: summarize(results),
+      });
     }
     runResults = {
       runId: artifacts.runId,
@@ -427,6 +486,7 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
       endedAt: new Date().toISOString(),
       scenarios: results,
       totals: summarize(results),
+      ...(bundleResult ? { bundle: bundleResult } : {}),
     };
     artifacts.writeJson('results.json', runResults);
     artifacts.write('summary.md', summaryMarkdown(runResults));
@@ -443,11 +503,15 @@ export async function runAcceptance(args = process.argv.slice(2)): Promise<numbe
     await verifier.close();
     await fixture?.close();
     packedPackage?.cleanup();
+    bundle?.cleanup();
   }
 
   process.stdout.write(`Artifacts: ${artifacts.runDir}\n`);
   if (options.keepConsumer && packedPackage) {
     process.stdout.write(`Consumer preserved: ${packedPackage.consumerDir}\n`);
+  }
+  if (options.keepConsumer && bundle) {
+    process.stdout.write(`Bundle extracted: ${bundle.extractDir}\n`);
   }
   return acceptanceExitCode(runResults.totals);
 }

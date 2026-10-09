@@ -11,6 +11,29 @@ import { describeCredentialRejection, isCredentialRejection } from './credential
 import { getErrorMessage, getHttpStatus } from './errors.js';
 import type { Logger } from './logging.js';
 
+// undici reports every network or TLS failure as "fetch failed" and keeps the
+// reason in error.cause.code. Only a constant-shaped code is repeated; the
+// cause message can carry hosts and addresses.
+const CAUSE_CODE_RE = /^[A-Z0-9_]{2,64}$/;
+const CERT_CAUSE_RE = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY/;
+
+const CERT_HINT =
+  'The Dashboard\'s certificate is not trusted by the Node.js that runs this server. See "SSL certificate problem" at https://docs.mainwp.com/mcp-server/troubleshooting.';
+
+function causeNote(error: unknown): string {
+  let code: unknown;
+  // A getter or proxy on the cause can throw; its message must not replace the
+  // original failure, so an uninspectable cause adds nothing.
+  try {
+    const cause = error instanceof Error ? error.cause : undefined;
+    code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
+  } catch {
+    return '';
+  }
+  if (typeof code !== 'string' || !CAUSE_CODE_RE.test(code)) return '';
+  return CERT_CAUSE_RE.test(code) ? ` (${code}). ${CERT_HINT}` : ` (${code})`;
+}
+
 /**
  * The Dashboard answered and refused these credentials. Retrying with the same
  * values cannot help, unlike a network, TLS, or server failure.
@@ -111,6 +134,8 @@ export async function validateCredentials(config: Config, logger: Logger): Promi
     }
 
     // Other errors - re-throw with prefix
-    throw new Error(`Credential validation failed: ${message}`, { cause: error });
+    throw new Error(`Credential validation failed: ${message}${causeNote(error)}`, {
+      cause: error,
+    });
   }
 }
