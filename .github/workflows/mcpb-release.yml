@@ -51,9 +51,14 @@ jobs:
         with:
           subject-path: test-results/mcpb/mainwp-mcp.mcpb
 
-      - name: Attach bundle and checksum to this release
+      # Separate uploads, checksum first: gh uploads several files concurrently without rollback, so a
+      # failure there could publish the bundle without its checksum. If the bundle upload fails here,
+      # delete the checksum asset before re-running; the re-run builds a bundle with a different hash.
+      - name: Attach checksum and bundle to this release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" test-results/mcpb/mainwp-mcp.mcpb test-results/mcpb/mainwp-mcp.mcpb.sha256
+        run: |
+          gh release upload "$RELEASE_TAG" test-results/mcpb/mainwp-mcp.mcpb.sha256
+          gh release upload "$RELEASE_TAG" test-results/mcpb/mainwp-mcp.mcpb
