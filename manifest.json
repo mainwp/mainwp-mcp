@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "mainwp-mcp",
   "display_name": "MainWP",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Manage WordPress sites through your MainWP Dashboard, with confirmation before destructive changes.",
   "author": {
     "name": "MainWP",

@@ -72,7 +72,7 @@ import {
 
 // Server metadata
 const SERVER_NAME = 'mainwp-mcp';
-const SERVER_VERSION = '1.4.0';
+const SERVER_VERSION = '1.5.0';
 
 // Sent at initialize, so it reaches clients that never load this repo's commands or skill. Dashboard 6.3 gates update
 // abilities behind a preview and confirmation; earlier Dashboards mark them non-destructive and have no gate.
