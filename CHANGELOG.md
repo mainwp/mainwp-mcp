@@ -3,6 +3,38 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-10-10
+
+### Added
+
+An MCP Bundle for Claude Desktop. Each GitHub release now includes `mainwp-mcp.mcpb`. Open it in Claude Desktop, or
+install it from Settings > Extensions > Advanced settings > Install extension, and you no longer need to edit
+`claude_desktop_config.json`. Claude Desktop asks for the Dashboard URL, WordPress username and Application Password,
+and stores the password in the operating system's keychain. The newest bundle is always at
+<https://github.com/mainwp/mainwp-mcp/releases/latest/download/mainwp-mcp.mcpb>. The bundle is not code-signed. On
+Claude Desktop's built-in Node.js it cannot reach a Dashboard whose certificate is not publicly trusted, such as a
+local development site.
+
+Each release also includes `mainwp-mcp.mcpb.sha256`, and the bundle has a build provenance attestation. To check a
+download, run these commands in the folder that holds both files:
+
+```sh
+sha256sum -c mainwp-mcp.mcpb.sha256       # macOS without sha256sum: shasum -a 256 -c mainwp-mcp.mcpb.sha256
+gh attestation verify mainwp-mcp.mcpb --repo mainwp/mainwp-mcp
+```
+
+### Changed
+
+When the server cannot connect to the Dashboard, the startup error now includes the underlying network or TLS error
+code, for example `fetch failed (DEPTH_ZERO_SELF_SIGNED_CERT)`. A certificate error code also adds a link to the "SSL
+certificate problem" troubleshooting section.
+
+Setup guidance for rejected or unreachable credentials, and the `mainwp_configure` refusal when credentials are
+already loaded, now explain how to change the values in the Claude Desktop extension: under Settings > Extensions >
+MainWP > Configure, then turn the extension off and on.
+
+Updated the runtime dependency `undici` to 7.30.0.
+
 ## [1.4.0] - 2026-10-06
 
 ### Added
