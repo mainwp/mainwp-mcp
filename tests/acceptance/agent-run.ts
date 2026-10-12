@@ -74,6 +74,7 @@ import { packAndInstall, type PackedPackage } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
 import { launchServer } from './lib/server.js';
 import { IndependentVerifier, type VerifiedSite } from './lib/verify.js';
+import { ROLLBACK_CONTACT_PHRASE } from './fixture-knowledge.js';
 import { verifierListAll } from './scenarios/ability-reads.js';
 import type { Artifacts } from './lib/artifacts.js';
 
@@ -183,6 +184,7 @@ type AgentResultStatus = 'passed' | 'failed' | 'unverified' | 'skill-not-loaded'
 interface AgentResult {
   id: string;
   status: AgentResultStatus;
+  serverEnv?: Record<string, string>;
   arm?: AgentArmId;
   iteration?: number;
   model?: string;
@@ -484,6 +486,68 @@ export const agentScenarios: AgentScenario[] = [
       evaluation.stateChange = { pass: guard.ok, evidence: guard.evidence };
       evaluation.faithfulFinalAnswer = {
         pass: answerCarriesKnowledgeNote(collected.finalText),
+        evidence: collected.finalText,
+      };
+      return { evaluation };
+    },
+  },
+  {
+    id: 'agent-named-record-inherits-required',
+    target: 'fixture',
+    serverEnv: { MAINWP_SAFE_MODE: 'true' },
+    task: truth =>
+      `Read knowledge record 1 (Bakery maintenance) and use it to draft a maintenance note for site ${truth.siteId} (${truth.siteUrl}). Do not change the site.`,
+    expectedTools: ['get_knowledge_record_v1', 'get_site_knowledge_v1'],
+    groundTruth: async verifier => {
+      const site = (await verifier.listSites()).find(site => site.id === 1);
+      if (!site) throw new Error('Knowledge scenario needs fixture site 1');
+      return {
+        siteId: site.id,
+        siteUrl: site.url,
+        siteName: site.name,
+        fixtureSnapshot: await fixtureStateSnapshot(verifier),
+      };
+    },
+    stateGuard: readOnlyStateGuard,
+    evaluate: async (truth, collected, verifier) => {
+      const scenario = agentScenarios.find(
+        scenario => scenario.id === 'agent-named-record-inherits-required'
+      )!;
+      const evaluation = evaluate(scenario, truth, collected);
+      const requiredReads = [
+        { family: 'get_knowledge_record_v1', key: 'record_id', value: 1 },
+        { family: 'get_site_knowledge_v1', key: 'site_id', value: 1 },
+        { family: 'get_knowledge_record_v1', key: 'record_id', value: 7 },
+      ];
+      const uses = requiredReads.map(read =>
+        collected.toolUses.filter(tool => toolFamilyMatches(tool.name, [read.family]))
+      );
+      const targetedUses = uses.map((tools, index) =>
+        tools.filter(tool => {
+          const input = asRecord(tool.input);
+          return (
+            input !== undefined &&
+            Number(input[requiredReads[index].key]) === requiredReads[index].value
+          );
+        })
+      );
+      const results = targetedUses.map(tools => toolResultsForUses(tools, collected.toolResults));
+      evaluation.rightCapability = {
+        pass: uses.every(tools => tools.length > 0),
+        evidence: collected.toolUses.map(tool => tool.name),
+      };
+      evaluation.rightArguments = {
+        pass: targetedUses.every(tools => tools.length > 0),
+        evidence: targetedUses,
+      };
+      evaluation.correctMcpResult = {
+        pass: results.every(results => results.some(result => !result.isError)),
+        evidence: results,
+      };
+      const guard = await readOnlyStateGuard(truth, verifier);
+      evaluation.stateChange = { pass: guard.ok, evidence: guard.evidence };
+      evaluation.faithfulFinalAnswer = {
+        pass: collected.finalText.toLowerCase().includes(ROLLBACK_CONTACT_PHRASE),
         evidence: collected.finalText,
       };
       return { evaluation };
@@ -1920,6 +1984,15 @@ export const agentScenarios: AgentScenario[] = [
   },
 ];
 
+for (const id of ['agent-site-knowledge-first', 'agent-named-record-inherits-required']) {
+  const scenario = agentScenarios.find(scenario => scenario.id === id)!;
+  agentScenarios.push({
+    ...scenario,
+    id: `${id}-compact`,
+    serverEnv: { ...scenario.serverEnv, MAINWP_SCHEMA_VERBOSITY: 'compact' },
+  });
+}
+
 export interface AgentCliOptions {
   scenarioIds: string[];
   list: boolean;
@@ -2874,6 +2947,7 @@ async function main(): Promise<void> {
         } catch (error) {
           results.push({
             id: scenario.id,
+            serverEnv: scenario.serverEnv,
             ...armFields,
             status: 'unverified',
             toolUses: [],
@@ -2903,6 +2977,7 @@ async function main(): Promise<void> {
           if (!precheck.ok) {
             results.push({
               id: scenario.id,
+              serverEnv: scenario.serverEnv,
               ...armFields,
               status: 'unverified',
               toolUses: [],
@@ -2945,6 +3020,7 @@ async function main(): Promise<void> {
         if (!claudeAvailable) {
           results.push({
             id: scenario.id,
+            serverEnv: scenario.serverEnv,
             ...armFields,
             status: 'unverified',
             toolUses: [],
@@ -3052,6 +3128,7 @@ async function main(): Promise<void> {
             : undefined;
           results.push({
             id: scenario.id,
+            serverEnv: scenario.serverEnv,
             ...armFields,
             status: classifyAgentResult({
               skillMissing: commandMissing,
@@ -3114,6 +3191,7 @@ async function main(): Promise<void> {
               .join(' ') || undefined;
         results.push({
           id: scenario.id,
+          serverEnv: scenario.serverEnv,
           ...armFields,
           status,
           model: collected.model,

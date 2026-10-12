@@ -400,11 +400,15 @@ describe('MCP request handlers', () => {
       "Show a tool's preview as that plan; previews shown together can be approved in one explicit reply.",
       'do not gate updates',
       'Never remove an update from the ignore list',
+      'Before advising on, planning or drafting for a site, call get_site_knowledge_v1 if available',
+      'even after reading one record or a list: neither shows which client and agency records apply',
+      "For client-wide work call get_client_knowledge_v1 if available, then each site's summary",
+      'If you cannot, say client and agency knowledge was not loaded',
     ]) {
       expect(SERVER_INSTRUCTIONS).toContain(rule);
     }
-    // Some clients truncate long server instructions.
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(900);
+    // Claude Code 2.1.295 truncates each server's instructions at 2048 characters by default, 4096 from 2.1.296; CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH overrides it.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(2048);
     await client.close();
     await server.close();
   });

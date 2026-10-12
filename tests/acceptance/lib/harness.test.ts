@@ -57,6 +57,7 @@ import {
   startFixtureDashboard,
 } from '../fixture-dashboard.js';
 import { makeDashboard63Abilities } from '../../helpers/update-gate.js';
+import { MAINTENANCE_NOTE_RULE } from '../fixture-knowledge.js';
 import {
   agentLaunchCwd,
   agentPrompt,
@@ -6229,4 +6230,136 @@ describe('site-knowledge-first grading', () => {
     const { evaluation } = await grade([knowledgeCall], faithful, dashboard(2));
     expect(evaluation.stateChange.pass).toBe(false);
   });
+});
+
+describe('named-record inheritance grading', () => {
+  const scenario = agentScenarios.find(
+    candidate => candidate.id === 'agent-named-record-inherits-required'
+  );
+  const verifier = {
+    listSites: async () => [{ id: 1, url: 'https://alpine.example', name: 'Alpine Bakery' }],
+    execute: async (ability: string) =>
+      ability === 'mainwp/list-knowledge-v1'
+        ? {
+            items: [
+              { id: 1, revision: 1 },
+              { id: 7, revision: 1 },
+            ],
+            total: 2,
+          }
+        : { id: 1 },
+  } as unknown as IndependentVerifier;
+  const recordCall: RecordedAgentToolUse = {
+    id: 'record',
+    name: 'mcp__mainwp__get_knowledge_record_v1',
+    input: { record_id: 1 },
+  };
+  const summaryCall: RecordedAgentToolUse = {
+    id: 'summary',
+    name: 'mcp__mainwp__get_site_knowledge_v1',
+    input: { site_id: 1 },
+  };
+  const skillCall: RecordedAgentToolUse = {
+    id: 'skill',
+    name: 'mcp__mainwp__get_knowledge_record_v1',
+    input: { record_id: 7 },
+  };
+  const successfulResults: RecordedAgentToolResult[] = [
+    { toolUseId: 'record', content: JSON.stringify({ id: 1 }) },
+    { toolUseId: 'summary', content: JSON.stringify({ site_id: 1 }) },
+    { toolUseId: 'skill', content: JSON.stringify({ id: 7, body: MAINTENANCE_NOTE_RULE }) },
+  ];
+  const grade = async (
+    toolUses: RecordedAgentToolUse[],
+    toolResults: RecordedAgentToolResult[] = successfulResults,
+    finalText: string = MAINTENANCE_NOTE_RULE
+  ) => {
+    if (!scenario?.evaluate) throw new Error('The named-record scenario lost its evaluator');
+    const truth = {
+      siteId: 1,
+      siteUrl: 'https://alpine.example',
+      siteName: 'Alpine Bakery',
+      fixtureSnapshot: await fixtureStateSnapshot(verifier),
+    };
+    return scenario.evaluate(
+      truth,
+      {
+        toolUses,
+        toolResults,
+        finalText,
+        totalToolUses: toolUses.length,
+        turns: toolUses.length,
+        resourceReads: [],
+        skill: { discovered: false, invoked: false },
+        assistantText: true,
+      },
+      verifier
+    );
+  };
+
+  // Excerpt of a compliant answer from a live run that does not quote the rule sentence.
+  const paraphrasedNote =
+    '**Rollback contact:** [NAME / PHONE / EMAIL — required, please fill in]\n' +
+    '- **Rollback contact** is required by record 7, "Maintenance note requirements".';
+
+  it.each([
+    ['a paraphrase naming the rollback contact', paraphrasedNote, true],
+    [
+      'a note without the rollback contact',
+      '**Timing:** All changes happen after the bakery closes.\n' +
+        '**Client notice:** Tell the bakery owner before the maintenance window starts.',
+      false,
+    ],
+  ])('grades a final answer with %s', async (_label, finalText, pass) => {
+    const { evaluation } = await grade(
+      [recordCall, summaryCall, skillCall],
+      successfulResults,
+      finalText
+    );
+    expect(evaluation.faithfulFinalAnswer.pass).toBe(pass);
+  });
+
+  it.each([
+    [recordCall, summaryCall, skillCall],
+    [skillCall, recordCall, summaryCall],
+  ])('passes successful correlated reads in any order: %j', async (...calls) => {
+    const { evaluation } = await grade(calls);
+    expect(evaluation.rightCapability.pass).toBe(true);
+    expect(evaluation.rightArguments.pass).toBe(true);
+    expect(evaluation.correctMcpResult.pass).toBe(true);
+  });
+
+  it.each([
+    ['record 1 missing', [summaryCall, skillCall], true],
+    ['summary missing', [recordCall, skillCall], false],
+    ['records missing', [summaryCall], false],
+    ['wrong site_id', [recordCall, { ...summaryCall, input: { site_id: 2 } }, skillCall], true],
+    ['record 7 missing', [recordCall, summaryCall], true],
+  ])('fails when %s', async (_label, calls, capability) => {
+    const { evaluation } = await grade(calls);
+    expect(evaluation.rightCapability.pass).toBe(capability);
+    expect(evaluation.rightArguments.pass).toBe(false);
+    expect(evaluation.correctMcpResult.pass).toBe(false);
+  });
+
+  it.each(['record', 'summary', 'skill'])('fails an isError result for %s', async toolUseId => {
+    const { evaluation } = await grade(
+      [recordCall, summaryCall, skillCall],
+      successfulResults.map(result => ({ ...result, isError: result.toolUseId === toolUseId }))
+    );
+    expect(evaluation.correctMcpResult.pass).toBe(false);
+  });
+
+  it.each(['record', 'summary', 'skill'])(
+    'fails a result uncorrelated with its own %s call',
+    async toolUseId => {
+      const { evaluation } = await grade(
+        [recordCall, summaryCall, skillCall],
+        successfulResults.map(result =>
+          result.toolUseId === toolUseId ? { ...result, toolUseId: 'unrelated' } : result
+        )
+      );
+      expect(evaluation.correctMcpResult.pass).toBe(false);
+    }
+  );
 });
