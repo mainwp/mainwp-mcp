@@ -403,7 +403,7 @@ describe('MCP request handlers', () => {
       'Before advising on, planning or drafting for a site, call get_site_knowledge_v1 if available',
       'even after reading one record or a list: neither shows which client and agency records apply',
       "For client-wide work call get_client_knowledge_v1 if available, then each site's summary",
-      'If you cannot, say client and agency knowledge was not loaded',
+      'If you cannot, say which knowledge was not loaded',
     ]) {
       expect(SERVER_INSTRUCTIONS).toContain(rule);
     }
