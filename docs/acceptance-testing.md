@@ -115,7 +115,7 @@ For example, `list-sites-cross-check` compares both the site count and the compl
 
 Agent verdicts are also deterministic. Generic scenarios must use an expected `mcp__mainwp__*` tool family, supply structured arguments, receive a non-error tool result, and produce a factual final answer that matches an independent verifier read. Custom evaluators enforce the expected error, multi-tool chain, or full-site coverage when the generic path is insufficient. The model does not grade itself.
 
-The agent layer contains seventeen scenarios:
+The agent layer contains twenty scenarios:
 
 - `agent-count-sites`: count all connected sites.
 - `agent-updates`: identify sites with pending plugin updates.
@@ -130,12 +130,14 @@ The agent layer contains seventeen scenarios:
 - `agent-session-cap`: with a tiny `MAINWP_MAX_SESSION_DATA`, hit the cap, narrow the request, and describe the failure as a size limit rather than an outage.
 - `agent-confirm-without-preview`: complete the confirmation flow for a destructive fixture ability that declares `confirm` but no `dry_run`, and state that no preview was available.
 - `agent-site-knowledge-first`: asked what is known about a site before touching it, load that site's knowledge summary before any other site tool and report the recorded note. Runs against the fixture with safe mode on.
+- `agent-named-record-inherits-required`: asked to draft a maintenance note from one named knowledge record, load the site's knowledge summary as well, open the Required agency skill it lists, and state that skill's rule in the answer. Runs against the fixture with safe mode on.
+- `agent-site-knowledge-first-compact` and `agent-named-record-inherits-required-compact`: the two knowledge scenarios again with `MAINWP_SCHEMA_VERBOSITY=compact`, which shortens tool descriptions to about 60 characters and drops the knowledge description sentence.
 - `agent-stale-token`: begin a deletion for one site and stop at the confirmation step, replay that confirmation token against a different site, and report the resulting `PREVIEW_REQUIRED` rejection. The task pins the confirmation flow explicitly, because a dry-run preview mints no token and leaves the replay ungradable.
 - `command-network-summary`: type `/mainwp:network-summary` against the live Dashboard and report the site count, the connection states, and the pending-update total.
 - `command-site-report`: type `/mainwp:site-report <hostname>` against the fixture and report only that site.
 - `command-troubleshoot-missing-arg`: type `/mainwp:troubleshoot-site` with no argument against the fixture, list the managed sites, and ask which one.
 
-An agent scenario may define `serverEnv` for literal, non-secret server flags that apply only to that scenario. These values are merged into the temporary `claude-mcp.json` server environment. `agent-safemode-refusal` uses this field to set `MAINWP_SAFE_MODE=true`.
+An agent scenario may define `serverEnv` for literal, non-secret server flags that apply only to that scenario. These values are merged into the temporary `claude-mcp.json` server environment. `agent-safemode-refusal` uses this field to set `MAINWP_SAFE_MODE=true`. Each result in the run record carries the scenario's `serverEnv`.
 
 Fixture-target agent scenarios get `MAINWP_ALLOWED_TOOLS` injected with the abilities the fixture dashboard actually routes. The fixture advertises the full eval catalog for parity with a real Dashboard, but only a subset has executors; without the allow list a model can pick an advertised tool and receive `rest_no_route` mid-scenario. A scenario that sets `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS` itself keeps its own policy and gets no injection. The `advertised-routes-resolve` fixture scenario holds the routed list to reality.
 
