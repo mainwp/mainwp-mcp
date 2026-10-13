@@ -43,7 +43,7 @@ It runs on your own computer, next to your AI tool. Nothing new is installed on 
 
 ## You stay in control
 
-- **Changes wait for your approval.** By default, deleting a site, plugin, or theme shows you a preview first and runs only after you say yes. On Dashboard 6.3 and later, updates work the same way. Update confirmation is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/).
+- **Changes wait for your approval.** By default, deleting a site, plugin, or theme shows you a preview first and runs only after you say yes. On Dashboard 6.3 and later, updates work the same way.
 - **Safe mode** blocks those destructive operations outright, with no approval prompt, while you get comfortable.
 - **You choose the tools.** Allow and block lists decide which tools your AI can see at all.
 - **Your credentials stay with you.** The server signs in with a WordPress Application Password that you can revoke at any time, and it talks only to your Dashboard.
@@ -56,7 +56,7 @@ How it all works: [Safety & Permissions](https://docs.mainwp.com/mcp-server/safe
 - **Updates:** see pending core, plugin, theme, and translation updates across the network, and apply them
 - **Plugins and themes:** see what is installed, activate, deactivate, or delete
 - **Clients and tags:** manage client records, assign sites, and track costs
-- **Knowledge:** agency, client, and site notes, skills, and memories your AI reads before it works. Knowledge is coming in MainWP 6.3 but available now in the [Early Release program](https://mainwp.com/add-on/early-access/).
+- **Knowledge:** agency, client, and site notes, skills, and memories your AI reads before it works (Dashboard 6.3 and later)
 - **Guided workflows:** network summaries, site reports, security audits, and update plans
 
 Around 70 tools in all, depending on your Dashboard version. See [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
