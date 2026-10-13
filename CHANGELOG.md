@@ -3,6 +3,17 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1] - 2026-10-13
+
+### Changed
+
+The server instructions and the `mainwp-dashboard` skill now tell agents to load a site's knowledge summary
+(`get_site_knowledge_v1`, when the Dashboard offers it) before advising on, planning or drafting work for that site,
+even after reading one record the user named or a knowledge list. Neither shows which client and agency records apply
+to the site. For client-wide work, agents load the client's summary (`get_client_knowledge_v1`, when the Dashboard
+offers it) and then each site's summary. When a summary cannot be loaded, agents tell the user which knowledge was not
+loaded. The skill also says that showing one record the user asked for needs only that record.
+
 ## [1.5.0] - 2026-10-10
 
 ### Added
