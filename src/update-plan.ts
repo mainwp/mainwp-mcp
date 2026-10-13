@@ -1,7 +1,12 @@
 import { normalizeRemoteText } from './abilities.js';
 
 type UpdateType = 'core' | 'plugin' | 'theme' | 'translation';
-type SkipReason = 'ignored_site' | 'ignored_global' | 'ignored_site_flag';
+type SkipReason =
+  | 'ignored_site'
+  | 'ignored_global'
+  | 'ignored_site_flag'
+  | 'backup_missing'
+  | 'backup_pending_offsite';
 
 interface UpdateFlags {
   core: boolean;
@@ -157,6 +162,8 @@ function skippedItem(value: unknown): SkippedItem | undefined {
     case 'ignored_site':
     case 'ignored_global':
     case 'ignored_site_flag':
+    case 'backup_missing':
+    case 'backup_pending_offsite':
       return { ...item, reason };
     default:
       return undefined;
@@ -361,6 +368,10 @@ function skipPhrase(reason: SkipReason): string {
       return 'ignored globally';
     case 'ignored_site_flag':
       return 'site ignores all updates of that type';
+    case 'backup_missing':
+      return 'no recent backup';
+    case 'backup_pending_offsite':
+      return 'latest backup not in offsite storage yet';
   }
 }
 
