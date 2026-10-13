@@ -254,6 +254,31 @@ describe('update plan summaries', () => {
     ]);
   });
 
+  it('renders an ignore hold and a backup hold on the same site for requested items', () => {
+    const preview = backupGateEnvelope();
+    const site = preview.would_affect.sites[1];
+    preview.would_affect.sites = [site];
+    site.skipped = [
+      { ...site.skipped[0], requested: true, reason: 'ignored_site' },
+      {
+        type: 'plugin',
+        slug: 'akismet/akismet.php',
+        name: 'Akismet',
+        from: '5.3',
+        to: '5.4',
+        requested: true,
+        reason: 'backup_pending_offsite',
+      },
+    ];
+    preview.would_affect.summary.skipped_count = 2;
+    preview.would_affect.summary.backup_gate_blocked_sites = 1;
+    expect(summary(preview)).toEqual([
+      'Held back: Hello Dolly on Example Studio (ignored on this site)',
+      'Held back: Akismet on Example Studio (latest backup not in offsite storage yet)',
+      caveat,
+    ]);
+  });
+
   it('reconciles admitted items with ignored_site and backup holds on separate sites', () => {
     const preview = envelope();
     preview.would_affect.sites[0].skipped.splice(1, 1);
