@@ -2154,15 +2154,16 @@
     "description": "Disconnect multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": ["object", "null"],
+      "type": "object",
+      "required": ["site_ids_or_domains"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
-          "description": "Site IDs or domains. Empty array means all sites.",
+          "description": "Site IDs, domains, or unique site names. At least one site is required; an empty array is rejected.",
           "items": {
             "type": ["integer", "string"]
           },
-          "default": []
+          "minItems": 1
         }
       },
       "additionalProperties": false
@@ -2231,7 +2232,7 @@
         "readonly": false,
         "destructive": false,
         "idempotent": true,
-        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+        "instructions": "Pass site_ids_or_domains listing every site to disconnect. An empty array is rejected; this operation never expands to all sites. Operations with >200 sites are automatically queued for background processing."
       },
       "show_in_rest": true,
       "public": false
@@ -2332,15 +2333,16 @@
     "description": "Suspend multiple MainWP child sites. Operations with >200 sites are automatically queued.",
     "category": "mainwp-sites",
     "input_schema": {
-      "type": ["object", "null"],
+      "type": "object",
+      "required": ["site_ids_or_domains"],
       "properties": {
         "site_ids_or_domains": {
           "type": "array",
-          "description": "Site IDs or domains. Empty array means all sites.",
+          "description": "Site IDs, domains, or unique site names. At least one site is required; an empty array is rejected.",
           "items": {
             "type": ["integer", "string"]
           },
-          "default": []
+          "minItems": 1
         }
       },
       "additionalProperties": false
@@ -2409,7 +2411,7 @@
         "readonly": false,
         "destructive": false,
         "idempotent": true,
-        "instructions": "Pass site_ids_or_domains with specific IDs, or empty array for all applicable sites. Operations with >200 sites are automatically queued for background processing."
+        "instructions": "Pass site_ids_or_domains listing every site to suspend. An empty array is rejected; this operation never expands to all sites. Operations with >200 sites are automatically queued for background processing."
       },
       "show_in_rest": true,
       "public": false
