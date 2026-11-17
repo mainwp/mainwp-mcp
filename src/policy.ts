@@ -47,7 +47,8 @@ export type PolicyDecision =
 export function decidePolicy(
   config: PolicyGateConfig,
   toolName: string,
-  isDestructive = false
+  isDestructive = false,
+  abilityName?: string
 ): PolicyDecision {
   if (config.blockedTools?.includes(toolName)) return 'blocked-by-policy';
   if (config.allowedTools?.length && !config.allowedTools.includes(toolName)) {
@@ -55,7 +56,8 @@ export function decidePolicy(
   }
   if (isDestructive) {
     if (config.safeMode) return 'safe-mode-blocked';
-    if (config.requireUserConfirmation) return 'needs-confirmation';
+    if (config.requireUserConfirmation && !isDashboardGatedAbility(abilityName))
+      return 'needs-confirmation';
   }
   return 'allow';
 }
@@ -75,6 +77,16 @@ export function decidePolicy(
  */
 export function classifyDestructive(annotations: { destructive?: boolean } | undefined): boolean {
   return annotations?.destructive !== false;
+}
+
+export function isDashboardGatedAbility(abilityName: string | undefined): boolean {
+  return [
+    'mainwp/run-site-php-v1',
+    'mainwp/run-site-wpcli-v1',
+    'mainwp/write-site-files-v1',
+    'mainwp/run-site-ability-write-v1',
+    'mainwp/run-site-ability-destructive-v1',
+  ].includes(abilityName ?? '');
 }
 
 /** Return whether a tool is permitted by the configured allow/block lists. */

@@ -13,6 +13,7 @@ import {
   fetchAbilities,
   executeAbility,
   getAbilityByToolName,
+  configIdentityHash,
 } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
@@ -22,6 +23,7 @@ import {
   McpErrorFactory,
   formatErrorResponse,
   getErrorMessage,
+  UpstreamHttpError,
 } from './errors.js';
 import { Logger, withRequestId, withSecretRedaction } from './logging.js';
 import {
@@ -38,9 +40,11 @@ import {
   isToolAllowed,
   pinnedConfirmationParams,
   resolveConfirmationParam,
+  isDashboardGatedAbility,
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
+import { describeAgentResponse } from './agent-bridge.js';
 
 /**
  * Options for tool execution
@@ -247,7 +251,7 @@ export async function executeTool(
     // Policy gate, execution stage: with destructiveness resolved, the gate
     // decides safe-mode blocking and confirmation routing. The executor only
     // acts on the decision; precedence lives in decidePolicy.
-    const decision = decidePolicy(config, toolName, isDestructive);
+    const decision = decidePolicy(config, toolName, isDestructive, abilityName);
 
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)
@@ -341,15 +345,25 @@ export async function executeTool(
     }
 
     // Format the result as JSON for the AI to parse
-    const formattedResult = formatJson(config, result);
+    const formattedResult = formatJson(
+      config,
+      isDashboardGatedAbility(abilityName)
+        ? describeAgentResponse(
+            result,
+            config,
+            configIdentityHash(config),
+            effectiveArgs.task_grant
+          )
+        : result
+    );
 
     let responseBytes: number;
     try {
       responseBytes = trackSessionData(formattedResult, config, callLogger, 'for tool response');
     } catch (error) {
       if (
-        decision === 'needs-confirmation' &&
-        args.user_confirmed === true &&
+        ((decision === 'needs-confirmation' && args.user_confirmed === true) ||
+          isDashboardGatedAbility(abilityName)) &&
         error instanceof McpError &&
         error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED
       ) {
@@ -383,6 +397,17 @@ export async function executeTool(
       ],
     };
   } catch (error) {
+    if (
+      isDashboardGatedAbility(abilityName) &&
+      error instanceof UpstreamHttpError &&
+      error.approval
+    ) {
+      describeAgentResponse(
+        { code: error.upstreamCode, data: error.approval },
+        config,
+        configIdentityHash(config)
+      );
+    }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
       const code = (error as { code: string }).code;

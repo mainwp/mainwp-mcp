@@ -218,6 +218,30 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
   for (const [key, value] of Object.entries(args)) {
     const valueSchema = propertySchema(schema, key);
 
+    if (
+      valueSchema &&
+      Object.hasOwn(valueSchema, 'x-mainwp-passthrough') &&
+      valueSchema['x-mainwp-passthrough'] === true
+    ) {
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(value, (_name, child: unknown) => {
+          if (typeof child === 'number' && !Number.isFinite(child)) {
+            throw McpErrorFactory.invalidParams(`Parameter "${key}" must contain finite numbers`);
+          }
+          return child;
+        });
+      } catch {
+        throw McpErrorFactory.invalidParams(`Parameter "${key}" must be JSON serializable`);
+      }
+      if (serialized === undefined || Buffer.byteLength(serialized, 'utf8') > 1024 * 1024) {
+        throw McpErrorFactory.invalidParams(
+          `Parameter "${key}" exceeds the passthrough limit (1 MiB)`
+        );
+      }
+      continue;
+    }
+
     if (typeof value === 'string') {
       checkStringLength(value, valueSchema, key, `Parameter "${key}"`);
     } else if (typeof value === 'number') {
