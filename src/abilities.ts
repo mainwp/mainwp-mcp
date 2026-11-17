@@ -1284,7 +1284,7 @@ export async function executeAbility(
             acceptedBody = true;
             if (
               typeof code === 'string' &&
-              code.startsWith('agent_') &&
+              (code.startsWith('agent_') || code === 'outcome_unknown') &&
               isDashboardGatedAbility(abilityName)
             ) {
               approval = agentOutcomeFields(

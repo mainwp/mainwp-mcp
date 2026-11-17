@@ -144,6 +144,103 @@ describe('bounded read proxy transport', () => {
 });
 
 describe('Dashboard agent approvals', () => {
+  it.each(mutations)(
+    'preserves timeout recovery references for %s without retrying',
+    async name => {
+      const data = {
+        operation_id: 'operation-original',
+        request_id: '6daf7ae3-6203-4a49-b541-59fe424c0123',
+        internal_field: 'not forwarded',
+      };
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: 'outcome_unknown',
+            message: 'The outcome is unknown. Resume this operation to read the receipt.',
+            data,
+          }),
+          { status: 409 }
+        )
+      );
+      const result = await executeTool(
+        makeBaseConfig({ retryEnabled: true }),
+        `${name.replaceAll('-', '_')}_v1`,
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error.data).toEqual({
+        upstream_code: 'outcome_unknown',
+        operation_id: data.operation_id,
+        request_id: data.request_id,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }
+  );
+  it.each([200, 500])('retains the existing %i outcome handling', async status => {
+    const data = { operation_id: 'operation-original', request_id: 'request-original' };
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: 'outcome_unknown', message: 'The outcome is unknown.', data }),
+        { status }
+      )
+    );
+    const result = await executeTool(
+      makeBaseConfig({ retryEnabled: true }),
+      'run_site_php_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    );
+    if (status === 200)
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        code: 'outcome_unknown',
+        message: 'The outcome is unknown.',
+        data,
+      });
+    else {
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).not.toHaveProperty('data');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it('does not expose outcome references from an unrelated tool', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ ...abilities[3], name: 'mainwp/update-site-v1' }]))
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: 'outcome_unknown',
+          message: 'The outcome is unknown.',
+          data: { operation_id: 'private-operation', request_id: 'private-request' },
+        }),
+        { status: 409 }
+      )
+    );
+    const result = await executeTool(
+      makeBaseConfig(),
+      'update_site_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    );
+    expect(JSON.parse(result.content[0].text).error.data).toEqual({
+      upstream_code: 'outcome_unknown',
+    });
+  });
+  it('lists destructive tools in Safe Mode and refuses their execution', async () => {
+    const config = makeBaseConfig({ safeMode: true });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([readProxy, ...abilities])));
+    const tools = await getTools(config);
+    expect(tools.map(tool => tool.name)).toEqual([
+      'run_site_ability_read_v1',
+      ...mutations.map(name => `${name.replaceAll('-', '_')}_v1`),
+    ]);
+    const result = await executeTool(config, 'run_site_php_v1', { site_id: 1 }, makeMockLogger());
+    expect(result.isError).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it.each([200, 409])('refreshes grant metadata on a %i backup response', async status => {
     const config = makeBaseConfig();
     const expires = new Date(Date.now() + 60000).toISOString();

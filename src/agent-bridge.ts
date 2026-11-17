@@ -89,6 +89,12 @@ export function agentOutcomeFields(
   if (code === 'agent_approval_required') return approvalFields(value, config);
   if (!record(value)) return {};
   const fields: Record<string, unknown> = {};
+  if (code === 'outcome_unknown') {
+    for (const key of ['operation_id', 'request_id']) {
+      if (Object.hasOwn(value, key)) fields[key] = value[key];
+    }
+    return fields;
+  }
   for (const key of [
     'operation_id',
     'poll',
