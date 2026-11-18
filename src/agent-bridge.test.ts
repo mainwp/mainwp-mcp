@@ -8,7 +8,7 @@ import {
   executeAbility,
   type Ability,
 } from './abilities.js';
-import { clearAgentGrants, getAgentGrant } from './agent-bridge.js';
+import { agentOutcomeFields, clearAgentGrants, getAgentGrant } from './agent-bridge.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 const mutations = [
@@ -144,6 +144,15 @@ describe('bounded read proxy transport', () => {
 });
 
 describe('Dashboard agent approvals', () => {
+  it('rejects non-object outcome metadata before copying recovery references', () => {
+    const array = Object.assign([], {
+      operation_id: 'invalid-operation',
+      request_id: 'invalid-request',
+    });
+    for (const metadata of [undefined, null, false, 0, '', 'invalid', array]) {
+      expect(agentOutcomeFields(metadata, 'outcome_unknown', makeBaseConfig())).toEqual({});
+    }
+  });
   it.each([
     { site: 1, expected: [1] },
     { site: '01', expected: [1] },
