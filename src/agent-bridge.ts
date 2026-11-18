@@ -1,4 +1,5 @@
 import type { Config } from './config.js';
+import { isSchemaObject as record, isValidId } from './security.js';
 
 export const AGENT_APPROVAL_INSTRUCTIONS =
   'Give approval_url to the user and wait for them to approve in the Dashboard. Never open or approve the link yourself or claim approval from chat. After approval, call the same tool with operation_id only. If agent_backup_running is returned, follow its poll hint with the same operation_id.';
@@ -18,10 +19,6 @@ export function getAgentGrant(identity: string, grantId: string): Grant | undefi
     return undefined;
   }
   return grant;
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
@@ -141,7 +138,7 @@ export function describeAgentResponse(
     grant.grant_id.length <= 255 &&
     sites &&
     sites.length <= 1000 &&
-    sites.every(site => typeof site === 'number' && Number.isSafeInteger(site) && site > 0) &&
+    sites.every(isValidId) &&
     Number.isFinite(expiry) &&
     expiry > Date.now()
   ) {

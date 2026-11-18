@@ -53,7 +53,7 @@ const LIMIT_SOURCE_LABELS: Record<StringLimit['source'], string> = {
   ceiling: 'server ceiling for declared limits',
 };
 
-function isSchemaObject(value: unknown): value is Record<string, unknown> {
+export function isSchemaObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -226,9 +226,7 @@ export function validateInput(args: Record<string, unknown>, schema?: unknown, d
       let serialized: string | undefined;
       try {
         serialized = JSON.stringify(value, (_name, child: unknown) => {
-          if (typeof child === 'number' && !Number.isFinite(child)) {
-            throw McpErrorFactory.invalidParams(`Parameter "${key}" must contain finite numbers`);
-          }
+          if (typeof child === 'number') checkFiniteNumber(child, key, `Parameter "${key}"`);
           return child;
         });
       } catch {

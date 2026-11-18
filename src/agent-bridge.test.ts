@@ -144,6 +144,29 @@ describe('bounded read proxy transport', () => {
 });
 
 describe('Dashboard agent approvals', () => {
+  it.each([
+    { site: 1, expected: [1] },
+    { site: '01', expected: [1] },
+    { site: 0, expected: undefined },
+    { site: 'bad', expected: undefined },
+    { site: 1.5, expected: undefined },
+    { site: Number.MAX_SAFE_INTEGER + 1, expected: undefined },
+  ])('keeps grant site validation for $site', async ({ site, expected }) => {
+    const config = makeBaseConfig();
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          task_grant: {
+            grant_id: 'g',
+            site_ids: [site],
+            expires_at: new Date(Date.now() + 60000).toISOString(),
+          },
+        })
+      )
+    );
+    await executeTool(config, 'run_site_php_v1', { site_id: 1 }, makeMockLogger());
+    expect(getAgentGrant(configIdentityHash(config), 'g')?.site_ids).toEqual(expected);
+  });
   it.each(mutations)(
     'preserves timeout recovery references for %s without retrying',
     async name => {
@@ -612,6 +635,11 @@ describe('Dashboard agent approvals', () => {
 
 describe('proxy input passthrough', () => {
   const schema = { properties: { input: { type: 'object', 'x-mainwp-passthrough': true } } };
+  it.each([NaN, Infinity, -Infinity])('keeps the serialization error for %s', value => {
+    expect(() => validateInput({ input: { nested: [value] } }, schema)).toThrow(
+      'Parameter "input" must be JSON serializable'
+    );
+  });
   it('accepts plugin IDs, deep objects and long strings within the byte cap', () => {
     const input = {
       element_id: 'a1b2c3',
