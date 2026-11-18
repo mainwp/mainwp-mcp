@@ -47,9 +47,28 @@ const readProxy: Ability = {
   input_schema: {
     type: 'object',
     properties: {
-      site_id: { type: 'integer' },
+      site_id: { type: 'integer', minimum: 1 },
       input: { type: 'object', 'x-mainwp-passthrough': true },
+      site_id_or_domain: { type: 'integer', minimum: 1 },
+      site_ids_or_domains: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 1,
+        items: { type: 'integer', minimum: 1 },
+      },
+      operation_id: { type: 'string', maxLength: 36 },
+      task_grant: { type: 'string', maxLength: 36 },
+      dry_run: { type: 'boolean' },
+      confirm: { type: 'boolean' },
+      name: { type: 'string', maxLength: 191, pattern: '^[a-z0-9-]+/[a-z0-9-]+$' },
     },
+    additionalProperties: false,
+    anyOf: [
+      { required: ['operation_id'] },
+      { required: ['site_id'] },
+      { required: ['site_id_or_domain'] },
+      { required: ['site_ids_or_domains'] },
+    ],
   },
   meta: { annotations: { readonly: true, destructive: false, idempotent: true } },
 };
@@ -64,9 +83,29 @@ beforeEach(() => {
 });
 
 describe('bounded read proxy transport', () => {
+  it('rejects a string element ID when discovery omits the passthrough marker', async () => {
+    const discovered = structuredClone(readProxy);
+    const properties = discovered.input_schema!.properties as Record<string, unknown>;
+    properties.input = { type: 'object' };
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(Response.json([discovered]));
+    const result = await executeTool(
+      makeBaseConfig(),
+      'run_site_ability_read_v1',
+      { site_id: 1, name: 'example/read-element', input: { element_id: 'a1b2c3' } },
+      makeMockLogger()
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toMatchObject({
+      code: -32602,
+      data: { parameter: 'element_id' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('preserves a typical plugin read with nested JSON, booleans and null', async () => {
     const args = {
       site_id: 1,
+      name: 'example/read-element',
       input: { element_id: 'a1b2c3', include: [1, 2], filters: { drafts: false, cursor: null } },
     };
     fetchMock.mockReset();
