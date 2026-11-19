@@ -35,10 +35,71 @@ const movedError = {
   data: { status: 400, replacement: 'mainwp/unignore-site-updates-v1' },
 };
 
+const backupSkips = [
+  { reason: 'backup_missing', phrase: 'no recent backup' },
+  { reason: 'backup_pending_offsite', phrase: 'latest backup not in offsite storage yet' },
+] as const;
+
+function makeBackupGatePreview(ability: string, reason: (typeof backupSkips)[number]['reason']) {
+  const type = ability.includes('-core-')
+    ? 'core'
+    : ability.includes('-themes-')
+      ? 'theme'
+      : ability.includes('-translations-')
+        ? 'translation'
+        : 'plugin';
+  const item = {
+    core: { slug: 'wordpress', name: 'WordPress', from: '6.8.1', to: '6.9' },
+    plugin: { slug: 'hello-dolly/hello.php', name: 'Hello Dolly', from: '1.6', to: '1.7.2' },
+    theme: { slug: 'twentytwentyfive', name: 'Twenty Twenty-Five', from: '1.1', to: '1.2' },
+    translation: { slug: 'default', name: 'WordPress core', from: '', to: '6.8.1' },
+  }[type];
+  return {
+    dry_run: true,
+    would_affect: {
+      sites: [
+        {
+          site_id: 3,
+          site_url: 'https://example-shop.test/',
+          site_name: 'Example Shop',
+          backup_gate: {
+            applies: true,
+            verdict: reason === 'backup_missing' ? 'missing' : 'pending_offsite',
+            overridden: false,
+          },
+          items: [],
+          skipped: [{ type, ...item, requested: false, reason }],
+        },
+      ],
+      by_item: [],
+      summary: {
+        site_count: 0,
+        item_count: 0,
+        skipped_count: 1,
+        all_sites: false,
+        queued: false,
+        truncated: false,
+        has_core: false,
+        has_major: false,
+        has_unknown_version: false,
+        backup_gate_blocked_sites: 1,
+        backup_gate_overridden_sites: 0,
+        requested_not_found: [],
+      },
+    },
+    count: 0,
+    warnings: [
+      '1 site has no backup that meets the pre-update backup setting and will be skipped. Pass ignore_backup_gate: true to update it anyway.',
+    ],
+    errors: [],
+  };
+}
+
 describe('Dashboard 6.3 update gates through MCP handlers', () => {
   let catalog = makeDashboard63Abilities();
   let hostilePreview: unknown;
   let queued: boolean;
+  let backupGateBlocked: boolean;
   const connections: Array<{ client: Client; server: Server }> = [];
   const requests: Array<{
     ability: string;
@@ -61,6 +122,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     catalog = makeDashboard63Abilities();
     hostilePreview = undefined;
     queued = false;
+    backupGateBlocked = false;
     requests.length = 0;
     mockFetch.mockImplementation(async (rawUrl: string, options: RequestInit) => {
       const url = new URL(rawUrl);
@@ -135,6 +197,15 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       }
       const preview = makeUpdatePreview(sites);
       if (input.dry_run) return json(hostilePreview ?? preview);
+      if (backupGateBlocked)
+        return json(
+          {
+            code: 'mainwp_backup_gate_blocked',
+            message: 'The latest backup is not in offsite storage yet.',
+            data: { status: 409, site_id: 3, verdict: 'pending_offsite' },
+          },
+          409
+        );
       if (queued)
         return json({
           dry_run: false,
@@ -220,6 +291,26 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     }
   );
 
+  it.each(UPDATE_ABILITIES.flatMap(ability => backupSkips.map(skip => ({ ability, ...skip }))))(
+    'confirm preview flow for $ability renders $reason in plan_summary',
+    async ({ ability, reason, phrase }) => {
+      const upstream = makeBackupGatePreview(ability, reason);
+      hostilePreview = upstream;
+      const client = await connect({ requireUserConfirmation: true });
+      const batch = ability === UPDATE_ABILITIES[0] || ability === UPDATE_ABILITIES[1];
+      const args = batch ? { site_ids_or_domains: [3] } : { site_id_or_domain: 3 };
+      const data = await preview(client, toolName(ability), args);
+      expect(data.status).toBe('CONFIRMATION_REQUIRED');
+      expect(data.preview).toEqual(upstream);
+      const item = upstream.would_affect.sites[0].skipped[0];
+      const name = item.type === 'translation' ? `${item.name} translation` : item.name;
+      expect(data.plan_summary).toContain(`Held back: ${name} on Example Shop (${phrase})`);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ ability, method: 'POST' });
+      expect(requests[0].input).toEqual({ ...args, dry_run: true });
+    }
+  );
+
   it('summarizes the multi-site preview, empty translation version and held-only site exactly', async () => {
     const data = await preview(await connect());
     expect(data.preview).toEqual(makeUpdatePreview());
@@ -297,6 +388,47 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(response.result.isError).toBe(true);
     expect(response.data.error).toBe('PREVIEW_REQUIRED');
     expect(requests).toHaveLength(1);
+  });
+
+  it('pins ignore_backup_gate to the confirm preview and rejects adding the override without executing', async () => {
+    const ability = 'mainwp/update-site-plugins-v1';
+    const entry = catalog.find(candidate => candidate.name === ability)!;
+    (entry.input_schema!.properties as Record<string, unknown>).ignore_backup_gate = {
+      type: 'boolean',
+      default: false,
+    };
+    hostilePreview = makeBackupGatePreview(ability, 'backup_pending_offsite');
+    const client = await connect();
+    const args = { site_id_or_domain: 3 };
+    const data = await preview(client, toolName(ability), args);
+    const response = await call(
+      client,
+      toolName(ability),
+      confirmation({ ...args, ignore_backup_gate: true }, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].input).toEqual({ ...args, dry_run: true });
+  });
+
+  it('pins single-site confirmed HTTP 409 backup-gate refusal to isError and upstream_code', async () => {
+    const ability = 'mainwp/update-site-plugins-v1';
+    hostilePreview = makeBackupGatePreview(ability, 'backup_pending_offsite');
+    const client = await connect();
+    const args = { site_id_or_domain: 3 };
+    const data = await preview(client, toolName(ability), args);
+    backupGateBlocked = true;
+    const response = await call(
+      client,
+      toolName(ability),
+      confirmation(args, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error.code).toBe(-32000);
+    expect(response.data.error.data?.upstream_code).toBe('mainwp_backup_gate_blocked');
+    expect(requests).toHaveLength(2);
+    expect(requests[1].input).toEqual({ ...args, confirm: true });
   });
 
   it('rejects a token expired past five minutes with PREVIEW_EXPIRED', async () => {

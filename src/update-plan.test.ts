@@ -119,6 +119,71 @@ function envelope() {
 
 type Preview = ReturnType<typeof envelope>;
 
+function backupGateEnvelope() {
+  const sites = [
+    {
+      site_id: 3,
+      site_url: 'https://example-shop.test/',
+      site_name: 'Example Shop',
+      backup_gate: { applies: true, verdict: 'missing', overridden: false },
+      items: [],
+      skipped: [
+        {
+          type: 'plugin',
+          slug: 'hello-dolly/hello.php',
+          name: 'Hello Dolly',
+          from: '1.6',
+          to: '1.7.2',
+          requested: false,
+          reason: 'backup_missing',
+        },
+      ],
+    },
+    {
+      site_id: 4,
+      site_url: 'https://example-studio.test/',
+      site_name: 'Example Studio',
+      backup_gate: { applies: true, verdict: 'pending_offsite', overridden: false },
+      items: [],
+      skipped: [
+        {
+          type: 'plugin',
+          slug: 'hello-dolly/hello.php',
+          name: 'Hello Dolly',
+          from: '1.6',
+          to: '1.7.2',
+          requested: false,
+          reason: 'backup_pending_offsite',
+        },
+      ],
+    },
+  ];
+  return {
+    dry_run: true,
+    would_affect: {
+      sites,
+      by_item: [],
+      summary: {
+        site_count: 0,
+        item_count: 0,
+        skipped_count: 2,
+        all_sites: false,
+        queued: false,
+        truncated: false,
+        has_core: false,
+        has_major: false,
+        has_unknown_version: false,
+        backup_gate_blocked_sites: 2,
+        backup_gate_overridden_sites: 0,
+        requested_not_found: [],
+      },
+    },
+    count: 0,
+    warnings: [],
+    errors: [],
+  };
+}
+
 function summary(preview: unknown, previewTokenSent = false): string[] {
   const plan = validateUpdatePlan(preview);
   expect(plan).toBeDefined();
@@ -159,6 +224,88 @@ describe('update plan summaries', () => {
       caveat,
     ]);
     expect(JSON.stringify(preview)).toBe(original);
+  });
+
+  it('renders backup_missing and backup_pending_offsite holds on separate sites', () => {
+    expect(summary(backupGateEnvelope())).toEqual([
+      'Held back: Hello Dolly on Example Shop (no recent backup)',
+      'Held back: Hello Dolly on Example Studio (latest backup not in offsite storage yet)',
+      caveat,
+    ]);
+  });
+
+  it('accepts a backup-gate-only plan with zero admitted counts and all skipped rows counted', () => {
+    const preview = backupGateEnvelope();
+    expect(preview.count).toBe(0);
+    expect(preview.would_affect.by_item).toEqual([]);
+    expect(preview.would_affect.summary).toMatchObject({
+      site_count: 0,
+      item_count: 0,
+      skipped_count: preview.would_affect.sites.flatMap(site => site.skipped).length,
+      has_core: false,
+    });
+    const plan = validateUpdatePlan(preview);
+    expect(plan).toBeDefined();
+    expect(plan).toMatchObject({ siteCount: 0, byItem: [], hasCore: false });
+    expect(buildUpdatePlanSummary(plan!, false)).toEqual([
+      'Held back: Hello Dolly on Example Shop (no recent backup)',
+      'Held back: Hello Dolly on Example Studio (latest backup not in offsite storage yet)',
+      caveat,
+    ]);
+  });
+
+  it('renders an ignore hold and a backup hold on the same site for requested items', () => {
+    const preview = backupGateEnvelope();
+    const site = preview.would_affect.sites[1];
+    preview.would_affect.sites = [site];
+    site.skipped = [
+      { ...site.skipped[0], requested: true, reason: 'ignored_site' },
+      {
+        type: 'plugin',
+        slug: 'akismet/akismet.php',
+        name: 'Akismet',
+        from: '5.3',
+        to: '5.4',
+        requested: true,
+        reason: 'backup_pending_offsite',
+      },
+    ];
+    preview.would_affect.summary.skipped_count = 2;
+    preview.would_affect.summary.backup_gate_blocked_sites = 1;
+    expect(summary(preview)).toEqual([
+      'Held back: Hello Dolly on Example Studio (ignored on this site)',
+      'Held back: Akismet on Example Studio (latest backup not in offsite storage yet)',
+      caveat,
+    ]);
+  });
+
+  it('reconciles admitted items with ignored_site and backup holds on separate sites', () => {
+    const preview = envelope();
+    preview.would_affect.sites[0].skipped.splice(1, 1);
+    preview.would_affect.sites[2].skipped[0].reason = 'backup_missing';
+    preview.would_affect.summary.skipped_count = 2;
+    expect(preview.count).toBe(7);
+    expect(preview.would_affect.summary).toMatchObject({
+      site_count: 2,
+      item_count: 7,
+      skipped_count: 2,
+    });
+    expect(summary(preview)).toEqual([
+      'aichild4: WordPress 6.7 → 6.8',
+      'aichild4: Akismet 5.3 → 5.4',
+      'aichild4: WooCommerce 9.9 → 10.0',
+      'aichild4: Twenty Twenty-Five 1.1 → 1.2',
+      'aichild7: WordPress 6.7 → 6.8',
+      'aichild7: WordPress core translation → 6.8.1',
+      'aichild7: Unknown version → 1.0',
+      'Held back: Yoast SEO on aichild4 (ignored on this site)',
+      'Held back: Contact Form 7 on aichild9 (no recent backup)',
+      'Major version: WordPress 6.7 → 6.8',
+      'Major version: WooCommerce 9.9 → 10.0',
+      'Major version: WordPress 6.7 → 6.8',
+      'Core update on 2 sites',
+      caveat,
+    ]);
   });
 
   it('uses the singular for a core update on one site', () => {
