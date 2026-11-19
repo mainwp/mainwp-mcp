@@ -371,7 +371,8 @@ describe('Dashboard agent approvals', () => {
       { site_id: 1 },
       makeMockLogger()
     );
-    expect(JSON.parse(result.content[0].text).error.data.operation_id).toBe('op-a');
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[1].text).operation_id).toBe('op-a');
   });
   it('withholds a foreign link in a nested successful error envelope', async () => {
     fetchMock.mockResolvedValueOnce(
@@ -468,13 +469,15 @@ describe('Dashboard agent approvals', () => {
       { site_id: 1 },
       makeMockLogger()
     );
-    const body = JSON.parse(result.content[0].text);
-    expect(body.error.data).toMatchObject({
-      upstream_code: 'agent_approval_required',
+    expect(result.isError).toBeUndefined();
+    const body = JSON.parse(result.content[1].text);
+    expect(body).toMatchObject({
+      status: 'approval_required',
+      code: 'agent_approval_required',
       operation_id: 'op-a',
       approval_url: 'https://test.local/wp-admin/approve',
     });
-    expect(body.error.data.instructions).toMatch(/user.*wait/i);
+    expect(body.instructions).toMatch(/user.*wait/i);
   });
   it('does not expose an approval URL pointing outside the Dashboard', async () => {
     fetchMock.mockResolvedValueOnce(
@@ -493,7 +496,8 @@ describe('Dashboard agent approvals', () => {
       { site_id: 1 },
       makeMockLogger()
     );
-    expect(JSON.parse(result.content[0].text).error.data).not.toHaveProperty('approval_url');
+    expect(result.content[0].text).not.toContain('elsewhere.local');
+    expect(JSON.parse(result.content[1].text)).not.toHaveProperty('approval_url');
   });
   it('runs an Allow response without asking locally', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));

@@ -44,7 +44,7 @@ import {
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
-import { describeAgentResponse } from './agent-bridge.js';
+import { approvalPendingText, describeAgentResponse } from './agent-bridge.js';
 
 /**
  * Options for tool execution
@@ -407,6 +407,31 @@ export async function executeTool(
         config,
         configIdentityHash(config)
       );
+      // A write waiting on Dashboard approval has not failed. Nothing ran, and
+      // the client gets the link to approve and the operation ID to resume.
+      if (error.upstreamCode === 'agent_approval_required') {
+        const pending = [
+          approvalPendingText(error.approval),
+          formatJson(config, {
+            status: 'approval_required',
+            code: error.upstreamCode,
+            ...error.approval,
+          }),
+        ];
+        const responseBytes = trackSessionData(
+          pending.join('\n'),
+          config,
+          callLogger,
+          'for approval response'
+        );
+        callLogger.info('Tool execution awaiting Dashboard approval', {
+          toolName,
+          durationMs: Math.round(performance.now() - startTime),
+          responseBytes,
+          sessionDataBytes: getSessionDataUsage(config).used,
+        });
+        return { content: pending.map(text => ({ type: 'text', text })) };
+      }
     }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {

@@ -78,6 +78,21 @@ export function approvalFields(value: unknown, config: Config): Record<string, u
   }
 }
 
+/**
+ * Text for a write that is waiting on Dashboard approval: a status line, the
+ * link and operation ID when the Dashboard sent valid ones, then the
+ * instructions from approvalFields.
+ */
+export function approvalPendingText(approval: Record<string, unknown>): string {
+  const lines = ['Waiting for your approval in MainWP'];
+  if (typeof approval.approval_url === 'string')
+    lines.push(`Approval link: ${approval.approval_url}`);
+  if (typeof approval.operation_id === 'string')
+    lines.push(`Operation ID: ${approval.operation_id}`);
+  if (typeof approval.instructions === 'string') lines.push(approval.instructions);
+  return lines.join('\n');
+}
+
 export function agentOutcomeFields(
   value: unknown,
   code: string,
