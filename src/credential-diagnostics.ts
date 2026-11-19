@@ -27,6 +27,9 @@ const MAX_USERNAME_SHOWN = 100;
 const BEARER_HINT =
   'Bearer tokens (MAINWP_TOKEN) are not accepted by the Abilities API, which authenticates through native WordPress. Use MAINWP_USER + MAINWP_APP_PASSWORD (a WordPress Application Password / Basic auth) instead.';
 
+const NO_REASON_HINT =
+  'Your host may strip the Authorization header, or a security or 2FA plugin may block application passwords. See https://docs.mainwp.com/mcp-server/remote/troubleshooting#authorization-header';
+
 const SOURCE_LABELS: Record<ConnectionSource, string> = {
   env: 'the environment',
   'settings.json': 'settings.json',
@@ -106,5 +109,7 @@ export function describeCredentialRejection(config: Config, code?: unknown): str
   if (safeCode === 'incorrect_password') {
     return `The Dashboard rejected the application password for user ${user}${codeNote}.${sources} Use an Application Password from that user's profile page, not the account's login password.`;
   }
-  return `The Dashboard rejected the credentials for user ${user}${codeNote}.${sources} WordPress expects the login name or email address, not the display name, and an Application Password, not the account's login password.`;
+  // WordPress names a bad user or password. Without a reason it may never have seen them.
+  const unexplained = codeNote ? '' : ` ${NO_REASON_HINT}`;
+  return `The Dashboard rejected the credentials for user ${user}${codeNote}.${sources} WordPress expects the login name or email address, not the display name, and an Application Password, not the account's login password.${unexplained}`;
 }

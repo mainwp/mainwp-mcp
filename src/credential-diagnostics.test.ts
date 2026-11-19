@@ -88,6 +88,24 @@ describe('credential rejection diagnostics', () => {
     expect(message).toContain(JSON.stringify(username));
   });
 
+  const noReasonHint =
+    'Your host may strip the Authorization header, or a security or 2FA plugin may block application passwords. See https://docs.mainwp.com/mcp-server/remote/troubleshooting#authorization-header';
+
+  it.each([undefined, 'rest_not_logged_in', 'rest_forbidden'])(
+    'points a rejection without a WordPress reason (%s) at the host or a plugin',
+    code => {
+      const message = sanitizeError(describeCredentialRejection(makeBaseConfig(), code));
+      expect(message).toContain(noReasonHint);
+    }
+  );
+
+  it.each(['incorrect_password', 'invalid_username', 'application_passwords_disabled'])(
+    'leaves out the host hint when WordPress gives the reason %s',
+    code => {
+      expect(describeCredentialRejection(makeBaseConfig(), code)).not.toContain(noReasonHint);
+    }
+  );
+
   it('does not repeat an unknown rejection code that could be a short password', () => {
     expect(isCredentialRejection(401, 'abc123')).toBe(true);
     expect(describeCredentialRejection(makeBaseConfig(), 'abc123')).not.toContain('abc123');
