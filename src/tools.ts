@@ -24,6 +24,7 @@ import {
   formatErrorResponse,
   getErrorMessage,
   UpstreamHttpError,
+  getHttpStatus,
 } from './errors.js';
 import { Logger, withRequestId, withSecretRedaction } from './logging.js';
 import {
@@ -437,9 +438,14 @@ export async function executeTool(
         return { content: pending.map(text => ({ type: 'text', text })) };
       }
     }
-    // The Dashboard and the site keep working after this server stops waiting,
-    // so the write may have gone through. A failure would invite a blind retry.
-    if (isDashboardGatedAbility(abilityName) && error instanceof RequestTimeoutError) {
+    // The Dashboard and the site keep working after this server, or a proxy in
+    // front of the Dashboard (504, or 524 from Cloudflare), stops waiting, so the
+    // write may have gone through. A failure would invite a blind retry.
+    const gatewayTimeout = [504, 524].includes(getHttpStatus(error) ?? 0);
+    if (
+      isDashboardGatedAbility(abilityName) &&
+      (error instanceof RequestTimeoutError || gatewayTimeout)
+    ) {
       callLogger.warning('Tool execution timed out; the outcome is unknown', {
         toolName,
         durationMs: Math.round(performance.now() - startTime),

@@ -452,6 +452,32 @@ describe('Dashboard agent approvals', () => {
     );
     expect(JSON.parse(result.content[0].text)).not.toHaveProperty('approval_url');
   });
+  it('keeps the request ID in a pending approval result', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: 'agent_approval_required',
+          message: 'Approval required',
+          data: {
+            operation_id: 'op-a',
+            request_id: 'req-a',
+            approval_url: 'https://test.local/wp-admin/approve',
+          },
+        }),
+        { status: 403 }
+      )
+    );
+    const result = await executeTool(
+      makeBaseConfig(),
+      'run_site_php_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    );
+    expect(JSON.parse(result.content[1].text)).toMatchObject({
+      operation_id: 'op-a',
+      request_id: 'req-a',
+    });
+  });
   it('preserves approval fields from a WordPress HTTP error', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
@@ -746,6 +772,37 @@ describe('write timeouts', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect((await pending).isError).toBeUndefined();
+  });
+
+  it.each([504, 524])(
+    'reports a write cut off by a gateway timeout (%i) as possibly still running',
+    async status => {
+      fetchMock.mockResolvedValueOnce(new Response('<html>Gateway Timeout</html>', { status }));
+      const result = await executeTool(
+        makeBaseConfig(),
+        'run_site_php_v1',
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toEqual([
+        {
+          type: 'text',
+          text: 'The change may still be running. Check the site before trying again.',
+        },
+      ]);
+    }
+  );
+
+  it('still reports a gateway timeout on a read tool as a failure', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('<html>Gateway Timeout</html>', { status: 504 }));
+    const result = await executeTool(
+      makeBaseConfig({ retryEnabled: false }),
+      'get_site_agent_status_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    );
+    expect(result.isError).toBe(true);
   });
 
   it('still reports a write rejected by the Dashboard as failed', async () => {

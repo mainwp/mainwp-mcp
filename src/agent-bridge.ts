@@ -32,6 +32,7 @@ export function approvalFields(value: unknown, config: Config): Record<string, u
   if (record(value)) {
     for (const key of [
       'operation_id',
+      'request_id',
       'poll',
       'expires_at',
       'preview',
