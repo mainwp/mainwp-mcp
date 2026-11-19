@@ -3968,6 +3968,40 @@ describe('no-op error handling for idempotent tools', () => {
     expect(parsed.error).toBeDefined();
   });
 
+  it('keeps the login troubleshooting link ahead of a long HTML 401 page', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => sampleAbilities,
+      headers: new Headers(),
+    });
+    const hostPage = `<!DOCTYPE html><html><head><title>401 Authorization Required</title></head><body><h1>Authorization Required</h1>${'<p>This server could not verify that you are authorized to access the document requested.</p>'.repeat(6)}<hr><address>Apache Server at dashboard.example.com Port 443</address></body></html>`;
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => hostPage,
+      headers: new Headers({ 'content-type': 'text/html' }),
+    });
+
+    // Without source labels the message leaves room for the start of the host page.
+    const result = await executeTool(
+      { ...baseConfig, connectionSources: {} },
+      'activate_site_plugins_v1',
+      { site_id: 1, plugins: ['hello-dolly'] },
+      mockLogger
+    );
+
+    const text = result.content[0].text;
+    const hint =
+      'Your host may strip the Authorization header, or a security or 2FA plugin may block application passwords. See https://docs.mainwp.com/mcp-server/remote/troubleshooting#authorization-header.';
+    expect(result.isError).toBe(true);
+    expect(text).toContain(hint);
+    expect(text).toContain('Response: ');
+    expect(text).toContain('401 Authorization Required');
+    expect(text.indexOf(hint)).toBeLessThan(text.indexOf('401 Authorization Required'));
+    expect(text).not.toContain('Apache Server at dashboard.example.com');
+  });
+
   it('should track session data bytes for no-op responses', async () => {
     resetSessionData();
 

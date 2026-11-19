@@ -88,6 +88,45 @@ describe('credential rejection diagnostics', () => {
     expect(message).toContain(JSON.stringify(username));
   });
 
+  const noReasonHint =
+    'Your host may strip the Authorization header, or a security or 2FA plugin may block application passwords. See https://docs.mainwp.com/mcp-server/remote/troubleshooting#authorization-header';
+
+  it.each([undefined, 'rest_not_logged_in', 'rest_forbidden'])(
+    'points a rejection without a WordPress reason (%s) at the host or a plugin',
+    code => {
+      const message = sanitizeError(describeCredentialRejection(makeBaseConfig(), code));
+      expect(message).toContain(noReasonHint);
+    }
+  );
+
+  it.each([
+    ['Authentication failed: ', 'admin'],
+    ['Authentication failed: ', 'john.smith@example.com'],
+    ['Error listing tools: ', 'a.very.long.login.name.for.an.agency@client-example.com'],
+    ['Ability execution failed: rest_forbidden - Sorry, you are not allowed to do that. ', 'admin'],
+  ])(
+    'keeps the whole link after the %s prefix and the 500-character cap (%s)',
+    (prefix, username) => {
+      const config = makeBaseConfig({
+        username,
+        connectionSources: {
+          MAINWP_URL: 'env',
+          MAINWP_USER: 'env',
+          MAINWP_APP_PASSWORD: 'settings.json',
+        },
+      });
+      const message = sanitizeError(`${prefix}${describeCredentialRejection(config, undefined)}`);
+      expect(message).toContain(noReasonHint);
+    }
+  );
+
+  it.each(['incorrect_password', 'invalid_username', 'application_passwords_disabled'])(
+    'leaves out the host hint when WordPress gives the reason %s',
+    code => {
+      expect(describeCredentialRejection(makeBaseConfig(), code)).not.toContain(noReasonHint);
+    }
+  );
+
   it('does not repeat an unknown rejection code that could be a short password', () => {
     expect(isCredentialRejection(401, 'abc123')).toBe(true);
     expect(describeCredentialRejection(makeBaseConfig(), 'abc123')).not.toContain('abc123');
