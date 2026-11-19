@@ -26,6 +26,9 @@ When the Dashboard rejects the credentials without naming a bad user or password
 strip the Authorization header or a security or two-factor plugin may block application passwords, with a link to the
 troubleshooting guide. The hint comes before any host response text, so it is never cut off.
 
+Update previews now list items the Dashboard's pre-update backup check holds back (no recent backup, or latest
+backup not yet in offsite storage) instead of dropping the plan summary.
+
 Locked dependencies are updated to their current patch releases.
 
 ## [1.5.1] - 2026-10-13
