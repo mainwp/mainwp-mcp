@@ -99,6 +99,27 @@ describe('credential rejection diagnostics', () => {
     }
   );
 
+  it.each([
+    ['Authentication failed: ', 'admin'],
+    ['Authentication failed: ', 'john.smith@example.com'],
+    ['Error listing tools: ', 'a.very.long.login.name.for.an.agency@client-example.com'],
+    ['Ability execution failed: rest_forbidden - Sorry, you are not allowed to do that. ', 'admin'],
+  ])(
+    'keeps the whole link after the %s prefix and the 500-character cap (%s)',
+    (prefix, username) => {
+      const config = makeBaseConfig({
+        username,
+        connectionSources: {
+          MAINWP_URL: 'env',
+          MAINWP_USER: 'env',
+          MAINWP_APP_PASSWORD: 'settings.json',
+        },
+      });
+      const message = sanitizeError(`${prefix}${describeCredentialRejection(config, undefined)}`);
+      expect(message).toContain(noReasonHint);
+    }
+  );
+
   it.each(['incorrect_password', 'invalid_username', 'application_passwords_disabled'])(
     'leaves out the host hint when WordPress gives the reason %s',
     code => {
