@@ -1360,9 +1360,14 @@ export async function executeAbility(
             normalizeRemoteText(redactKnownSecrets(errorMsg), MAX_ERROR_BODY_BYTES, 'flatten')
           )
         : sanitizeError(errorMsg);
+      // A host's 401 page can fill the 500-character error cap, so the
+      // credential note goes first to keep its troubleshooting link whole.
+      const note = credentialNote(errorCode);
       throw executionError(
         safeErrorCode,
-        `Ability execution failed: ${safeErrorCode} - ${safeMessage}${credentialNote(errorCode)}${carrierNote}`
+        note
+          ? `Ability execution failed: ${safeErrorCode}.${note} Response: ${safeMessage}${carrierNote}`
+          : `Ability execution failed: ${safeErrorCode} - ${safeMessage}${carrierNote}`
       );
     }
 
