@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateInput } from './security.js';
 import { executeTool, clearToolsCache, getTools } from './tools.js';
 import {
@@ -681,7 +681,100 @@ describe('Dashboard agent approvals', () => {
       expect(tool.description).toMatch(/Dashboard/);
       expect(tool.inputSchema.properties).not.toHaveProperty('user_confirmed');
       expect(tool.inputSchema.properties).not.toHaveProperty('confirmation_token');
+      expect(tool.description).toContain(
+        'If a write times out, check the site before trying again; do not resend it blindly.'
+      );
     }
+  });
+});
+
+describe('write timeouts', () => {
+  const hangUntilAborted = (_url: string, options: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      options.signal?.addEventListener(
+        'abort',
+        () => reject(new DOMException('aborted', 'AbortError')),
+        { once: true }
+      );
+    });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waits 150 seconds for a write, then reports that it may still be running', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fetchMock.mockImplementationOnce(hangUntilAborted);
+    let settled = false;
+    const pending = executeTool(
+      makeBaseConfig({ requestTimeout: 30000 }),
+      'run_site_php_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(149_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pending;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toEqual([
+      {
+        type: 'text',
+        text: 'The change may still be running. Check the site before trying again.',
+      },
+    ]);
+  });
+
+  it('keeps a longer configured timeout for writes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fetchMock.mockImplementationOnce(hangUntilAborted);
+    let settled = false;
+    const pending = executeTool(
+      makeBaseConfig({ requestTimeout: 200_000 }),
+      'write_site_files_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(199_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await pending).isError).toBeUndefined();
+  });
+
+  it('still reports a write rejected by the Dashboard as failed', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'rest_forbidden', message: 'Sorry.' }), { status: 403 })
+    );
+    const result = await executeTool(
+      makeBaseConfig(),
+      'run_site_php_v1',
+      { site_id: 1 },
+      makeMockLogger()
+    );
+
+    expect(result.isError).toBe(true);
+  });
+
+  it('keeps the configured timeout for reads and reports their timeout as an error', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([readProxy])));
+    fetchMock.mockImplementationOnce(hangUntilAborted);
+    const result = await executeTool(
+      makeBaseConfig({ requestTimeout: 20, retryEnabled: false }),
+      'run_site_ability_read_v1',
+      { site_id: 1, name: 'plugin/read' },
+      makeMockLogger()
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Request timeout after 20ms');
   });
 });
 

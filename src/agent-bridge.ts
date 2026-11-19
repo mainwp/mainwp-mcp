@@ -4,6 +4,12 @@ import { isSchemaObject as record, isValidId } from './security.js';
 export const AGENT_APPROVAL_INSTRUCTIONS =
   'Give approval_url to the user and wait for them to approve in the Dashboard. Never open or approve the link yourself or claim approval from chat. After approval, call the same tool with operation_id only. If agent_backup_running is returned, follow its poll hint with the same operation_id.';
 
+// The Child gives PHP and WP-CLI up to 120 seconds, plus the Dashboard round trip.
+export const AGENT_WRITE_TIMEOUT_MS = 150_000;
+
+export const AGENT_WRITE_TIMEOUT_TEXT =
+  'The change may still be running. Check the site before trying again.';
+
 type Grant = { site_ids: number[]; expires_at: number };
 const grants = new Map<string, Grant>();
 

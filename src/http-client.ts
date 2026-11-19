@@ -79,14 +79,17 @@ function clearResponseDeadline(deadline: ResponseDeadline): void {
   }
 }
 
+/** This server stopped waiting. The Dashboard may still be handling the request. */
+export class RequestTimeoutError extends Error {
+  readonly code = 'ETIMEDOUT';
+}
+
 function createTimeoutError(deadline: Pick<ResponseDeadline, 'effectiveTimeout' | 'url'>): Error {
   // No query string in the message: GET and DELETE ability calls carry their
   // input there, including writeOnly values in percent-encoded form.
-  const error = new Error(
+  return new RequestTimeoutError(
     `Request timeout after ${deadline.effectiveTimeout}ms: ${deadline.url.split('?')[0]}`
   );
-  (error as Error & { code: string }).code = 'ETIMEDOUT';
-  return error;
 }
 
 // Node quotes the request URL in some transport errors (an unparseable URL,

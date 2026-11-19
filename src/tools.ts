@@ -44,7 +44,12 @@ import {
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
-import { approvalPendingText, describeAgentResponse } from './agent-bridge.js';
+import {
+  AGENT_WRITE_TIMEOUT_TEXT,
+  approvalPendingText,
+  describeAgentResponse,
+} from './agent-bridge.js';
+import { RequestTimeoutError } from './http-client.js';
 
 /**
  * Options for tool execution
@@ -432,6 +437,15 @@ export async function executeTool(
         });
         return { content: pending.map(text => ({ type: 'text', text })) };
       }
+    }
+    // The Dashboard and the site keep working after this server stops waiting,
+    // so the write may have gone through. A failure would invite a blind retry.
+    if (isDashboardGatedAbility(abilityName) && error instanceof RequestTimeoutError) {
+      callLogger.warning('Tool execution timed out; the outcome is unknown', {
+        toolName,
+        durationMs: Math.round(performance.now() - startTime),
+      });
+      return { content: [{ type: 'text', text: AGENT_WRITE_TIMEOUT_TEXT }] };
     }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {

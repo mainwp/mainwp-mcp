@@ -8,7 +8,7 @@
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, UpstreamHttpError, createHttpError, getErrorMessage } from './errors.js';
-import { agentOutcomeFields } from './agent-bridge.js';
+import { AGENT_WRITE_TIMEOUT_MS, agentOutcomeFields } from './agent-bridge.js';
 import { isDashboardGatedAbility } from './policy.js';
 import {
   describeCredentialRejection,
@@ -1439,7 +1439,9 @@ export async function executeAbility(
   } else {
     // No retry: execute directly with synthetic context
     result = await fetchAndValidate({
-      remainingBudget: config.requestTimeout,
+      remainingBudget: isDashboardGatedAbility(abilityName)
+        ? Math.max(config.requestTimeout, AGENT_WRITE_TIMEOUT_MS)
+        : config.requestTimeout,
       attempt: 0,
     });
   }

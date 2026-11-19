@@ -41,6 +41,11 @@ claim that chat approval satisfies this gate. Resume the same tool with only
 `operation_id`. For `agent_backup_running`, follow the poll hint using that
 same ID. The Dashboard runs the stored input after its checks pass.
 
+Agent Bridge writes wait up to 150 seconds, or `MAINWP_REQUEST_TIMEOUT` when
+that is longer. A write that still times out may have run: the tool returns
+"The change may still be running. Check the site before trying again."
+instead of an error. Check the site before you send the write again.
+
 Allow rules can permit a call without a prompt. A Dashboard task grant covers
 later writes on its approved sites; pass its ID as `task_grant`. The destructive
 proxy asks on every call unless a rule allows it. Grants expire after 30 minutes
