@@ -366,12 +366,11 @@ export async function executeTool(
     try {
       responseBytes = trackSessionData(formattedResult, config, callLogger, 'for tool response');
     } catch (error) {
-      if (
-        ((decision === 'needs-confirmation' && args.user_confirmed === true) ||
-          isDashboardGatedAbility(abilityName)) &&
-        error instanceof McpError &&
-        error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED
-      ) {
+      const confirmedRequest = decision === 'needs-confirmation' && args.user_confirmed === true;
+      const dashboardGatedRequest = isDashboardGatedAbility(abilityName);
+      const resourceExhausted =
+        error instanceof McpError && error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED;
+      if ((confirmedRequest || dashboardGatedRequest) && resourceExhausted) {
         throw McpErrorFactory.resourceExhausted(
           "The confirmed request received a successful upstream response, but its result was omitted because of the session limit. Verify the operation's state before retrying.",
           {

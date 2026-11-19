@@ -142,12 +142,12 @@ export function describeAgentResponse(
       ? value.data
       : value;
   const grant = record(payload.task_grant) ? payload.task_grant : payload;
-  const expiry =
-    typeof grant.expires_at === 'number'
-      ? grant.expires_at * 1000
-      : typeof grant.expires_at === 'string'
-        ? Date.parse(grant.expires_at)
-        : NaN;
+  let expiry = NaN;
+  if (typeof grant.expires_at === 'number') {
+    expiry = grant.expires_at * 1000;
+  } else if (typeof grant.expires_at === 'string') {
+    expiry = Date.parse(grant.expires_at);
+  }
   const sites = Array.isArray(grant.site_ids)
     ? grant.site_ids.map(site =>
         typeof site === 'string' && /^\d+$/.test(site) ? Number(site) : site
