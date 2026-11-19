@@ -41,6 +41,7 @@ import {
   executeAbility,
   initRateLimiter,
 } from './abilities.js';
+import { setClientInfo } from './http-client.js';
 import { handleReadResource } from './resources.js';
 import { getPromptList, getPrompt, getPromptArgumentCompletions } from './prompts.js';
 import { createLogger, createStderrLogger, type Logger } from './logging.js';
@@ -193,6 +194,8 @@ export async function createServer(
       instructions: SERVER_INSTRUCTIONS,
     }
   );
+
+  server.oninitialized = () => setClientInfo(server.getClientVersion());
 
   // Create structured logger
   const logger = createLogger(server);

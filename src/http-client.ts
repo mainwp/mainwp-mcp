@@ -23,6 +23,32 @@ export const MAX_PAGES = 50;
 
 const PER_PAGE = 100;
 
+export const CLIENT_HEADER = 'X-MainWP-MCP-Client';
+export const MAX_CLIENT_LABEL_LENGTH = 64;
+
+let clientLabel: string | undefined;
+
+/**
+ * Record the connecting MCP client's self-reported name and version for the
+ * client header. The client can claim any name, so the Dashboard shows it in
+ * its activity log only and must never base a permission decision on it.
+ * Pass undefined to stop sending the header.
+ */
+export function setClientInfo(info: { name: string; version: string } | undefined): void {
+  if (!info) {
+    clientLabel = undefined;
+    return;
+  }
+  // Printable ASCII only: header values cannot carry control characters, and
+  // anything else would reach the Dashboard log as mojibake.
+  const label = `${info.name} ${info.version}`
+    .replace(/[^\x20-\x7e]/g, '')
+    .trim()
+    .slice(0, MAX_CLIENT_LABEL_LENGTH)
+    .trim();
+  clientLabel = label || undefined;
+}
+
 export interface PaginationMetadata {
   truncated: boolean;
   pagesFetched: number;
@@ -127,6 +153,7 @@ export function createFetch(config: Config, perCallTimeout?: number) {
         signal: controller.signal,
         headers: {
           ...getAuthHeaders(config),
+          ...(clientLabel ? { [CLIENT_HEADER]: clientLabel } : {}),
           ...options.headers,
         },
         // Do not auto-follow redirects. The remote Dashboard response is hostile
