@@ -3,6 +3,31 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] - 2026-11-19
+
+### Added
+
+Support for site tools whose use the Dashboard approves: running PHP, running WP-CLI, writing site files and running a
+site's own abilities. The tools appear only when the connected Dashboard provides them, so nothing changes on
+Dashboards without that support. The server's local confirmation step is skipped for these tools, and the server has
+no way to approve them itself. While a request waits for approval, the tool returns a normal result with the approval
+link, and keeps the operation and request IDs so the client can resume after approval.
+
+Requests now carry the connecting client's name and version in an `X-MainWP-MCP-Client` header, so the Dashboard can
+show which AI app made a change in its activity log. It is a label only and is never used for access decisions.
+
+### Changed
+
+Site writes wait up to 150 seconds. When a write still times out, or a proxy in front of the Dashboard gives up first
+(504, or 524 from Cloudflare), the tool returns "The change may still be running. Check the site before trying
+again." instead of an error, so clients don't retry blindly. Reads keep the configured timeout.
+
+When the Dashboard rejects the credentials without naming a bad user or password, the error now says the host may
+strip the Authorization header or a security or two-factor plugin may block application passwords, with a link to the
+troubleshooting guide. The hint comes before any host response text, so it is never cut off.
+
+Locked dependencies are updated to their current patch releases.
+
 ## [1.5.1] - 2026-10-13
 
 ### Changed
