@@ -23,6 +23,7 @@ import type { Config } from './config.js';
 import { clearToolsCache } from './tools.js';
 import { ConfigState, checkStartupCredentials } from './setup.js';
 import { trustedSettingsPath } from './settings-writer.js';
+import { AGENT_APPROVAL_INSTRUCTIONS } from './agent-bridge.js';
 import { makeBaseConfig, makeMockLogger } from '../tests/helpers/config.js';
 
 const mockFetch = vi.fn();
@@ -368,6 +369,189 @@ describe('validated upstream 4xx through MCP handlers', () => {
     expect(result.isError).toBe(true);
     expect(parsed.error.code).toBe(-32000);
     expect(parsed.error.data).toEqual({ upstream_code: 'mainwp_confirmation_required' });
+  });
+});
+
+describe('Dashboard approval through MCP handlers', () => {
+  const runPhp: Ability = {
+    ...sampleAbilities[1],
+    name: 'mainwp/run-site-php-v1',
+    category: 'mainwp-agent-bridge',
+    input_schema: {
+      type: 'object',
+      properties: { site_id: { type: 'integer' }, code: { type: 'string' } },
+    },
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    clearCache();
+    clearToolsCache();
+    clearKnownSecrets();
+    initRateLimiter(0);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function call(body: unknown, status: number) {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify([runPhp])));
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(body), { status }));
+    const { client, server } = await connectedClient();
+    try {
+      return await client.callTool({
+        name: 'run_site_php_v1',
+        arguments: { site_id: 1, code: 'echo 1;' },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  it('returns a pending approval as a normal result with the link and operation ID', async () => {
+    const result = await call(
+      {
+        code: 'agent_approval_required',
+        message: 'Approval required',
+        data: {
+          operation_id: 'op-a',
+          approval_url: 'https://test.local/wp-admin/admin.php?page=approve&op=op-a',
+          expires_at: 1900000000,
+        },
+      },
+      403
+    );
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; text: string }>;
+    const lines = content[0].text.split('\n');
+    expect(lines[0]).toBe('Waiting for your approval in MainWP');
+    expect(content[0].text).toContain('https://test.local/wp-admin/admin.php?page=approve&op=op-a');
+    expect(content[0].text).toContain('op-a');
+    expect(content[0].text).toContain(AGENT_APPROVAL_INSTRUCTIONS);
+    expect(JSON.parse(content[1].text)).toEqual({
+      status: 'approval_required',
+      code: 'agent_approval_required',
+      operation_id: 'op-a',
+      approval_url: 'https://test.local/wp-admin/admin.php?page=approve&op=op-a',
+      expires_at: 1900000000,
+      instructions: AGENT_APPROVAL_INSTRUCTIONS,
+    });
+    // One catalog fetch and one run: nothing retried after the gate answered.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a failed gated call as an error', async () => {
+    const result = await call({ code: 'php_fatal_error', message: 'Parse error' }, 400);
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    expect(parsed.error).toEqual({
+      code: -32000,
+      message: 'Ability execution failed: php_fatal_error - Parse error',
+      data: { upstream_code: 'php_fatal_error' },
+    });
+  });
+
+  const gated = [
+    'run-site-php',
+    'run-site-wpcli',
+    'write-site-files',
+    'run-site-ability-write',
+    'run-site-ability-destructive',
+  ].map((slug): Ability => ({
+    ...runPhp,
+    name: `mainwp/${slug}-v1`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id: { type: 'integer' },
+        operation_id: { type: 'string' },
+        confirm: { type: 'boolean' },
+      },
+    },
+  }));
+
+  it.each(gated.map(ability => ability.name))(
+    'sends %s to the Dashboard without a local confirmation token',
+    async name => {
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(gated)));
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));
+      const { client, server } = await connectedClient(
+        makeBaseConfig({ requireUserConfirmation: true })
+      );
+      try {
+        const toolName = `${name.slice('mainwp/'.length).replaceAll('-', '_')}`;
+        const { tools } = await client.listTools();
+        const tool = tools.find(t => t.name === toolName)!;
+        expect(tool.inputSchema.properties).not.toHaveProperty('user_confirmed');
+        expect(tool.inputSchema.properties).not.toHaveProperty('confirmation_token');
+        const result = await client.callTool({ name: toolName, arguments: { site_id: 1 } });
+        expect(result.isError).toBeFalsy();
+        expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toEqual({
+          success: true,
+        });
+        expect(String(mockFetch.mock.calls[1][0])).toContain(`/abilities/${name}/run`);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    }
+  );
+
+  it('still asks for a local confirmation token on other destructive tools', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ ...gated[0], name: 'mainwp/delete-site-v1' }]))
+    );
+    const { client, server } = await connectedClient(
+      makeBaseConfig({ requireUserConfirmation: true })
+    );
+    try {
+      const result = await client.callTool({
+        name: 'delete_site_v1',
+        arguments: { site_id: 1, confirm: true },
+      });
+      expect((result.content as Array<{ text: string }>)[0].text).toContain('confirmation_token');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('offers no way to approve a pending operation', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(gated)));
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: 'agent_approval_required',
+          message: 'Approval required',
+          data: { operation_id: 'op-a', approval_url: 'https://test.local/wp-admin/approve' },
+        }),
+        { status: 403 }
+      )
+    );
+    const { client, server } = await connectedClient();
+    try {
+      const { tools } = await client.listTools();
+      for (const tool of tools) {
+        expect(tool.name).not.toMatch(/approv/i);
+        expect(Object.keys(tool.inputSchema.properties ?? {})).not.toContainEqual(
+          expect.stringMatching(/approv/i)
+        );
+      }
+      await client.callTool({ name: 'run_site_php_v1', arguments: { site_id: 1 } });
+      // The approval link is for the user's browser. The server only reads the
+      // catalog and runs listed abilities, and never requests the link itself.
+      const urls = mockFetch.mock.calls.map(call => String(call[0]));
+      expect(urls).toHaveLength(2);
+      expect(urls[0]).toMatch(/\/abilities(\?|$)/);
+      expect(urls[1]).toMatch(/\/abilities\/mainwp\/run-site-php-v1\/run$/);
+      expect(urls.some(url => url.includes('wp-admin'))).toBe(false);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
 

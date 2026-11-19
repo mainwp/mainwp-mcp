@@ -205,7 +205,8 @@ export class UpstreamHttpError extends Error {
     readonly code: string,
     message: string,
     readonly upstreamCode?: string,
-    readonly replacement?: string
+    readonly replacement?: string,
+    readonly approval?: Record<string, unknown>
   ) {
     super(message);
   }
@@ -319,6 +320,7 @@ export function toMcpErrorResponse(
     const data: Record<string, unknown> = {};
     if (error.upstreamCode !== undefined) data.upstream_code = error.upstreamCode;
     if (error.replacement !== undefined) data.replacement = error.replacement;
+    if (error.approval !== undefined) Object.assign(data, error.approval);
     if (Object.keys(data).length > 0) response.error.data = data;
   }
   return response;

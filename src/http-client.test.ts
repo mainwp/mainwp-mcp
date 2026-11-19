@@ -8,7 +8,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createFetch, readLimitedBody } from './http-client.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CLIENT_HEADER, createFetch, readLimitedBody, setClientInfo } from './http-client.js';
+import { getAuthHeaders } from './config.js';
+import { createServer } from './index.js';
 import { makeBaseConfig } from '../tests/helpers/config.js';
 
 // Mock fetch globally (same approach as abilities.test.ts).
@@ -169,5 +173,76 @@ describe('createFetch redirect handling', () => {
 
     expect(response).toBe(serverError);
     expect(response.status).toBe(500);
+  });
+});
+
+describe('createFetch client header', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    setClientInfo(undefined);
+  });
+
+  afterEach(() => {
+    setClientInfo(undefined);
+    vi.restoreAllMocks();
+  });
+
+  async function sentHeaders(): Promise<Record<string, string>> {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      type: 'basic',
+      headers: new Headers(),
+      body: null,
+      text: async () => '[]',
+    });
+    const response = await createFetch(makeBaseConfig())(DASHBOARD_URL);
+    await readLimitedBody(response, 1000); // drain + clear the deadline timer
+    const options = mockFetch.mock.calls.at(-1)![1] as RequestInit;
+    return options.headers as Record<string, string>;
+  }
+
+  it('sends the client name and version only after the MCP client initializes', async () => {
+    const { server } = await createServer(makeBaseConfig());
+    const client = new Client({ name: 'Example\tClienté', version: '2.0.1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    try {
+      expect(await sentHeaders()).not.toHaveProperty(CLIENT_HEADER);
+
+      await client.connect(clientTransport);
+      // oninitialized fires on the client's notification, which connect() does not await.
+      await vi.waitFor(async () => {
+        expect((await sentHeaders())[CLIENT_HEADER]).toBe('ExampleClient 2.0.1');
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('omits the header when there is no client info', async () => {
+    expect(await sentHeaders()).not.toHaveProperty(CLIENT_HEADER);
+
+    setClientInfo({ name: '\u0000\u001b', version: 'é' });
+    expect(await sentHeaders()).not.toHaveProperty(CLIENT_HEADER);
+  });
+
+  it('strips control and non-ASCII characters and caps the length', async () => {
+    setClientInfo({ name: `bad\r\nX-Injected: 1${'a'.repeat(100)}`, version: '1.0' });
+    const label = (await sentHeaders())[CLIENT_HEADER];
+
+    expect(label).toBe(`badX-Injected: 1${'a'.repeat(48)}`);
+    expect(label).toHaveLength(64);
+  });
+
+  it('leaves the auth headers unchanged', async () => {
+    const config = makeBaseConfig();
+    setClientInfo({ name: 'Example', version: '1.0' });
+    const headers = await sentHeaders();
+
+    expect(headers).toEqual({ ...getAuthHeaders(config), [CLIENT_HEADER]: 'Example 1.0' });
+    expect(headers.Authorization).toBe(`Basic ${Buffer.from('admin:xxxx').toString('base64')}`);
   });
 });

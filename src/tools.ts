@@ -13,6 +13,7 @@ import {
   fetchAbilities,
   executeAbility,
   getAbilityByToolName,
+  configIdentityHash,
 } from './abilities.js';
 import { Config, formatJson } from './config.js';
 import { validateInput, sanitizeError } from './security.js';
@@ -22,6 +23,8 @@ import {
   McpErrorFactory,
   formatErrorResponse,
   getErrorMessage,
+  UpstreamHttpError,
+  getHttpStatus,
 } from './errors.js';
 import { Logger, withRequestId, withSecretRedaction } from './logging.js';
 import {
@@ -38,9 +41,16 @@ import {
   isToolAllowed,
   pinnedConfirmationParams,
   resolveConfirmationParam,
+  isDashboardGatedAbility,
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
+import {
+  AGENT_WRITE_TIMEOUT_TEXT,
+  approvalPendingText,
+  describeAgentResponse,
+} from './agent-bridge.js';
+import { RequestTimeoutError } from './http-client.js';
 
 /**
  * Options for tool execution
@@ -247,7 +257,7 @@ export async function executeTool(
     // Policy gate, execution stage: with destructiveness resolved, the gate
     // decides safe-mode blocking and confirmation routing. The executor only
     // acts on the decision; precedence lives in decidePolicy.
-    const decision = decidePolicy(config, toolName, isDestructive);
+    const decision = decidePolicy(config, toolName, isDestructive, abilityName);
 
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)
@@ -341,18 +351,27 @@ export async function executeTool(
     }
 
     // Format the result as JSON for the AI to parse
-    const formattedResult = formatJson(config, result);
+    const formattedResult = formatJson(
+      config,
+      isDashboardGatedAbility(abilityName)
+        ? describeAgentResponse(
+            result,
+            config,
+            configIdentityHash(config),
+            effectiveArgs.task_grant
+          )
+        : result
+    );
 
     let responseBytes: number;
     try {
       responseBytes = trackSessionData(formattedResult, config, callLogger, 'for tool response');
     } catch (error) {
-      if (
-        decision === 'needs-confirmation' &&
-        args.user_confirmed === true &&
-        error instanceof McpError &&
-        error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED
-      ) {
+      const confirmedRequest = decision === 'needs-confirmation' && args.user_confirmed === true;
+      const dashboardGatedRequest = isDashboardGatedAbility(abilityName);
+      const resourceExhausted =
+        error instanceof McpError && error.code === MCP_ERROR_CODES.RESOURCE_EXHAUSTED;
+      if ((confirmedRequest || dashboardGatedRequest) && resourceExhausted) {
         throw McpErrorFactory.resourceExhausted(
           "The confirmed request received a successful upstream response, but its result was omitted because of the session limit. Verify the operation's state before retrying.",
           {
@@ -383,6 +402,56 @@ export async function executeTool(
       ],
     };
   } catch (error) {
+    if (
+      isDashboardGatedAbility(abilityName) &&
+      error instanceof UpstreamHttpError &&
+      error.approval
+    ) {
+      describeAgentResponse(
+        { code: error.upstreamCode, data: error.approval },
+        config,
+        configIdentityHash(config)
+      );
+      // A write waiting on Dashboard approval has not failed. Nothing ran, and
+      // the client gets the link to approve and the operation ID to resume.
+      if (error.upstreamCode === 'agent_approval_required') {
+        const pending = [
+          approvalPendingText(error.approval),
+          formatJson(config, {
+            status: 'approval_required',
+            code: error.upstreamCode,
+            ...error.approval,
+          }),
+        ];
+        const responseBytes = trackSessionData(
+          pending.join('\n'),
+          config,
+          callLogger,
+          'for approval response'
+        );
+        callLogger.info('Tool execution awaiting Dashboard approval', {
+          toolName,
+          durationMs: Math.round(performance.now() - startTime),
+          responseBytes,
+          sessionDataBytes: getSessionDataUsage(config).used,
+        });
+        return { content: pending.map(text => ({ type: 'text', text })) };
+      }
+    }
+    // The Dashboard and the site keep working after this server, or a proxy in
+    // front of the Dashboard (504, or 524 from Cloudflare), stops waiting, so the
+    // write may have gone through. A failure would invite a blind retry.
+    const gatewayTimeout = [504, 524].includes(getHttpStatus(error) ?? 0);
+    if (
+      isDashboardGatedAbility(abilityName) &&
+      (error instanceof RequestTimeoutError || gatewayTimeout)
+    ) {
+      callLogger.warning('Tool execution timed out; the outcome is unknown', {
+        toolName,
+        durationMs: Math.round(performance.now() - startTime),
+      });
+      return { content: [{ type: 'text', text: AGENT_WRITE_TIMEOUT_TEXT }] };
+    }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
       const code = (error as { code: string }).code;

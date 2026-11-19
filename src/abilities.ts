@@ -8,6 +8,8 @@
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, UpstreamHttpError, createHttpError, getErrorMessage } from './errors.js';
+import { AGENT_WRITE_TIMEOUT_MS, agentOutcomeFields } from './agent-bridge.js';
+import { isDashboardGatedAbility } from './policy.js';
 import {
   describeCredentialRejection,
   isCredentialRejection,
@@ -1146,10 +1148,17 @@ export async function executeAbility(
   // selection and audit logging can never diverge from the gate's decision.
   const isDestructive = classifyDestructive(ability.meta?.annotations);
   const isIdempotent = ability.meta?.annotations?.idempotent ?? false;
+  const passthroughSchema = propertySchema(ability.input_schema, 'input');
+  const usesPassthroughReadCarrier =
+    isReadonly &&
+    passthroughSchema !== undefined &&
+    Object.hasOwn(passthroughSchema, 'x-mainwp-passthrough') &&
+    passthroughSchema['x-mainwp-passthrough'] === true &&
+    /^mainwp\/[a-z0-9-]+$/.test(ability.name);
   const usesJsonCarrier =
     (isReadonly || (isDestructive && isIdempotent)) &&
     /^mainwp\/[a-z0-9-]+$/.test(ability.name) &&
-    hasRequiredNullableInput(ability.input_schema);
+    (hasRequiredNullableInput(ability.input_schema) || usesPassthroughReadCarrier);
   const url = `${baseUrl}/abilities/${abilityName}/run`;
   // WordPress treats an empty schema as absent and rejects non-null input for it.
   // A top-level default needs missing GET/DELETE input; input= prevents it from applying.
@@ -1181,12 +1190,16 @@ export async function executeAbility(
       const method = isReadonly ? 'GET' : 'DELETE';
       let queryString: string;
       let body: string | undefined;
+      let readInputBytes: number | undefined;
       if (usesJsonCarrier) {
         const json = serializeJsonInput(input ?? {}, ability.input_schema);
         if (isReadonly) {
-          if (Buffer.byteLength(json, 'utf8') > MAX_JSON_QUERY_INPUT_BYTES) {
+          readInputBytes = Buffer.byteLength(json, 'utf8');
+          if (readInputBytes > MAX_JSON_QUERY_INPUT_BYTES) {
             throw McpErrorFactory.invalidParams(
-              `JSON input parameter "input" exceeds ${MAX_JSON_QUERY_INPUT_BYTES} bytes`
+              usesPassthroughReadCarrier
+                ? `Read input is ${readInputBytes} bytes; the GET JSON limit is ${MAX_JSON_QUERY_INPUT_BYTES} bytes. Larger read payloads are not supported yet.`
+                : `JSON input parameter "input" exceeds ${MAX_JSON_QUERY_INPUT_BYTES} bytes`
             );
           }
           queryString = `?input_json=${encodeURIComponent(json)}`;
@@ -1206,6 +1219,11 @@ export async function executeAbility(
       }
       const fullUrl = url + queryString;
       if (fullUrl.length > MAX_URL_LENGTH) {
+        if (usesPassthroughReadCarrier) {
+          throw McpErrorFactory.invalidParams(
+            `Read input is ${readInputBytes} JSON bytes (limit ${MAX_JSON_QUERY_INPUT_BYTES}); the encoded request URL is ${fullUrl.length} characters (limit ${MAX_URL_LENGTH}). Larger read payloads are not supported yet.`
+          );
+        }
         throw new Error(
           `Request URL exceeds ${MAX_URL_LENGTH} characters (${fullUrl.length}); reduce input parameters`
         );
@@ -1235,6 +1253,7 @@ export async function executeAbility(
       let errorMsg = response.statusText;
       let acceptedBody = false;
       let replacementName: unknown;
+      let approval: Record<string, unknown> | undefined;
 
       // Only try to parse as JSON if the body looks like JSON
       if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
@@ -1263,6 +1282,17 @@ export async function executeAbility(
                 !Array.isArray(errorData.data)))
           ) {
             acceptedBody = true;
+            if (
+              typeof code === 'string' &&
+              (code.startsWith('agent_') || code === 'outcome_unknown') &&
+              isDashboardGatedAbility(abilityName)
+            ) {
+              approval = agentOutcomeFields(
+                writeOnlyRedactor.deep(redactKnownSecretsDeep(errorData.data)),
+                code,
+                config
+              );
+            }
             errorMsg = message;
             if (Object.hasOwn(errorData, 'data') && Object.hasOwn(errorData.data, 'replacement')) {
               replacementName = errorData.data.replacement;
@@ -1323,7 +1353,14 @@ export async function executeAbility(
       }
       const executionError = (code: string, message: string): Error =>
         acceptedBody
-          ? new UpstreamHttpError(response.status, code, message, upstreamCode, replacement)
+          ? new UpstreamHttpError(
+              response.status,
+              code,
+              message,
+              upstreamCode,
+              replacement,
+              approval
+            )
           : createHttpError(response.status, code, message);
 
       if (writeOnlyRedactor.carriesWriteOnly) {
@@ -1407,7 +1444,9 @@ export async function executeAbility(
   } else {
     // No retry: execute directly with synthetic context
     result = await fetchAndValidate({
-      remainingBudget: config.requestTimeout,
+      remainingBudget: isDashboardGatedAbility(abilityName)
+        ? Math.max(config.requestTimeout, AGENT_WRITE_TIMEOUT_MS)
+        : config.requestTimeout,
       attempt: 0,
     });
   }

@@ -16,7 +16,7 @@ import { getTools, clearToolsCache } from '../../src/tools.js';
 import { generateInstructions, buildSafetyTags } from '../../src/tool-schema.js';
 import { clearCache, initRateLimiter } from '../../src/abilities.js';
 import type { Ability } from '../../src/abilities.js';
-import { declaresUsableBooleanParam } from '../../src/policy.js';
+import { declaresUsableBooleanParam, isDashboardGatedAbility } from '../../src/policy.js';
 import { makeBaseConfig } from '../helpers/config.js';
 
 import abilitiesFixture from './fixtures/abilities-full.json' with { type: 'json' };
@@ -38,6 +38,23 @@ function mockAbilitiesFetch(): void {
 const abilities = abilitiesFixture as unknown as Ability[];
 
 describe('Safety Coverage', () => {
+  it('includes eleven Agent Bridge tools with five Dashboard gates', () => {
+    const bridge = abilities.filter(ability => ability.category === 'mainwp-agent-bridge');
+    expect(bridge).toHaveLength(11);
+    expect(bridge.filter(ability => isDashboardGatedAbility(ability.name))).toHaveLength(5);
+    expect(bridge.filter(ability => ability.meta?.annotations?.destructive)).toHaveLength(4);
+  });
+  it('declares limits for raw command elements and file content', () => {
+    for (const name of ['mainwp/run-site-wpcli-read-v1', 'mainwp/run-site-wpcli-v1']) {
+      const props = abilities.find(ability => ability.name === name)?.input_schema
+        ?.properties as Record<string, { items?: { maxLength?: number } }>;
+      expect(props.argv.items?.maxLength).toBeGreaterThan(0);
+    }
+    const props = abilities.find(ability => ability.name === 'mainwp/write-site-files-v1')
+      ?.input_schema?.properties as Record<string, { maxLength?: number }>;
+    expect(props.content.maxLength).toBe(2 * 1024 * 1024);
+    expect(props.path.maxLength).toBeGreaterThan(0);
+  });
   beforeEach(() => {
     vi.resetAllMocks();
     clearCache();
@@ -98,7 +115,7 @@ describe('Safety Coverage', () => {
       const violations: string[] = [];
 
       for (const ability of abilities) {
-        if (ability.meta?.annotations?.destructive) {
+        if (ability.meta?.annotations?.destructive && !isDashboardGatedAbility(ability.name)) {
           const props = ability.input_schema?.properties as Record<string, unknown> | undefined;
           const declaredType = (props?.confirm as { type?: unknown } | undefined)?.type;
           const isBooleanType =
@@ -122,7 +139,7 @@ describe('Safety Coverage', () => {
       const violations: string[] = [];
 
       for (const ability of abilities) {
-        if (ability.meta?.annotations?.destructive) {
+        if (ability.meta?.annotations?.destructive && !isDashboardGatedAbility(ability.name)) {
           const props = ability.input_schema?.properties as Record<string, unknown> | undefined;
           const declaredType = (props?.dry_run as { type?: unknown } | undefined)?.type;
           const isBooleanType =
