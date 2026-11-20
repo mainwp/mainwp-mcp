@@ -101,6 +101,20 @@ describe('getPrompt', () => {
     }
   });
 
+  it('prefers Safe Updates only when the Dashboard offers them', () => {
+    const result = getPrompt('update-workflow', { update_type: 'plugins' });
+    const text = (result.messages[0].content as { text: string }).text;
+
+    expect(text).toContain(
+      '- If run_safe_update_v1 is available, use it instead of run_updates_v1 and update_all_v1.'
+    );
+    expect(text).toContain('Do not roll back, retest or mark a check as expected unless I ask');
+    expect(text).toContain(
+      '- Use one run_updates_v1 call only when one set of arguments says exactly what I approved.'
+    );
+    expect(text.match(/run_safe_update_v1/g)).toHaveLength(1);
+  });
+
   it('should return messages with proper role', () => {
     const result = getPrompt('maintenance-check');
 
