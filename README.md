@@ -71,6 +71,8 @@ Built for agencies and freelancers who manage many WordPress sites and want AI h
 
 ## Get started
 
+**On MainWP Dashboard 6.5 or later?** You can connect Claude, ChatGPT and other AI apps straight to your Dashboard without installing this package. See [Remote connections](https://docs.mainwp.com/mcp-server/remote/overview).
+
 **1. Create an Application Password.** In your MainWP Dashboard, go to **Users > Profile > Application Passwords**, add one named "MainWP MCP Server", and copy it. It is separate from your login password, and you can revoke it at any time. A dedicated administrator account for API access keeps the audit trail clean.
 
 **2. Add the server to your AI tool.** For Claude Desktop and most other MCP clients:
