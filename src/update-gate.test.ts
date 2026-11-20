@@ -405,6 +405,43 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests).toHaveLength(1);
   });
 
+  describe('run_updates arguments equal to their declared defaults', () => {
+    // Dashboard 6.5 declares these defaults on run-updates-v1.
+    beforeEach(() => {
+      const entry = catalog.find(candidate => candidate.name === 'mainwp/run-updates-v1')!;
+      const properties = entry.input_schema!.properties as Record<string, unknown>;
+      properties.specific_items = { type: 'array', items: { type: 'string' }, default: [] };
+      properties.ignore_backup_gate = { type: 'boolean', default: false };
+    });
+
+    const explicitDefaults = { types: [], specific_items: [], ignore_backup_gate: false };
+
+    it.each([
+      [
+        'preview omits them and confirm sends them',
+        batchArgs,
+        { ...batchArgs, ...explicitDefaults },
+      ],
+      [
+        'preview sends them and confirm omits them',
+        { ...batchArgs, ...explicitDefaults },
+        batchArgs,
+      ],
+    ])('confirms when the %s', async (_label, previewArgs, confirmArgs) => {
+      const client = await connect();
+      const data = await preview(client, 'run_updates_v1', previewArgs);
+      const response = await call(
+        client,
+        'run_updates_v1',
+        confirmation(confirmArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBeUndefined();
+      expect(response.data).toEqual(makeExecutedUpdates());
+      expect(requests).toHaveLength(2);
+      expect(requests[1].input).toEqual({ ...confirmArgs, confirm: true });
+    });
+  });
+
   it('pins ignore_backup_gate to the confirm preview and rejects adding the override without executing', async () => {
     const ability = 'mainwp/update-site-plugins-v1';
     const entry = catalog.find(candidate => candidate.name === ability)!;

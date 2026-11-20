@@ -127,6 +127,7 @@ function canonicalize(value: unknown): unknown {
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, the resolved confirm_*,
  * user_confirmed, dry_run) from the key to ensure preview and execution calls match.
+ * With `inputSchema`, an omitted top-level argument counts as its declared default.
  * With `usesPreviewToken`, `preview_token` is left out as well: the ability
  * issues it in its own dry run, so it is null on the preview and a string on
  * the confirmed call. Eligible MainWP updates bind it when MainWP is primary;
@@ -144,9 +145,26 @@ export function getPreviewKey(
   toolName: string,
   args: Record<string, unknown>,
   confirmationParam: string,
-  usesPreviewToken = false
+  usesPreviewToken = false,
+  inputSchema?: Ability['input_schema']
 ): string {
   const relevantArgs = { ...args };
+  // An omitted argument and one sent equal to its declared default run the
+  // same update, so both hash the same. Only top-level declared defaults are
+  // filled; array order and value types still change the key.
+  const properties = inputSchema?.properties;
+  if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
+    for (const [name, schema] of Object.entries(properties as Record<string, unknown>)) {
+      if (
+        schema !== null &&
+        typeof schema === 'object' &&
+        Object.hasOwn(schema, 'default') &&
+        !Object.hasOwn(relevantArgs, name)
+      ) {
+        relevantArgs[name] = (schema as { default: unknown }).default;
+      }
+    }
+  }
   delete relevantArgs.confirm;
   delete relevantArgs.user_confirmed;
   delete relevantArgs.dry_run;
@@ -405,7 +423,8 @@ export async function handleConfirmationFlow(
       toolName,
       args,
       confirmationParam!,
-      usesPreviewToken
+      usesPreviewToken,
+      ability.input_schema
     );
     const token = crypto.randomUUID();
     // The Dashboard pins the previewed versions only through a token the
@@ -521,7 +540,8 @@ export async function handleConfirmationFlow(
       toolName,
       args,
       confirmationParam!,
-      usesPreviewToken
+      usesPreviewToken,
+      ability.input_schema
     );
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
