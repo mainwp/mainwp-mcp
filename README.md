@@ -43,8 +43,8 @@ It runs on your own computer, next to your AI tool. Nothing new is installed on 
 
 ## You stay in control
 
-- **Changes wait for your approval.** By default, deleting a site, plugin, or theme shows you a preview first and runs only after you say yes. On Dashboard 6.3 and later, updates work the same way.
-- **Safe mode** blocks those destructive operations outright, with no approval prompt, while you get comfortable. On Dashboard 6.3 and later that includes updates, and you can still dry-run them to see what would change.
+- **Changes wait for your approval.** Updates and deletions show you a preview first and run only after you say yes.
+- **Safe mode** blocks those changes outright while you get comfortable. You can still dry-run an update to see what would change.
 - **You choose the tools.** Allow and block lists decide which tools your AI can see at all.
 - **Your credentials stay with you.** The server signs in with a WordPress Application Password that you can revoke at any time, and it talks only to your Dashboard.
 
@@ -56,22 +56,22 @@ How it all works: [Safety & Permissions](https://docs.mainwp.com/mcp-server/safe
 - **Updates:** see pending core, plugin, theme, and translation updates across the network, and apply them
 - **Plugins and themes:** see what is installed, activate, deactivate, or delete
 - **Clients and tags:** manage client records, assign sites, and track costs
-- **Knowledge:** agency, client, and site notes, skills, and memories your AI reads before it works (Dashboard 6.3 and later)
+- **Knowledge:** agency, client, and site notes, skills, and memories your AI reads before it works
 - **Guided workflows:** network summaries, site reports, security audits, and update plans
 
-Around 70 tools in all, depending on your Dashboard version. See [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
+More than 70 tools, plus more from the MainWP add-ons you use. See [Tools & Resources](https://docs.mainwp.com/mcp-server/reference/tools).
 
 Built for agencies and freelancers who manage many WordPress sites and want AI help with updates, maintenance, and client work.
 
-## Requirements
-
-- Node.js 20.19 or later on the computer that runs your AI tool
-- MainWP Dashboard 6.0 or later, reachable over HTTPS (some tools need a newer Dashboard; the [Quickstart](https://docs.mainwp.com/mcp-server/quickstart) lists which)
-- An MCP-compatible AI client
-
 ## Get started
 
-**On MainWP Dashboard 6.5 or later?** You can connect Claude, ChatGPT and other AI apps straight to your Dashboard without installing this package. See [Remote connections](https://docs.mainwp.com/mcp-server/remote/overview).
+**On MainWP Dashboard 6.5 or later?** You can connect Claude, ChatGPT and other AI apps straight to your Dashboard without installing anything. See [Remote connections](https://docs.mainwp.com/mcp-server/remote/overview).
+
+To run this server on your own computer, you need:
+
+- MainWP Dashboard 6.0 or later on WordPress 6.9 or later, reachable over HTTPS (some tools need a newer Dashboard; the [Quickstart](https://docs.mainwp.com/mcp-server/quickstart) lists which)
+- Node.js 20.19 or later
+- An MCP-compatible AI client
 
 **1. Create an Application Password.** In your MainWP Dashboard, go to **Users > Profile > Application Passwords**, add one named "MainWP MCP Server", and copy it. It is separate from your login password, and you can revoke it at any time. A dedicated administrator account for API access keeps the audit trail clean.
 
