@@ -452,6 +452,31 @@ describe('loadConfig', () => {
     process.env.MAINWP_APP_PASSWORD = 'xxxx';
   }
 
+  describe('read-only configuration', () => {
+    it('defaults to false', () => {
+      baseEnv();
+      expect(loadConfig().readOnly).toBe(false);
+    });
+    it('loads the environment setting', () => {
+      baseEnv();
+      process.env.MAINWP_READ_ONLY = 'true';
+      expect(loadConfig().readOnly).toBe(true);
+    });
+    it('loads the file setting and lets the environment override it', () => {
+      baseEnv();
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ readOnly: true }));
+      expect(loadConfig().readOnly).toBe(true);
+      process.env.MAINWP_READ_ONLY = 'false';
+      expect(loadConfig().readOnly).toBe(false);
+    });
+    it('rejects malformed environment values', () => {
+      baseEnv();
+      process.env.MAINWP_READ_ONLY = 'maybe';
+      expect(() => loadConfig()).toThrow(/MAINWP_READ_ONLY/);
+    });
+  });
+
   describe('boolean env var parsing', () => {
     it.each(['true', 'TRUE', 'True', '1', 'yes', 'on', 'ON'])('parses %s as true', value => {
       baseEnv();

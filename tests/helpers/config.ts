@@ -22,6 +22,7 @@ export function makeBaseConfig(overrides: Partial<Config> = {}): Config {
     requestTimeout: 5000,
     maxResponseSize: 10485760,
     safeMode: false,
+    readOnly: false,
     requireUserConfirmation: true,
     maxSessionData: 52428800,
     schemaVerbosity: 'standard',

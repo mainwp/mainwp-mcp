@@ -129,6 +129,7 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   // containing the delimiter could never produce a colliding fingerprint
   const fingerprint = JSON.stringify([
     config.schemaVerbosity,
+    config.readOnly,
     config.allowedTools ?? [],
     config.blockedTools ?? [],
     config.abilityNamespaces,
@@ -149,7 +150,11 @@ export async function getTools(config: Config, logger?: Logger): Promise<Tool[]>
   const originalCount = tools.length;
 
   // Apply allowlist filter (whitelist)
-  tools = tools.filter(tool => isToolAllowed(config, tool.name));
+  tools = tools.filter(
+    (tool, index) =>
+      decidePolicy(config, tool.name, false, undefined, abilities[index].meta?.annotations) ===
+      'allow'
+  );
 
   // Log if tools were filtered
   if (tools.length !== originalCount && logger) {
@@ -214,7 +219,7 @@ export async function executeTool(
 
     // Policy gate, listing stage: runs before ability resolution so a blocked
     // tool is indistinguishable from a nonexistent one (no ability-name leak).
-    if (decidePolicy(config, toolName) !== 'allow') {
+    if (!isToolAllowed(config, toolName)) {
       throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
     }
 
@@ -222,6 +227,14 @@ export async function executeTool(
     // fetchAbilities. This handles both primary-namespace (unprefixed) tools
     // and prefixed `{ns}__tool` names from non-primary namespaces.
     const ability = await getAbilityByToolName(config, toolName, reqLogger);
+    if (
+      (!ability && config.readOnly) ||
+      (ability &&
+        decidePolicy(config, toolName, false, undefined, ability.meta?.annotations) ===
+          'blocked-by-policy')
+    ) {
+      throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
+    }
     if (!ability) {
       throw McpErrorFactory.toolNotFound(toolName);
     }
@@ -265,7 +278,7 @@ export async function executeTool(
     // Policy gate, execution stage: with destructiveness resolved, the gate
     // decides safe-mode blocking and confirmation routing. The executor only
     // acts on the decision; precedence lives in decidePolicy.
-    const decision = decidePolicy(config, toolName, isDestructive, abilityName);
+    const decision = decidePolicy(config, toolName, isDestructive, abilityName, annotations);
 
     if (config.safeMode) {
       // Always strip confirm parameter in safe mode (defensive approach)

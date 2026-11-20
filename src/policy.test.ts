@@ -482,3 +482,23 @@ describe('resolveConfirmationParam', () => {
     ).toBeUndefined();
   });
 });
+
+describe('read-only policy annotations', () => {
+  it.each([undefined, null, 'true', 1, false])(
+    'denies readonly=%s even with an allowlist',
+    readonly => {
+      const config = makeBaseConfig({ readOnly: true, allowedTools: ['t'] });
+      expect(decidePolicy(config, 't', false, undefined, { readonly })).toBe('blocked-by-policy');
+    }
+  );
+  it('allows only literal true and still applies the blocklist', () => {
+    expect(
+      decidePolicy(makeBaseConfig({ readOnly: true }), 't', false, undefined, { readonly: true })
+    ).toBe('allow');
+    expect(
+      decidePolicy(makeBaseConfig({ readOnly: true, blockedTools: ['t'] }), 't', false, undefined, {
+        readonly: true,
+      })
+    ).toBe('blocked-by-policy');
+  });
+});

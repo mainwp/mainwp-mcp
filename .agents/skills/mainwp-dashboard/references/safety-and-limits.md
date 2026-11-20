@@ -9,7 +9,7 @@ the two in sync when any option changes.
 `decidePolicy()` resolves one decision per call, in this
 order:
 
-1. `blocked-by-policy`: allow/block lists exclude the tool. Evaluated before the
+1. `blocked-by-policy`: allow/block lists or read-only access exclude the tool. Evaluated before the
    ability is resolved, so a blocked tool cannot be distinguished from a
    nonexistent one.
 2. `safe-mode-blocked`: destructive tool while safe mode is on. Outranks
@@ -90,6 +90,15 @@ settings worth checking.
 Two resources are not policy-filtered and can therefore describe capability
 groups whose tools are filtered out: `mainwp://status` `abilitiesCount` and `mainwp://categories`.
 `mainwp://abilities` and `mainwp://help` are filtered.
+
+## Read-only access
+
+`MAINWP_READ_ONLY=true` (or `readOnly: true` in settings) exposes and executes
+only abilities whose `readonly` annotation is the boolean `true`. Missing or
+malformed annotations are denied. Allow and block lists still apply. Hidden
+abilities cannot run through resources, completions, help, or dry runs, and are
+omitted from replacement suggestions. Setup remains available. Category lists
+and status counts still describe the full catalog. The default is `false`.
 
 ## Safe mode
 

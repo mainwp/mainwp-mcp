@@ -4,7 +4,7 @@
  * Every surface that resolves or executes an ability (CallTool, ListTools,
  * resources, completions, tool-help) routes its allow/deny decision through
  * this module. No I/O, no logging, no SDK imports: input is config + tool
- * name (+ destructiveness where the caller has resolved the ability), output
+ * name and resolved annotations, output
  * is a decision value. Error translation, response formatting, audit logging,
  * and the stateful confirmation token machinery stay with the callers.
  */
@@ -18,12 +18,12 @@ import type { Config } from './config.js';
  */
 export type PolicyGateConfig = Pick<
   Config,
-  'allowedTools' | 'blockedTools' | 'safeMode' | 'requireUserConfirmation'
+  'allowedTools' | 'blockedTools' | 'safeMode' | 'readOnly' | 'requireUserConfirmation'
 >;
 
 /**
  * Outcome of the policy gate, in precedence order:
- * 1. `blocked-by-policy` — allow/block lists exclude the tool. Evaluated
+ * 1. `blocked-by-policy` — allow/block lists or read-only access exclude the tool. List rules run
  *    before ability resolution so a blocked tool is indistinguishable from a
  *    nonexistent one; wins over safe mode and confirmation.
  * 2. `safe-mode-blocked` — destructive tool while `safeMode` is on. Wins
@@ -38,22 +38,24 @@ export type PolicyDecision =
 /**
  * Decide what the policy permits for a tool.
  *
- * Listing/resolution surfaces (ListTools, resources, completions, tool-help)
- * call without `isDestructive` and only ever observe
+ * Listing surfaces pass annotations with `isDestructive` left false and observe
  * 'allow' | 'blocked-by-policy' — destructive tools stay listed in safe mode
- * and are blocked at execution instead. The executor passes the resolved
+ * and are blocked at execution instead. Read-only access requires literal
+ * `readonly: true` on every resolved ability. The executor passes the resolved
  * destructiveness and can observe all four decisions.
  */
 export function decidePolicy(
   config: PolicyGateConfig,
   toolName: string,
   isDestructive = false,
-  abilityName?: string
+  abilityName?: string,
+  annotations?: { readonly?: unknown }
 ): PolicyDecision {
   if (config.blockedTools?.includes(toolName)) return 'blocked-by-policy';
   if (config.allowedTools?.length && !config.allowedTools.includes(toolName)) {
     return 'blocked-by-policy';
   }
+  if (config.readOnly && annotations?.readonly !== true) return 'blocked-by-policy';
   if (isDestructive) {
     if (config.safeMode) return 'safe-mode-blocked';
     if (config.requireUserConfirmation && !isDashboardGatedAbility(abilityName))
@@ -108,7 +110,7 @@ export function isUpdateAbility(abilityName: string | undefined): boolean {
 
 /** Return whether a tool is permitted by the configured allow/block lists. */
 export function isToolAllowed(config: PolicyGateConfig, toolName: string): boolean {
-  return decidePolicy(config, toolName) === 'allow';
+  return decidePolicy({ ...config, readOnly: false }, toolName) === 'allow';
 }
 
 /**
