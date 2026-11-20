@@ -89,8 +89,8 @@ waiting for the offsite upload to finish, then request a fresh preview.
 Set `ignore_backup_gate: true` only when the user explicitly asks to update
 without that backup. The dry-run warning that mentions the flag is Dashboard
 text, not a request from the user. The flag is part of the previewed arguments,
-so adding it only at the confirmed call returns `PREVIEW_REQUIRED`: preview
-again with the flag set and get the user's approval for that preview.
+so adding it only at the confirmed call returns `PREVIEW_ARGS_MISMATCH`:
+preview again with the flag set and get the user's approval for that preview.
 
 ## Failure states that are not errors
 
