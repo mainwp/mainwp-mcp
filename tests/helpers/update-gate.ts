@@ -304,3 +304,127 @@ export function makeUnignorePreview() {
     errors: [],
   };
 }
+
+// Mirrors mainwp/run-safe-update-v1 in the Dashboard's
+// includes/abilities/class-mainwp-abilities-safe-updates.php (execute_run and output_schema).
+export const SAFE_UPDATE_ABILITY = 'mainwp/run-safe-update-v1';
+
+export function makeSafeUpdateAbility(): Ability {
+  const runUpdates = makeDashboard63Abilities().find(
+    ability => ability.name === UPDATE_ABILITIES[0]
+  )!;
+  const schema = structuredClone(runUpdates.input_schema!);
+  (schema.properties as Record<string, unknown>).checks = {
+    type: 'string',
+    default: 'all',
+    enum: [
+      'all',
+      'none',
+      'http',
+      'monitor',
+      'child',
+      'http,monitor',
+      'http,child',
+      'monitor,child',
+      'http,monitor,child',
+    ],
+  };
+  (schema.properties as Record<string, unknown>).ignore_backup_gate = {
+    type: 'boolean',
+    default: false,
+  };
+  return {
+    ...runUpdates,
+    name: SAFE_UPDATE_ABILITY,
+    label: 'Run Safe Update',
+    input_schema: schema,
+    meta: { annotations: { readonly: false, destructive: true, idempotent: false } },
+  };
+}
+
+export function makeSafeUpdatePreview() {
+  const check = (key: string, name: string, status: string, reason = '') => ({
+    key,
+    name,
+    status,
+    reason,
+  });
+  return {
+    dry_run: true,
+    would_affect: {
+      sites: [
+        {
+          id: 1,
+          name: 'Acme Corp',
+          items: [
+            {
+              type: 'plugin',
+              slug: 'akismet/akismet.php',
+              name: 'Akismet Anti-spam',
+              old_version: '5.3',
+              new_version: '5.4',
+            },
+            {
+              type: 'core',
+              slug: 'wordpress',
+              name: 'WordPress',
+              old_version: '6.8.1',
+              new_version: '6.9',
+            },
+          ],
+          backup_verdict: 'pass',
+          backup_label: 'recent backup',
+          override_available: false,
+          checks: [
+            check('http', 'http', 'pending'),
+            check('monitor:12', 'monitor', 'pending'),
+            check('child', 'child', 'pending'),
+            check('regression', 'regression', 'not_run', 'add-on not installed'),
+          ],
+          skip_reason: '',
+        },
+        {
+          id: 2,
+          name: 'Bramble Studio',
+          items: [
+            {
+              type: 'translation',
+              slug: 'default',
+              name: 'WordPress core',
+              old_version: '',
+              new_version: '6.8.1',
+            },
+          ],
+          backup_verdict: 'missing',
+          backup_label: 'will back up first',
+          override_available: true,
+          checks: [
+            check('http', 'http', 'pending'),
+            check('monitor', 'monitor', 'not_run', 'No monitor configured'),
+            check('child', 'child', 'not_run', 'Not selected'),
+            check('regression', 'regression', 'pending', 'waiting for regression scan'),
+          ],
+          skip_reason: '',
+        },
+        {
+          id: 3,
+          name: 'Cedar Nonprofit',
+          items: [
+            {
+              type: 'theme',
+              slug: 'twentytwentyfive',
+              name: 'Twenty Twenty-Five',
+              old_version: '1.1',
+              new_version: '1.2',
+            },
+          ],
+          backup_verdict: 'pass',
+          backup_label: 'recent backup',
+          override_available: false,
+          checks: [check('http', 'http', 'pending')],
+          skip_reason: 'site suspended',
+        },
+      ],
+    },
+  };
+}

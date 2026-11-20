@@ -7,7 +7,7 @@
  * MCP errors in errors.ts.
  */
 
-import { buildUpdatePlanSummary, validateUpdatePlan } from './update-plan.js';
+import { planSummaryFor } from './update-plan.js';
 
 /**
  * Common context for confirmation-related responses
@@ -136,13 +136,13 @@ export function buildConfirmationRequiredResponse(
   token: string,
   previewTokenSent: boolean
 ): object {
-  const plan = validateUpdatePlan(preview);
+  const planSummary = planSummaryFor(ctx.ability, preview, previewTokenSent);
   return {
     status: 'CONFIRMATION_REQUIRED',
     next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
-    ...(plan ? { plan_summary: buildUpdatePlanSummary(plan, previewTokenSent) } : {}),
+    ...(planSummary ? { plan_summary: planSummary } : {}),
     confirmation_token: token,
     instructions:
       'Show the preview to the user, using plan_summary as its readable form when present. ' +
@@ -207,6 +207,28 @@ export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
         ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
           ? `Call the tool again with ${ctx.confirmationParam}: true to request a fresh token.`
           : 'Call the tool again with confirm: true to generate a fresh preview.',
+    },
+  };
+}
+
+/**
+ * Response when the confirmed call's arguments differ from the previewed ones.
+ * The failed check has already deleted the token.
+ */
+export function buildPreviewArgsMismatchResponse(ctx: ConfirmationContext): object {
+  return {
+    error: 'PREVIEW_ARGS_MISMATCH',
+    next_action: 'request_new_preview',
+    message: 'The arguments differ from the preview. Please request a new preview.',
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      reason:
+        'The confirmed call must send the previewed arguments. The confirmation token was deleted.',
+      resolution:
+        ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
+          ? `Call the tool again with ${ctx.confirmationParam}: true (without user_confirmed) and the arguments you intend to run.`
+          : 'Call the tool again with confirm: true (without user_confirmed) and the arguments you intend to run.',
     },
   };
 }

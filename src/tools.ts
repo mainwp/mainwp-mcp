@@ -38,19 +38,25 @@ import { handleConfirmationFlow } from './confirmation.js';
 import {
   decidePolicy,
   classifyDestructive,
+  declaresUsableBooleanParam,
   isToolAllowed,
   pinnedConfirmationParams,
   resolveConfirmationParam,
   isDashboardGatedAbility,
+  isUpdateAbility,
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
+import { withUpdatePlanSummary } from './update-plan.js';
 import {
   AGENT_WRITE_TIMEOUT_TEXT,
   approvalPendingText,
   describeAgentResponse,
 } from './agent-bridge.js';
 import { RequestTimeoutError } from './http-client.js';
+
+const UPDATE_TIMEOUT_TEXT =
+  'The server stopped waiting for the Dashboard, and the update may still be running. Assume it may have applied and re-read state before doing anything else.';
 
 /**
  * Options for tool execution
@@ -197,6 +203,8 @@ export async function executeTool(
 
   let abilityName: string | undefined;
   let annotations: AbilityAnnotations | undefined;
+  // Set once the executing call is known to carry a write, not a dry run.
+  let writeSent = false;
 
   try {
     // Check for cancellation before starting
@@ -286,7 +294,15 @@ export async function executeTool(
     // Note: Safe-mode early-return responses are intentionally excluded from
     // sessionDataBytes tracking. The session data limit is designed to prevent
     // runaway API responses, not small fixed-size local error messages.
-    if (decision === 'safe-mode-blocked') {
+    // An update tool may still preview. Dashboard 6.5 returns the plan for
+    // dry_run: true without contacting a child site, and rejects dry_run with
+    // confirm; stripping confirm above keeps the call a plain dry run.
+    const safeModePreview =
+      isUpdateAbility(abilityName) &&
+      args.dry_run === true &&
+      !Object.hasOwn(args, 'user_confirmed') &&
+      declaresUsableBooleanParam(ability.input_schema?.properties, 'dry_run');
+    if (decision === 'safe-mode-blocked' && !safeModePreview) {
       callLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
       return {
         content: [
@@ -336,6 +352,14 @@ export async function executeTool(
       effectiveArgs = confirmResult.effectiveArgs;
     }
 
+    // Read dry_run the way the Dashboard's rest_sanitize_boolean does, so a
+    // string "true" forwarded with confirmation off still counts as a dry run.
+    const dryRun = effectiveArgs.dry_run;
+    writeSent = !(
+      dryRun === true ||
+      (typeof dryRun === 'number' && dryRun !== 0) ||
+      (typeof dryRun === 'string' && !['', '0', 'false'].includes(dryRun.toLowerCase()))
+    );
     const result = await executeAbility(
       config,
       abilityName,
@@ -360,7 +384,9 @@ export async function executeTool(
             configIdentityHash(config),
             effectiveArgs.task_grant
           )
-        : result
+        : effectiveArgs.dry_run === true
+          ? withUpdatePlanSummary(abilityName, result)
+          : result
     );
 
     let responseBytes: number;
@@ -451,6 +477,24 @@ export async function executeTool(
         durationMs: Math.round(performance.now() - startTime),
       });
       return { content: [{ type: 'text', text: AGENT_WRITE_TIMEOUT_TEXT }] };
+    }
+    // Same unknown outcome for updates, which keep running on the Dashboard
+    // after the request is dropped. The error code is unchanged. A dry run
+    // keeps the plain timeout message, because it applies nothing.
+    if (
+      writeSent &&
+      isUpdateAbility(abilityName) &&
+      annotations?.idempotent !== true &&
+      (error instanceof RequestTimeoutError || gatewayTimeout)
+    ) {
+      callLogger.warning('Tool execution timed out; the outcome is unknown', {
+        toolName,
+        durationMs: Math.round(performance.now() - startTime),
+      });
+      return {
+        content: [{ type: 'text', text: formatErrorResponse(error, () => UPDATE_TIMEOUT_TEXT) }],
+        isError: true,
+      };
     }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {

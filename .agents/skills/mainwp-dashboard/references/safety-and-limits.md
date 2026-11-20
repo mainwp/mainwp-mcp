@@ -13,7 +13,9 @@ order:
    ability is resolved, so a blocked tool cannot be distinguished from a
    nonexistent one.
 2. `safe-mode-blocked`: destructive tool while safe mode is on. Outranks
-   confirmation, so a valid token cannot bypass it.
+   confirmation, so a valid token cannot bypass it. One exception: the Dashboard
+   update tools run a dry run that carries the boolean `dry_run: true` and no
+   `user_confirmed`.
 3. `needs-confirmation`: destructive tool while confirmation is required.
 4. `allow`.
 
@@ -97,7 +99,10 @@ groups whose tools are filtered out: `mainwp://status` `abilitiesCount` and `mai
 | `MAINWP_REQUIRE_USER_CONFIRMATION` | `true`  | Two-phase confirmation for destructive tools.        |
 
 In safe mode the server also strips an incoming `confirm` argument defensively
-before the block, so nothing reaches the Dashboard.
+before the block, so nothing reaches the Dashboard. An update tool called with
+the boolean `dry_run: true` is the exception: the Dashboard gets the dry run
+without `confirm` and returns the plan without applying it. Any other value,
+such as the string `"true"`, is blocked.
 
 When `MAINWP_REQUIRE_USER_CONFIRMATION=false`, the server stops gating
 destructive calls: no preview, no token, no second call. The user turned the
@@ -111,12 +116,14 @@ network-wide operation and get agreement before running it.
   tokens are dropped. A token can therefore
   become unusable before its 5 minutes are up during heavy use.
 - The token key is the Dashboard identity hash, the tool name, and the
-  canonicalized non-confirmation arguments. Nested
+  canonicalized non-confirmation arguments. For the update tools only, an
+  omitted top-level argument counts as its declared default. Nested
   values are canonicalized recursively, so a change anywhere in the argument
   tree, at any depth, invalidates the token.
 - Token checks that all return `PREVIEW_REQUIRED`: missing token, unknown or
   already-used token, token issued for another tool or another Dashboard
-  identity, arguments that no longer match, and no stored preview.
+  identity, and no stored preview. Arguments that no longer match return
+  `PREVIEW_ARGS_MISMATCH`.
 - A failed check deletes the token. Retrying the same confirmed call will not
   succeed; go back to the preview step.
 - `confirm` without a declared `dry_run` still issues a token but returns

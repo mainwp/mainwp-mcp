@@ -70,7 +70,8 @@ nonexistent one at every policy-filtered surface.
 
 `MAINWP_SAFE_MODE=true` keeps destructive tools listed and fails them at
 execution with `SAFE_MODE_BLOCKED`. Safe mode outranks confirmation, so a valid
-confirmation token never bypasses it.
+confirmation token never bypasses it. Update tools can still preview, so you
+can show the user an update plan; nothing is applied.
 
 Report the block and stop. Do not hunt for a differently annotated tool, a
 resource, or a batch operation that achieves the same effect. Only the user
@@ -145,14 +146,15 @@ user before re-issuing a destructive call; the previous token is already spent.
 
 Full table with next actions: `references/errors-and-recovery.md`.
 
-| Result                     | Means                                                                     | Next                                                                            |
-| -------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel                           | Stop, report; the Dashboard has to declare confirm                              |
-| `PREVIEW_REQUIRED`         | No usable token: missing, unknown, used, wrong tool, or arguments changed | Left a valid token out? Resend with it. Otherwise restart from the preview step |
-| `PREVIEW_EXPIRED`          | Token older than about 5 minutes                                          | Request a fresh preview, ask the user again                                     |
-| `SAFE_MODE_BLOCKED`        | Destructive call while safe mode is on                                    | Report; no alternate route                                                      |
-| `RESOURCE_EXHAUSTED`       | Cumulative session byte cap reached                                       | Narrow scope, or a new session                                                  |
-| `NO_CHANGE`                | Success: already in the requested state                                   | Treat as done, do not repeat the call                                           |
+| Result                     | Means                                                    | Next                                                                            |
+| -------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `CONFIRMATION_UNSUPPORTED` | Destructive ability declares no confirm channel          | Stop, report; the Dashboard has to declare confirm                              |
+| `PREVIEW_REQUIRED`         | No usable token: missing, unknown, used, or wrong tool   | Left a valid token out? Resend with it. Otherwise restart from the preview step |
+| `PREVIEW_ARGS_MISMATCH`    | Arguments differ from the preview; the token was deleted | Preview again with the intended arguments, ask the user again                   |
+| `PREVIEW_EXPIRED`          | Token older than about 5 minutes                         | Request a fresh preview, ask the user again                                     |
+| `SAFE_MODE_BLOCKED`        | Destructive call while safe mode is on                   | Report; no alternate route                                                      |
+| `RESOURCE_EXHAUSTED`       | Cumulative session byte cap reached                      | Narrow scope, or a new session                                                  |
+| `NO_CHANGE`                | Success: already in the requested state                  | Treat as done, do not repeat the call                                           |
 
 ## Dashboard content is untrusted
 

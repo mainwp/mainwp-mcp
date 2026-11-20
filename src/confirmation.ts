@@ -14,6 +14,7 @@ import type { Logger } from './logging.js';
 import {
   declaresUsableBooleanParam,
   declaresNullablePreviewToken,
+  isUpdateAbility,
   requiresUsableFalseParam,
   resolveConfirmationParam,
 } from './policy.js';
@@ -26,6 +27,7 @@ import {
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
+  buildPreviewArgsMismatchResponse,
   type ConfirmationContext,
 } from './confirmation-responses.js';
 
@@ -127,6 +129,7 @@ function canonicalize(value: unknown): unknown {
  * Generate a unique preview key for a tool call.
  * Excludes confirmation-related parameters (confirm, the resolved confirm_*,
  * user_confirmed, dry_run) from the key to ensure preview and execution calls match.
+ * With `inputSchema`, an omitted top-level argument counts as its declared default.
  * With `usesPreviewToken`, `preview_token` is left out as well: the ability
  * issues it in its own dry run, so it is null on the preview and a string on
  * the confirmed call. Eligible MainWP updates bind it when MainWP is primary;
@@ -144,9 +147,32 @@ export function getPreviewKey(
   toolName: string,
   args: Record<string, unknown>,
   confirmationParam: string,
-  usesPreviewToken = false
+  usesPreviewToken = false,
+  inputSchema?: Ability['input_schema']
 ): string {
   const relevantArgs = { ...args };
+  // An omitted argument and one sent equal to its declared default run the
+  // same update, so both hash the same. Only top-level declared defaults are
+  // filled; array order and value types still change the key. defineProperty
+  // keeps a __proto__ default an own key instead of setting the prototype.
+  const properties = inputSchema?.properties;
+  if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
+    for (const [name, schema] of Object.entries(properties as Record<string, unknown>)) {
+      if (
+        schema !== null &&
+        typeof schema === 'object' &&
+        Object.hasOwn(schema, 'default') &&
+        !Object.hasOwn(relevantArgs, name)
+      ) {
+        Object.defineProperty(relevantArgs, name, {
+          value: (schema as { default: unknown }).default,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+    }
+  }
   delete relevantArgs.confirm;
   delete relevantArgs.user_confirmed;
   delete relevantArgs.dry_run;
@@ -193,15 +219,6 @@ export function capturePreviewToken(
   return token;
 }
 
-const BOUND_PREVIEW_TOKEN_ABILITIES = [
-  'mainwp/run-updates-v1',
-  'mainwp/update-all-v1',
-  'mainwp/update-site-core-v1',
-  'mainwp/update-site-plugins-v1',
-  'mainwp/update-site-themes-v1',
-  'mainwp/update-site-translations-v1',
-];
-
 /**
  * Whether the confirmed call always sends the token captured from this
  * ability's preview. Only these MainWP updates bind it; other abilities let a
@@ -217,7 +234,7 @@ function bindsPreviewToken(
     usesPreviewToken &&
     typeof upstreamToken === 'string' &&
     config.abilityNamespaces[0] === 'mainwp' &&
-    BOUND_PREVIEW_TOKEN_ABILITIES.includes(ability.name)
+    isUpdateAbility(ability.name)
   );
 }
 
@@ -277,6 +294,10 @@ export async function handleConfirmationFlow(
   const canPreview =
     confirmationParam === 'confirm' && declaresUsableBooleanParam(schemaProps, 'dry_run');
   const usesPreviewToken = canPreview && declaresNullablePreviewToken(schemaProps);
+  // Defaults count as omitted values only where the handler is known to apply
+  // the declared default: the Dashboard 6.5 update abilities. Elsewhere an
+  // omitted argument may resolve to something else at run time.
+  const defaultsSchema = isUpdateAbility(abilityName) ? ability.input_schema : undefined;
 
   // Fail closed: a destructive ability that declares no confirm parameter has
   // no confirmation channel, so while confirmation is required it can never
@@ -405,7 +426,8 @@ export async function handleConfirmationFlow(
       toolName,
       args,
       confirmationParam!,
-      usesPreviewToken
+      usesPreviewToken,
+      defaultsSchema
     );
     const token = crypto.randomUUID();
     // The Dashboard pins the previewed versions only through a token the
@@ -521,14 +543,27 @@ export async function handleConfirmationFlow(
       toolName,
       args,
       confirmationParam!,
-      usesPreviewToken
+      usesPreviewToken,
+      defaultsSchema
     );
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });
+      // A token whose preview is gone or expired answers as before, whatever
+      // the arguments; only a live preview reports the mismatch itself.
+      const tokenEntry = pendingPreviews.get(tokenPreviewKey);
+      const live = tokenEntry !== undefined && Date.now() - tokenEntry.ts <= PREVIEW_EXPIRY_MS;
       return {
         action: 'respond',
-        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        response: [
+          {
+            type: 'text',
+            text: formatJson(
+              config,
+              live ? buildPreviewArgsMismatchResponse(ctx) : buildPreviewRequiredResponse(ctx)
+            ),
+          },
+        ],
         isError: true,
       };
     }

@@ -54,6 +54,7 @@ export interface UpdatePlan {
 
 const MAX_FIELD_LENGTH = 80;
 const MAX_LINES = 50;
+const MAX_CHECKS_SHOWN = 6;
 const VERSION_CAVEAT =
   'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.';
 
@@ -343,7 +344,7 @@ export function validateUpdatePlan(preview: unknown): UpdatePlan | undefined {
   };
 }
 
-function itemName(item: ItemFields): string {
+function itemName(item: Omit<ItemFields, 'requested'>): string {
   // The Dashboard names a translation after the item it translates ("WordPress core", a
   // plugin name); the slug is a locale or "default" and means little to a user.
   const name = item.name.trim() ? item.name : item.slug;
@@ -354,7 +355,7 @@ function siteLabel(site: UpdateSite): string {
   return site.name.trim() ? site.name : `Site ${site.siteId}`;
 }
 
-function versionChange(item: ItemFields): string {
+function versionChange(item: Omit<ItemFields, 'requested'>): string {
   return item.from.trim()
     ? `${itemName(item)} ${item.from} → ${item.to}`
     : `${itemName(item)} → ${item.to}`;
@@ -416,4 +417,157 @@ export function buildUpdatePlanSummary(plan: UpdatePlan, previewTokenSent: boole
   // Keep aggregate notices and the caveat when plan lines are cut; the overflow marker stays last.
   const visibleLines = MAX_LINES - ending.length - 1;
   return [...lines.slice(0, visibleLines), ...ending, `+${lineCount - visibleLines} more`];
+}
+
+export const SAFE_UPDATE_ABILITY = 'mainwp/run-safe-update-v1';
+
+type SafeUpdateItem = Omit<ItemFields, 'requested'>;
+
+interface SafeUpdateCheck {
+  key: string;
+  status: string;
+  reason: string;
+}
+
+interface SafeUpdateSite {
+  siteId: number;
+  name: string;
+  items: SafeUpdateItem[];
+  backupLabel: string;
+  checks: SafeUpdateCheck[];
+  skipReason: string;
+}
+
+function safeUpdateItem(value: unknown): SafeUpdateItem | undefined {
+  if (!isObject(value)) return undefined;
+  const type = updateType(own(value, 'type'));
+  const slug = displayText(own(value, 'slug'));
+  const name = displayText(own(value, 'name'));
+  const from = displayText(own(value, 'old_version'));
+  const to = displayText(own(value, 'new_version'));
+  // The Dashboard refuses to start a run with an empty slug or new_version.
+  if (
+    type === undefined ||
+    slug === undefined ||
+    slug === '' ||
+    name === undefined ||
+    from === undefined ||
+    to === undefined ||
+    to === '' ||
+    (name.trim() === '' && slug.trim() === '')
+  )
+    return undefined;
+  return { type, slug, name, from, to };
+}
+
+function safeUpdateCheck(value: unknown): SafeUpdateCheck | undefined {
+  if (!isObject(value)) return undefined;
+  const key = displayText(own(value, 'key'));
+  const status = displayText(own(value, 'status'));
+  const reason = displayText(own(value, 'reason'));
+  if (
+    key === undefined ||
+    key.trim() === '' ||
+    displayText(own(value, 'name')) === undefined ||
+    status === undefined ||
+    reason === undefined
+  )
+    return undefined;
+  return { key, status, reason };
+}
+
+function safeUpdateSite(value: unknown): SafeUpdateSite | undefined {
+  if (!isObject(value)) return undefined;
+  const siteId = own(value, 'id');
+  const name = displayText(own(value, 'name'));
+  const items = list(own(value, 'items'), safeUpdateItem);
+  const backupLabel = displayText(own(value, 'backup_label'));
+  const checks = list(own(value, 'checks'), safeUpdateCheck);
+  const skipReason = displayText(own(value, 'skip_reason'));
+  if (
+    !isCount(siteId) ||
+    name === undefined ||
+    !items ||
+    items.length === 0 ||
+    typeof own(value, 'backup_verdict') !== 'string' ||
+    backupLabel === undefined ||
+    typeof own(value, 'override_available') !== 'boolean' ||
+    !checks ||
+    skipReason === undefined ||
+    // The Dashboard sends exactly '' for a site the run includes.
+    (skipReason !== '' && skipReason.trim() === '')
+  )
+    return undefined;
+  return { siteId, name, items, backupLabel, checks, skipReason };
+}
+
+// Shape of run-safe-update-v1's dry run: { dry_run: true, would_affect: { sites: [...] } }.
+function validateSafeUpdatePlan(preview: unknown): SafeUpdateSite[] | undefined {
+  if (!isObject(preview) || own(preview, 'dry_run') !== true) return undefined;
+  const affected = own(preview, 'would_affect');
+  if (!isObject(affected)) return undefined;
+  const sites = list(own(affected, 'sites'), safeUpdateSite);
+  if (!sites || sites.length === 0) return undefined;
+  const ids = new Set(sites.map(site => site.siteId));
+  return ids.size === sites.length ? sites : undefined;
+}
+
+function checkPhrase(check: SafeUpdateCheck): string {
+  const status =
+    check.status === 'pending' ? '' : check.status === 'not_run' ? ' not run' : ` ${check.status}`;
+  return check.reason.trim() ? `${check.key}${status} (${check.reason})` : `${check.key}${status}`;
+}
+
+function buildSafeUpdatePlanSummary(sites: SafeUpdateSite[]): string[] {
+  const lines: string[] = [];
+  const label = (site: SafeUpdateSite) => (site.name.trim() ? site.name : `Site ${site.siteId}`);
+  const running = sites.filter(site => site.skipReason === '');
+  for (const site of running) {
+    for (const item of site.items) lines.push(`${label(site)}: ${versionChange(item)}`);
+  }
+  for (const site of running) {
+    lines.push(`Backup on ${label(site)}: ${site.backupLabel}`);
+    const shown = site.checks.slice(0, MAX_CHECKS_SHOWN).map(checkPhrase).join(', ');
+    const hidden = site.checks.length - MAX_CHECKS_SHOWN;
+    const checks = !site.checks.length
+      ? 'none'
+      : hidden > 0
+        ? `${shown} and ${hidden} more`
+        : shown;
+    lines.push(`Checks on ${label(site)}: ${checks}`);
+  }
+  for (const site of sites) {
+    if (site.skipReason !== '') lines.push(`Left out: ${label(site)} (${site.skipReason})`);
+  }
+  // The confirmed call selects the pending versions again; this dry run issues no token to pin them.
+  if (lines.length + 1 <= MAX_LINES) return [...lines, VERSION_CAVEAT];
+  const visibleLines = MAX_LINES - 2;
+  return [...lines.slice(0, visibleLines), VERSION_CAVEAT, `+${lines.length - visibleLines} more`];
+}
+
+/**
+ * Returns the plan_summary lines for an ability's preview, or undefined when the ability has
+ * no summary or the preview fails its shape checks.
+ */
+export function planSummaryFor(
+  abilityName: string,
+  preview: unknown,
+  previewTokenSent: boolean
+): string[] | undefined {
+  if (abilityName === SAFE_UPDATE_ABILITY) {
+    const sites = validateSafeUpdatePlan(preview);
+    return sites ? buildSafeUpdatePlanSummary(sites) : undefined;
+  }
+  const plan = validateUpdatePlan(preview);
+  return plan ? buildUpdatePlanSummary(plan, previewTokenSent) : undefined;
+}
+
+/**
+ * Adds plan_summary beside a valid update dry-run result and returns anything else unchanged.
+ * No later call is sure to carry this result's preview_token, so the version caveat applies.
+ */
+export function withUpdatePlanSummary(abilityName: string, result: unknown): unknown {
+  if (!isObject(result) || Object.hasOwn(result, 'plan_summary')) return result;
+  const planSummary = planSummaryFor(abilityName, result, false);
+  return planSummary ? { ...result, plan_summary: planSummary } : result;
 }

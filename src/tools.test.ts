@@ -3575,7 +3575,7 @@ describe('confirmation flow - full cycle', () => {
     );
 
     // Should be rejected — args don't match the preview
-    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.content[0].text).toContain('PREVIEW_ARGS_MISMATCH');
     expect(swapResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - arguments do not match preview',
@@ -3619,7 +3619,7 @@ describe('confirmation flow - full cycle', () => {
       mockLogger
     );
 
-    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.content[0].text).toContain('PREVIEW_ARGS_MISMATCH');
     expect(swapResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - arguments do not match preview',
@@ -3656,7 +3656,7 @@ describe('confirmation flow - full cycle', () => {
     confirmArgs.confirmation_token = token;
     const swapResult = await executeTool(baseConfig, 'delete_site_v1', confirmArgs, mockLogger);
 
-    expect(swapResult.content[0].text).toContain('PREVIEW_REQUIRED');
+    expect(swapResult.content[0].text).toContain('PREVIEW_ARGS_MISMATCH');
     expect(swapResult.isError).toBe(true);
     expect(mockLogger.warning).toHaveBeenCalledWith(
       'Confirmation failed - arguments do not match preview',
@@ -4102,7 +4102,7 @@ describe('generateInstructions', () => {
     const result = generateInstructions(meta, false, false);
 
     const [apiPart] = result.split(' Read-only');
-    expect(apiPart.length).toBeLessThanOrEqual(301); // 300 cap + punctuation guard
+    expect(apiPart.length).toBeLessThanOrEqual(1001); // 1000 cap + punctuation guard
     expect(apiPart).toContain('...');
     expect(result).toContain('Read-only. Safe to call');
   });

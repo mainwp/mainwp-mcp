@@ -19,6 +19,7 @@ import {
 } from './abilities.js';
 import { createFetch, paginateApi, readLimitedBody } from './http-client.js';
 import { generateToolHelp, generateHelpDocument } from './help.js';
+import { abilityToTool } from './tool-schema.js';
 import { McpError, MCP_ERROR_CODES, toMcpErrorResponse } from './errors.js';
 import {
   clearKnownSecrets,
@@ -385,6 +386,33 @@ describe('fetchAbilities', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('keeps 457 characters of instructions in discovery and the tool description', async () => {
+    // Dashboard 6.5 sends 457 characters for update-all-v1.
+    const instructions = `${'Changes child sites. '.repeat(21)}The end is kept.`;
+    expect(instructions).toHaveLength(457);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          ...sampleAbilities[0],
+          meta: { annotations: { ...sampleAbilities[0].meta!.annotations, instructions } },
+        },
+      ],
+      headers: new Headers(),
+    });
+
+    const [ability] = await fetchAbilities(baseConfig);
+
+    expect(ability.meta?.annotations?.instructions).toBe(instructions);
+    expect(abilityToTool(ability, 'mainwp').description).toContain(instructions);
+    // Description composition caps instructions again on its own.
+    const direct = {
+      ...sampleAbilities[0],
+      meta: { annotations: { ...sampleAbilities[0].meta!.annotations, instructions } },
+    } as Ability;
+    expect(abilityToTool(direct, 'mainwp').description).toContain(instructions);
   });
 
   it('should fetch and cache abilities', async () => {

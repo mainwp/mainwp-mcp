@@ -584,6 +584,8 @@ describe('MCP request handlers', () => {
       "Show a tool's preview as that plan; previews shown together can be approved in one explicit reply.",
       'do not gate updates',
       'Never remove an update from the ignore list',
+      'Never set ignore_backup_gate unless the user explicitly asks',
+      'recommend backing it up or waiting for its offsite upload',
       'Before advising on, planning or drafting for a site, call get_site_knowledge_v1 if available',
       'even after reading one record or a list: neither shows which client and agency records apply',
       "For client-wide work call get_client_knowledge_v1 if available, then each site's summary",
@@ -1033,7 +1035,7 @@ describe('MCP request handlers', () => {
 
     for (const result of [help, abilities]) {
       const text = (result.contents as Array<{ text: string }>)[0].text;
-      expect(text).not.toContain('I'.repeat(301));
+      expect(text).not.toContain('I'.repeat(1001));
       expect(text).not.toContain('S'.repeat(501));
     }
     await client.close();
