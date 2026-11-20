@@ -417,3 +417,13 @@ export function buildUpdatePlanSummary(plan: UpdatePlan, previewTokenSent: boole
   const visibleLines = MAX_LINES - ending.length - 1;
   return [...lines.slice(0, visibleLines), ...ending, `+${lineCount - visibleLines} more`];
 }
+
+/**
+ * Adds plan_summary beside a valid update dry-run result and returns anything else unchanged.
+ * No later call is sure to carry this result's preview_token, so the version caveat applies.
+ */
+export function withUpdatePlanSummary(result: unknown): unknown {
+  if (!isObject(result) || Object.hasOwn(result, 'plan_summary')) return result;
+  const plan = validateUpdatePlan(result);
+  return plan ? { ...result, plan_summary: buildUpdatePlanSummary(plan, false) } : result;
+}

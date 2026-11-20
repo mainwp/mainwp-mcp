@@ -699,4 +699,68 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(requests[0].input).toEqual({ ...batchArgs, dry_run: true });
     }
   );
+
+  describe('own dry_run', () => {
+    async function dryRun(client: Client, name: string, args: Record<string, unknown>) {
+      const response = await call(client, name, { ...args, dry_run: true });
+      expect(response.result.isError).toBeUndefined();
+      return response.data;
+    }
+
+    it.each(
+      [true, false].flatMap(requireUserConfirmation =>
+        UPDATE_ABILITIES.flatMap(ability =>
+          backupSkips.map(skip => ({ requireUserConfirmation, ability, ...skip }))
+        )
+      )
+    )(
+      '$ability adds the confirm preview plan_summary beside the raw result (confirmation $requireUserConfirmation, $reason)',
+      async ({ requireUserConfirmation, ability, reason }) => {
+        const upstream = makeBackupGatePreview(ability, reason);
+        hostilePreview = upstream;
+        const batch = ability === UPDATE_ABILITIES[0] || ability === UPDATE_ABILITIES[1];
+        const args = batch ? { site_ids_or_domains: [3] } : { site_id_or_domain: 3 };
+        const confirmed = await preview(
+          await connect({ requireUserConfirmation: true }),
+          toolName(ability),
+          args
+        );
+        const { plan_summary: planSummary, ...raw } = await dryRun(
+          await connect({ requireUserConfirmation }),
+          toolName(ability),
+          args
+        );
+        expect(raw).toEqual(upstream);
+        expect(planSummary).toEqual(confirmed.plan_summary);
+        expect(requests).toHaveLength(2);
+        expect(requests[1].input).toEqual({ ...args, dry_run: true });
+      }
+    );
+
+    it('summarizes the multi-site preview the same way as the confirm preview', async () => {
+      const confirmed = await preview(await connect());
+      const data = await dryRun(await connect(), 'run_updates_v1', batchArgs);
+      expect(data).toEqual({ ...makeUpdatePreview(), plan_summary: confirmed.plan_summary });
+      expect(data.plan_summary).toContain(
+        'Held back: Yoast SEO on Cedar Nonprofit (ignored on this site)'
+      );
+    });
+
+    it.each(hostileCases)('hostile result ($label) is relayed raw', async ({ corrupt }) => {
+      hostilePreview = corrupt(makeUpdatePreview());
+      const data = await dryRun(await connect(), 'run_updates_v1', batchArgs);
+      expect(data).toEqual(hostilePreview);
+    });
+
+    it('keeps an upstream plan_summary field instead of replacing it', async () => {
+      hostilePreview = { ...makeUpdatePreview(), plan_summary: 'from upstream' };
+      const data = await dryRun(await connect(), 'run_updates_v1', batchArgs);
+      expect(data).toEqual(hostilePreview);
+    });
+
+    it('relays a non-update dry_run result unchanged', async () => {
+      const data = await dryRun(await connect(), 'unignore_site_updates_v1', unignoreArgs);
+      expect(data).toEqual(makeUnignorePreview());
+    });
+  });
 });

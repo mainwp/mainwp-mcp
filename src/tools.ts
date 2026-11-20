@@ -45,6 +45,7 @@ import {
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
+import { withUpdatePlanSummary } from './update-plan.js';
 import {
   AGENT_WRITE_TIMEOUT_TEXT,
   approvalPendingText,
@@ -360,7 +361,9 @@ export async function executeTool(
             configIdentityHash(config),
             effectiveArgs.task_grant
           )
-        : result
+        : effectiveArgs.dry_run === true
+          ? withUpdatePlanSummary(result)
+          : result
     );
 
     let responseBytes: number;
