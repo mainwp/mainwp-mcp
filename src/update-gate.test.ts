@@ -392,6 +392,77 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests[1].input).toEqual({ ...batchArgs, confirm: true });
   });
 
+  describe('confirmed update with no response', () => {
+    const unknownOutcome =
+      'The server stopped waiting for the Dashboard, and the update may still be running. Assume it may have applied and re-read state before doing anything else.';
+    let writes: number;
+
+    // Previews answer normally; the confirmed write hangs or gets a gateway status.
+    function stallWrites(gatewayStatus?: number) {
+      const answer = mockFetch.getMockImplementation()!;
+      writes = 0;
+      mockFetch.mockImplementation(async (rawUrl: string, options: RequestInit) => {
+        const confirmed = options.body
+          ? JSON.parse(String(options.body)).input?.confirm === true
+          : new URL(rawUrl).searchParams.get('input[confirm]') === '1';
+        if (!rawUrl.includes('/run') || !confirmed) return answer(rawUrl, options);
+        writes += 1;
+        if (gatewayStatus !== undefined) {
+          return new Response('<html>Gateway Timeout</html>', { status: gatewayStatus });
+        }
+        return new Promise((_resolve, reject) => {
+          options.signal!.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          );
+        });
+      });
+    }
+
+    it.each(['run_updates_v1', 'update_all_v1', 'update_site_plugins_v1'])(
+      'reports a local timeout on %s as an unknown outcome after one write',
+      async name => {
+        const args = name === 'update_site_plugins_v1' ? { site_id_or_domain: 1 } : batchArgs;
+        const client = await connect({ requestTimeout: 50 });
+        const data = await preview(client, name, args);
+        stallWrites();
+        const response = await call(client, name, confirmation(args, data.confirmation_token));
+        expect(response.result.isError).toBe(true);
+        expect(response.data).toEqual({ error: { code: -32001, message: unknownOutcome } });
+        expect(JSON.stringify(response.data)).not.toMatch(/job/i);
+        expect(writes).toBe(1);
+      }
+    );
+
+    it.each([504, 524])('reports HTTP %i on run_updates_v1 as an unknown outcome', async status => {
+      const client = await connect();
+      const data = await preview(client);
+      stallWrites(status);
+      const response = await call(
+        client,
+        'run_updates_v1',
+        confirmation(batchArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error.code).toBe(-32000);
+      expect(response.data.error.message).toBe(unknownOutcome);
+      expect(writes).toBe(1);
+    });
+
+    it('keeps the plain timeout message for tools outside the update list', async () => {
+      const client = await connect({ requestTimeout: 50 });
+      const data = await preview(client, 'unignore_site_updates_v1', unignoreArgs);
+      stallWrites();
+      const response = await call(
+        client,
+        'unignore_site_updates_v1',
+        confirmation(unignoreArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error.code).toBe(-32001);
+      expect(response.data.error.message).toMatch(/^Request timeout after 50ms/);
+    });
+  });
+
   it('rejects changed arguments with PREVIEW_ARGS_MISMATCH without executing', async () => {
     const client = await connect();
     const data = await preview(client);

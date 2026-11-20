@@ -89,6 +89,22 @@ export function isDashboardGatedAbility(abilityName: string | undefined): boolea
   ].includes(abilityName ?? '');
 }
 
+/**
+ * The Dashboard update abilities. Dashboard 6.5 marks each one destructive
+ * and not idempotent, and answers dry_run: true with a plan before it reads
+ * confirm or contacts a child site.
+ */
+export function isUpdateAbility(abilityName: string | undefined): boolean {
+  return [
+    'mainwp/run-updates-v1',
+    'mainwp/update-all-v1',
+    'mainwp/update-site-core-v1',
+    'mainwp/update-site-plugins-v1',
+    'mainwp/update-site-themes-v1',
+    'mainwp/update-site-translations-v1',
+  ].includes(abilityName ?? '');
+}
+
 /** Return whether a tool is permitted by the configured allow/block lists. */
 export function isToolAllowed(config: PolicyGateConfig, toolName: string): boolean {
   return decidePolicy(config, toolName) === 'allow';

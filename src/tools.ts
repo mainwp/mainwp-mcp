@@ -42,6 +42,7 @@ import {
   pinnedConfirmationParams,
   resolveConfirmationParam,
   isDashboardGatedAbility,
+  isUpdateAbility,
 } from './policy.js';
 import { buildSafeModeBlockedResponse, buildNoChangeResponse } from './confirmation-responses.js';
 import { createWriteOnlyRedactor, type WriteOnlyRedactor } from './write-only.js';
@@ -52,6 +53,9 @@ import {
   describeAgentResponse,
 } from './agent-bridge.js';
 import { RequestTimeoutError } from './http-client.js';
+
+const UPDATE_TIMEOUT_TEXT =
+  'The server stopped waiting for the Dashboard, and the update may still be running. Assume it may have applied and re-read state before doing anything else.';
 
 /**
  * Options for tool execution
@@ -454,6 +458,22 @@ export async function executeTool(
         durationMs: Math.round(performance.now() - startTime),
       });
       return { content: [{ type: 'text', text: AGENT_WRITE_TIMEOUT_TEXT }] };
+    }
+    // Same unknown outcome for updates, which keep running on the Dashboard
+    // after the request is dropped. The error code is unchanged.
+    if (
+      isUpdateAbility(abilityName) &&
+      annotations?.idempotent !== true &&
+      (error instanceof RequestTimeoutError || gatewayTimeout)
+    ) {
+      callLogger.warning('Tool execution timed out; the outcome is unknown', {
+        toolName,
+        durationMs: Math.round(performance.now() - startTime),
+      });
+      return {
+        content: [{ type: 'text', text: formatErrorResponse(error, () => UPDATE_TIMEOUT_TEXT) }],
+        isError: true,
+      };
     }
     // Idempotent no-op: tool already achieved the desired state (e.g. already_active)
     if (annotations?.idempotent && isNoOpError(error)) {
