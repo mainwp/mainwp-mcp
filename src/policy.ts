@@ -91,8 +91,9 @@ export function isDashboardGatedAbility(abilityName: string | undefined): boolea
 
 /**
  * The Dashboard update abilities. Dashboard 6.5 marks each one destructive
- * and not idempotent, and answers dry_run: true with a plan before it reads
- * confirm or contacts a child site.
+ * and not idempotent. Each returns a plan for dry_run: true without contacting
+ * a child site, rejects dry_run together with confirm, and applies the
+ * declared input defaults when an argument is omitted.
  */
 export function isUpdateAbility(abilityName: string | undefined): boolean {
   return [

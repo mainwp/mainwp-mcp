@@ -2159,6 +2159,7 @@ export function matchesStaleTokenAnswer(text: string): boolean {
 
   return [
     /\bpreview[_ ]required\b/,
+    /\bpreview[_ ]args[_ ]mismatch\b/,
     /\b(?:token|confirmation|preview)\b.{0,80}\b(?:rejected|invalid|invalidated|no longer valid|not valid|expired|refused|would not|wouldn't|did not (?:work|apply|carry|transfer))\b/,
     /\b(?:rejected|invalidated|refused)\b.{0,60}\b(?:token|confirmation|preview)\b/,
     /\b(?:token|confirmation|preview)\b.{0,60}\b(?:bound|tied|specific|scoped|only valid)\b/,

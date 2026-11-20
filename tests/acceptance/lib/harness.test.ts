@@ -1704,6 +1704,7 @@ describe('gap-targeting agent matchers', () => {
 
   it.each([
     'The server answered PREVIEW_REQUIRED: the token was rejected once the site changed.',
+    'The server answered PREVIEW_ARGS_MISMATCH because the site changed.',
     'That confirmation token is bound to the previewed arguments, so a fresh preview was required.',
     'I needed a new preview because the old confirmation was no longer valid.',
   ])('accepts a stale-token answer: %s', finalText => {

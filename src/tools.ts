@@ -203,6 +203,8 @@ export async function executeTool(
 
   let abilityName: string | undefined;
   let annotations: AbilityAnnotations | undefined;
+  // Set once the executing call is known to carry a write, not a dry run.
+  let writeSent = false;
 
   try {
     // Check for cancellation before starting
@@ -292,9 +294,9 @@ export async function executeTool(
     // Note: Safe-mode early-return responses are intentionally excluded from
     // sessionDataBytes tracking. The session data limit is designed to prevent
     // runaway API responses, not small fixed-size local error messages.
-    // An update tool may still preview: Dashboard 6.5 answers dry_run: true
-    // with a plan before it reads confirm or contacts a child site, and any
-    // confirm argument was stripped above.
+    // An update tool may still preview. Dashboard 6.5 returns the plan for
+    // dry_run: true without contacting a child site, and rejects dry_run with
+    // confirm; stripping confirm above keeps the call a plain dry run.
     const safeModePreview =
       isUpdateAbility(abilityName) &&
       args.dry_run === true &&
@@ -350,6 +352,7 @@ export async function executeTool(
       effectiveArgs = confirmResult.effectiveArgs;
     }
 
+    writeSent = effectiveArgs.dry_run !== true;
     const result = await executeAbility(
       config,
       abilityName,
@@ -469,8 +472,10 @@ export async function executeTool(
       return { content: [{ type: 'text', text: AGENT_WRITE_TIMEOUT_TEXT }] };
     }
     // Same unknown outcome for updates, which keep running on the Dashboard
-    // after the request is dropped. The error code is unchanged.
+    // after the request is dropped. The error code is unchanged. A dry run
+    // keeps the plain timeout message, because it applies nothing.
     if (
+      writeSent &&
       isUpdateAbility(abilityName) &&
       annotations?.idempotent !== true &&
       (error instanceof RequestTimeoutError || gatewayTimeout)

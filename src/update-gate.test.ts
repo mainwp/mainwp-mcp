@@ -422,7 +422,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       'reports a local timeout on %s as an unknown outcome after one write',
       async name => {
         const args = name === 'update_site_plugins_v1' ? { site_id_or_domain: 1 } : batchArgs;
-        const client = await connect({ requestTimeout: 50 });
+        const client = await connect({ requestTimeout: 50, retryEnabled: true });
         const data = await preview(client, name, args);
         stallWrites();
         const response = await call(client, name, confirmation(args, data.confirmation_token));
@@ -434,7 +434,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     );
 
     it.each([504, 524])('reports HTTP %i on run_updates_v1 as an unknown outcome', async status => {
-      const client = await connect();
+      const client = await connect({ retryEnabled: true });
       const data = await preview(client);
       stallWrites(status);
       const response = await call(
@@ -460,6 +460,19 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(response.result.isError).toBe(true);
       expect(response.data.error.code).toBe(-32001);
       expect(response.data.error.message).toMatch(/^Request timeout after 50ms/);
+    });
+
+    it('keeps the gateway message for a dry run, which applies nothing', async () => {
+      const client = await connect({ safeMode: true, retryEnabled: true });
+      mockFetch.mockImplementation(async (rawUrl: string) =>
+        rawUrl.includes('/run')
+          ? new Response('<html>Gateway Timeout</html>', { status: 504 })
+          : new Response(JSON.stringify(catalog))
+      );
+      const response = await call(client, 'run_updates_v1', { ...batchArgs, dry_run: true });
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error.code).toBe(-32000);
+      expect(response.data.error.message).not.toBe(unknownOutcome);
     });
   });
 
@@ -596,6 +609,40 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('keeps PREVIEW_REQUIRED for an expired token sent with changed arguments', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-04T12:00:00Z'));
+    const client = await connect();
+    const data = await preview(client);
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000 + 1);
+    const response = await call(
+      client,
+      'run_updates_v1',
+      confirmation({ site_ids_or_domains: [2] }, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('keeps defaults significant for destructive tools outside the update list', async () => {
+    const entry = catalog.find(candidate => candidate.name === 'mainwp/unignore-site-updates-v1')!;
+    (entry.input_schema!.properties as Record<string, unknown>).include_archived = {
+      type: 'boolean',
+      default: false,
+    };
+    const client = await connect();
+    const data = await preview(client, 'unignore_site_updates_v1', unignoreArgs);
+    const response = await call(
+      client,
+      'unignore_site_updates_v1',
+      confirmation({ ...unignoreArgs, include_archived: false }, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
+    expect(requests).toHaveLength(1);
+  });
+
   it('rejects token reuse with PREVIEW_REQUIRED after one execution', async () => {
     const client = await connect();
     const data = await preview(client);
@@ -688,6 +735,23 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain('Tool is not allowed');
+      expect(requests).toHaveLength(0);
+    });
+
+    it.each([
+      ['no dry_run property', undefined],
+      ['a non-boolean dry_run property', { type: 'string' }],
+    ])('blocks an update tool whose schema has %s', async (_label, dryRunSchema) => {
+      const entry = catalog.find(candidate => candidate.name === 'mainwp/run-updates-v1')!;
+      const properties = entry.input_schema!.properties as Record<string, unknown>;
+      delete properties.dry_run;
+      if (dryRunSchema) properties.dry_run = dryRunSchema;
+      const client = await connect({ safeMode: true });
+      const result = await client.callTool({
+        name: 'run_updates_v1',
+        arguments: { ...batchArgs, dry_run: true },
+      });
+      expect(result.isError).toBe(true);
       expect(requests).toHaveLength(0);
     });
   });
