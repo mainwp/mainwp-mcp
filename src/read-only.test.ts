@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from './index.js';
@@ -47,6 +50,7 @@ describe('read-only access through MCP', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it.each([undefined, null, 'true', 1, false])(
@@ -179,6 +183,13 @@ describe('read-only access through MCP', () => {
   });
 
   it('keeps both setup tools available before configuration', async () => {
+    // A developer's own ~/.config/mainwp-mcp/settings.json or a settings.json in
+    // the working directory would configure the server and skip setup mode.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-mcp-read-only-'));
+    onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+    vi.stubEnv('HOME', root);
+    expect(os.homedir()).toBe(root);
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
     vi.stubEnv('MAINWP_READ_ONLY', 'true');
     vi.stubEnv('MAINWP_URL', '');
     vi.stubEnv('MAINWP_USER', '');
