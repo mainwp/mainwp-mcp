@@ -38,6 +38,7 @@ import { handleConfirmationFlow } from './confirmation.js';
 import {
   decidePolicy,
   classifyDestructive,
+  declaresUsableBooleanParam,
   isToolAllowed,
   pinnedConfirmationParams,
   resolveConfirmationParam,
@@ -291,7 +292,15 @@ export async function executeTool(
     // Note: Safe-mode early-return responses are intentionally excluded from
     // sessionDataBytes tracking. The session data limit is designed to prevent
     // runaway API responses, not small fixed-size local error messages.
-    if (decision === 'safe-mode-blocked') {
+    // An update tool may still preview: Dashboard 6.5 answers dry_run: true
+    // with a plan before it reads confirm or contacts a child site, and any
+    // confirm argument was stripped above.
+    const safeModePreview =
+      isUpdateAbility(abilityName) &&
+      args.dry_run === true &&
+      args.user_confirmed !== true &&
+      declaresUsableBooleanParam(ability.input_schema?.properties, 'dry_run');
+    if (decision === 'safe-mode-blocked' && !safeModePreview) {
       callLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
       return {
         content: [

@@ -70,7 +70,9 @@ nonexistent one at every policy-filtered surface.
 
 `MAINWP_SAFE_MODE=true` keeps destructive tools listed and fails them at
 execution with `SAFE_MODE_BLOCKED`. Safe mode outranks confirmation, so a valid
-confirmation token never bypasses it.
+confirmation token never bypasses it. The update tools still answer a call with
+the boolean `dry_run: true`, so you can show the user an update plan; nothing
+is applied.
 
 Report the block and stop. Do not hunt for a differently annotated tool, a
 resource, or a batch operation that achieves the same effect. Only the user

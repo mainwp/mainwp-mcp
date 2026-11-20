@@ -626,6 +626,72 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     }
   );
 
+  describe('safe mode dry runs', () => {
+    const argsFor = (ability: string) =>
+      ability === UPDATE_ABILITIES[0] || ability === UPDATE_ABILITIES[1]
+        ? batchArgs
+        : { site_id_or_domain: 1 };
+
+    it.each(UPDATE_ABILITIES)('lets literal dry_run: true preview %s', async ability => {
+      const client = await connect({ safeMode: true });
+      const args = argsFor(ability);
+      const response = await call(client, toolName(ability), { ...args, dry_run: true });
+      expect(response.result.isError).toBeUndefined();
+      expect(response.data.dry_run).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ ability, method: 'POST' });
+      expect(requests[0].input).toEqual({ ...args, dry_run: true });
+    });
+
+    it('strips confirm from a safe mode dry run', async () => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'run_updates_v1', {
+        ...batchArgs,
+        dry_run: true,
+        confirm: true,
+      });
+      expect(response.result.isError).toBeUndefined();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].input).toEqual({ ...batchArgs, dry_run: true });
+    });
+
+    it.each([
+      ['dry_run: false', { dry_run: false }],
+      ['no dry_run', {}],
+      ["dry_run: 'true'", { dry_run: 'true' }],
+      ['dry_run: 1', { dry_run: 1 }],
+      ['dry_run with user_confirmed', { dry_run: true, user_confirmed: true }],
+    ])('blocks run_updates_v1 with %s', async (_label, extra) => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'run_updates_v1', { ...batchArgs, ...extra });
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error).toBe('SAFE_MODE_BLOCKED');
+      expect(requests).toHaveLength(0);
+    });
+
+    it('blocks dry_run on a destructive tool outside the update list', async () => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'unignore_site_updates_v1', {
+        ...unignoreArgs,
+        dry_run: true,
+      });
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error).toBe('SAFE_MODE_BLOCKED');
+      expect(requests).toHaveLength(0);
+    });
+
+    it('keeps the tool blocklist ahead of the dry run allowance', async () => {
+      const client = await connect({ safeMode: true, blockedTools: ['run_updates_v1'] });
+      const result = await client.callTool({
+        name: 'run_updates_v1',
+        arguments: { ...batchArgs, dry_run: true },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('Tool is not allowed');
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it('confirmation off passes confirm directly through in one call', async () => {
     const client = await connect({ requireUserConfirmation: false });
     const response = await call(client, 'run_updates_v1', { ...batchArgs, confirm: true });

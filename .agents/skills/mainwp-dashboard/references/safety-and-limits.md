@@ -13,7 +13,9 @@ order:
    ability is resolved, so a blocked tool cannot be distinguished from a
    nonexistent one.
 2. `safe-mode-blocked`: destructive tool while safe mode is on. Outranks
-   confirmation, so a valid token cannot bypass it.
+   confirmation, so a valid token cannot bypass it. One exception: the update
+   tools (`run_updates`, `update_all` and `update_site_*`) run when the call
+   carries the boolean `dry_run: true` and no `user_confirmed`.
 3. `needs-confirmation`: destructive tool while confirmation is required.
 4. `allow`.
 
@@ -97,7 +99,10 @@ groups whose tools are filtered out: `mainwp://status` `abilitiesCount` and `mai
 | `MAINWP_REQUIRE_USER_CONFIRMATION` | `true`  | Two-phase confirmation for destructive tools.        |
 
 In safe mode the server also strips an incoming `confirm` argument defensively
-before the block, so nothing reaches the Dashboard.
+before the block, so nothing reaches the Dashboard. An update tool called with
+the boolean `dry_run: true` is the exception: the Dashboard gets the dry run
+without `confirm` and returns the plan without applying it. Any other value,
+such as the string `"true"`, is blocked.
 
 When `MAINWP_REQUIRE_USER_CONFIRMATION=false`, the server stops gating
 destructive calls: no preview, no token, no second call. The user turned the
