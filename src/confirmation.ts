@@ -26,6 +26,7 @@ import {
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
+  buildPreviewArgsMismatchResponse,
   type ConfirmationContext,
 } from './confirmation-responses.js';
 
@@ -548,7 +549,9 @@ export async function handleConfirmationFlow(
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });
       return {
         action: 'respond',
-        response: [{ type: 'text', text: formatJson(config, buildPreviewRequiredResponse(ctx)) }],
+        response: [
+          { type: 'text', text: formatJson(config, buildPreviewArgsMismatchResponse(ctx)) },
+        ],
         isError: true,
       };
     }

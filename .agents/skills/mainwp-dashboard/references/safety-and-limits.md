@@ -111,12 +111,14 @@ network-wide operation and get agreement before running it.
   tokens are dropped. A token can therefore
   become unusable before its 5 minutes are up during heavy use.
 - The token key is the Dashboard identity hash, the tool name, and the
-  canonicalized non-confirmation arguments. Nested
+  canonicalized non-confirmation arguments, with an omitted top-level argument
+  counted as its declared default. Nested
   values are canonicalized recursively, so a change anywhere in the argument
   tree, at any depth, invalidates the token.
 - Token checks that all return `PREVIEW_REQUIRED`: missing token, unknown or
   already-used token, token issued for another tool or another Dashboard
-  identity, arguments that no longer match, and no stored preview.
+  identity, and no stored preview. Arguments that no longer match return
+  `PREVIEW_ARGS_MISMATCH`.
 - A failed check deletes the token. Retrying the same confirmed call will not
   succeed; go back to the preview step.
 - `confirm` without a declared `dry_run` still issues a token but returns

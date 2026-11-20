@@ -536,7 +536,7 @@ describe('preview_token confirmation flow', () => {
     const token = await preview(client);
     const result = await confirm(client, token, args);
     expect(result.isError).toBe(true);
-    expect(responseData(result).error).toBe('PREVIEW_REQUIRED');
+    expect(responseData(result).error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(upstreamInputs()).toHaveLength(1);
   });
 
@@ -583,7 +583,7 @@ describe('preview_token confirmation flow', () => {
         preview_token: 'changed_preview_token_0123456789',
       });
       expect(result.isError).toBe(true);
-      expect(responseData(result).error).toBe('PREVIEW_REQUIRED');
+      expect(responseData(result).error).toBe('PREVIEW_ARGS_MISMATCH');
       expect(upstreamInputs()).toEqual(before);
     }
   );

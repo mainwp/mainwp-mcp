@@ -392,7 +392,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests[1].input).toEqual({ ...batchArgs, confirm: true });
   });
 
-  it('rejects changed arguments with PREVIEW_REQUIRED without executing', async () => {
+  it('rejects changed arguments with PREVIEW_ARGS_MISMATCH without executing', async () => {
     const client = await connect();
     const data = await preview(client);
     const response = await call(
@@ -401,7 +401,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       confirmation({ site_ids_or_domains: [2] }, data.confirmation_token)
     );
     expect(response.result.isError).toBe(true);
-    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(requests).toHaveLength(1);
   });
 
@@ -440,6 +440,32 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(requests).toHaveLength(2);
       expect(requests[1].input).toEqual({ ...confirmArgs, confirm: true });
     });
+
+    it.each([
+      ['string site IDs', { site_ids_or_domains: ['1', '2', '3'] }],
+      ['reordered site IDs', { site_ids_or_domains: [3, 2, 1] }],
+    ])(
+      'rejects %s with PREVIEW_ARGS_MISMATCH and deletes the token',
+      async (_label, confirmArgs) => {
+        const client = await connect();
+        const data = await preview(client, 'run_updates_v1', batchArgs);
+        const response = await call(
+          client,
+          'run_updates_v1',
+          confirmation(confirmArgs, data.confirmation_token)
+        );
+        expect(response.result.isError).toBe(true);
+        expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
+        const retry = await call(
+          client,
+          'run_updates_v1',
+          confirmation(batchArgs, data.confirmation_token)
+        );
+        expect(retry.result.isError).toBe(true);
+        expect(retry.data.error).toBe('PREVIEW_REQUIRED');
+        expect(requests).toHaveLength(1);
+      }
+    );
   });
 
   it('pins ignore_backup_gate to the confirm preview and rejects adding the override without executing', async () => {
@@ -459,7 +485,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       confirmation({ ...args, ignore_backup_gate: true }, data.confirmation_token)
     );
     expect(response.result.isError).toBe(true);
-    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(requests).toHaveLength(1);
     expect(requests[0].input).toEqual({ ...args, dry_run: true });
   });
