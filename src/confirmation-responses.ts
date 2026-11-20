@@ -7,7 +7,7 @@
  * MCP errors in errors.ts.
  */
 
-import { buildUpdatePlanSummary, validateUpdatePlan } from './update-plan.js';
+import { planSummaryFor } from './update-plan.js';
 
 /**
  * Common context for confirmation-related responses
@@ -136,13 +136,13 @@ export function buildConfirmationRequiredResponse(
   token: string,
   previewTokenSent: boolean
 ): object {
-  const plan = validateUpdatePlan(preview);
+  const planSummary = planSummaryFor(ctx.ability, preview, previewTokenSent);
   return {
     status: 'CONFIRMATION_REQUIRED',
     next_action: 'show_preview_and_confirm',
     message: 'Preview generated. Review the changes below and confirm to proceed.',
     preview,
-    ...(plan ? { plan_summary: buildUpdatePlanSummary(plan, previewTokenSent) } : {}),
+    ...(planSummary ? { plan_summary: planSummary } : {}),
     confirmation_token: token,
     instructions:
       'Show the preview to the user, using plan_summary as its readable form when present. ' +

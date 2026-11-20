@@ -362,7 +362,7 @@ export async function executeTool(
             effectiveArgs.task_grant
           )
         : effectiveArgs.dry_run === true
-          ? withUpdatePlanSummary(result)
+          ? withUpdatePlanSummary(abilityName, result)
           : result
     );
 

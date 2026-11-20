@@ -17,6 +17,9 @@ import {
   makeUpdatePreview,
   makeExecutedUpdates,
   makeUnignorePreview,
+  makeSafeUpdateAbility,
+  makeSafeUpdatePreview,
+  SAFE_UPDATE_ABILITY,
 } from '../tests/helpers/update-gate.js';
 import type { Config } from './config.js';
 
@@ -175,6 +178,18 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
                 removed: [unignoreArgs.slugs[0]],
                 not_held: [unignoreArgs.slugs[1]],
                 count: 1,
+              }
+        );
+      }
+      if (ability === SAFE_UPDATE_ABILITY) {
+        return json(
+          input.dry_run
+            ? (hostilePreview ?? makeSafeUpdatePreview())
+            : {
+                dry_run: false,
+                run_id: 7,
+                url: 'https://dashboard.test/wp-admin/admin.php?page=SafeUpdates&run_id=7',
+                conflicts: [],
               }
         );
       }
@@ -761,6 +776,102 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     it('relays a non-update dry_run result unchanged', async () => {
       const data = await dryRun(await connect(), 'unignore_site_updates_v1', unignoreArgs);
       expect(data).toEqual(makeUnignorePreview());
+    });
+  });
+
+  describe('run_safe_update_v1', () => {
+    const safeArgs = { site_ids_or_domains: [1, 2, 3], types: ['plugins'] };
+    const safeSummary = [
+      'Acme Corp: Akismet Anti-spam 5.3 → 5.4',
+      'Acme Corp: WordPress 6.8.1 → 6.9',
+      'Bramble Studio: WordPress core translation → 6.8.1',
+      'Backup on Acme Corp: recent backup',
+      'Checks on Acme Corp: http, monitor:12, child, regression not run (add-on not installed)',
+      'Backup on Bramble Studio: will back up first',
+      'Checks on Bramble Studio: http, monitor not run (No monitor configured), child not run (Not selected), regression (waiting for regression scan)',
+      'Left out: Cedar Nonprofit (site suspended)',
+      'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.',
+    ];
+
+    beforeEach(() => {
+      catalog = [...makeDashboard63Abilities(), makeSafeUpdateAbility()];
+    });
+
+    it('adds plan_summary to the confirm preview and keeps the raw preview', async () => {
+      const data = await preview(await connect(), 'run_safe_update_v1', safeArgs);
+      expect(data.preview).toEqual(makeSafeUpdatePreview());
+      expect(data.plan_summary).toEqual(safeSummary);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].ability).toBe(SAFE_UPDATE_ABILITY);
+      expect(requests[0].input).toEqual({ ...safeArgs, dry_run: true });
+    });
+
+    it('confirms the previewed selection and relays the run result unchanged', async () => {
+      const client = await connect();
+      const { confirmation_token: token } = await preview(client, 'run_safe_update_v1', safeArgs);
+      const { result, data } = await call(
+        client,
+        'run_safe_update_v1',
+        confirmation({ ...safeArgs, confirm: true }, token)
+      );
+      expect(result.isError).toBeUndefined();
+      expect(data).toEqual({
+        dry_run: false,
+        run_id: 7,
+        url: 'https://dashboard.test/wp-admin/admin.php?page=SafeUpdates&run_id=7',
+        conflicts: [],
+      });
+      expect(requests[1].input).toEqual({ ...safeArgs, confirm: true });
+    });
+
+    it.each([true, false])(
+      'adds plan_summary beside the raw own dry_run result (confirmation %s)',
+      async requireUserConfirmation => {
+        const client = await connect({ requireUserConfirmation });
+        const response = await call(client, 'run_safe_update_v1', { ...safeArgs, dry_run: true });
+        expect(response.result.isError).toBeUndefined();
+        const { plan_summary: planSummary, ...raw } = response.data;
+        expect(raw).toEqual(makeSafeUpdatePreview());
+        expect(planSummary).toEqual(safeSummary);
+      }
+    );
+
+    it('relays a preview with an unexpected shape unchanged', async () => {
+      const upstream = makeSafeUpdatePreview();
+      (upstream.would_affect.sites[0] as Record<string, unknown>).checks = 'all';
+      hostilePreview = upstream;
+      const confirmed = await preview(await connect(), 'run_safe_update_v1', safeArgs);
+      expect(confirmed.preview).toEqual(upstream);
+      expect(confirmed).not.toHaveProperty('plan_summary');
+      const dryRun = await call(await connect(), 'run_safe_update_v1', {
+        ...safeArgs,
+        dry_run: true,
+      });
+      expect(dryRun.data).toEqual(upstream);
+    });
+
+    it('leaves other update tools alone when they return the Safe Updates shape', async () => {
+      hostilePreview = makeSafeUpdatePreview();
+      const confirmed = await preview(await connect());
+      expect(confirmed.preview).toEqual(makeSafeUpdatePreview());
+      expect(confirmed).not.toHaveProperty('plan_summary');
+      const dryRun = await call(await connect(), 'run_updates_v1', { ...batchArgs, dry_run: true });
+      expect(dryRun.data).toEqual(makeSafeUpdatePreview());
+    });
+
+    it('keeps the run_updates_v1 summary when Safe Updates is offered', async () => {
+      const data = await preview(await connect());
+      expect(data.plan_summary).toContain(
+        'Held back: Yoast SEO on Cedar Nonprofit (ignored on this site)'
+      );
+    });
+
+    it('is not offered by a Dashboard without Safe Updates', async () => {
+      catalog = makeDashboard63Abilities();
+      const client = await connect();
+      const { tools } = await client.listTools();
+      expect(tools.map(tool => tool.name)).toContain('run_updates_v1');
+      expect(tools.map(tool => tool.name)).not.toContain('run_safe_update_v1');
     });
   });
 });
