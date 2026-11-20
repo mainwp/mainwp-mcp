@@ -992,6 +992,27 @@ describe('run-safe-update-v1 plan_summary', () => {
       },
     ],
     [
+      'an item slug is empty',
+      preview => {
+        preview.would_affect.sites[0].items[0].slug = '';
+        return preview;
+      },
+    ],
+    [
+      'an item new_version is empty',
+      preview => {
+        preview.would_affect.sites[0].items[0].new_version = '';
+        return preview;
+      },
+    ],
+    [
+      'skip_reason is only whitespace',
+      preview => {
+        preview.would_affect.sites[0].skip_reason = '   ';
+        return preview;
+      },
+    ],
+    [
       'skip_reason is missing',
       preview => {
         delete (preview.would_affect.sites[2] as Partial<Site>).skip_reason;
@@ -1024,6 +1045,25 @@ describe('run-safe-update-v1 plan_summary', () => {
     expect(planSummaryFor('mainwp/run-updates-v1', makeUpdatePreview(), false)).toEqual(
       buildUpdatePlanSummary(validateUpdatePlan(makeUpdatePreview())!, false)
     );
+  });
+
+  it('shows the first six checks on a site and counts the rest', () => {
+    const raw = makeSafeUpdatePreview();
+    const reason = 'r'.repeat(80);
+    raw.would_affect.sites[0].checks = Array.from({ length: 10000 }, (_, index) => ({
+      key: `monitor:${index}`,
+      name: 'monitor',
+      status: 'not_run',
+      reason,
+    }));
+    const copy = structuredClone(raw);
+    const result = withUpdatePlanSummary(SAFE_UPDATE_ABILITY, raw) as Record<string, unknown>;
+    const { plan_summary: planSummary, ...rest } = result as { plan_summary: string[] };
+    expect(rest).toEqual(copy);
+    const shown = Array.from({ length: 6 }, (_, index) => `monitor:${index} not run (${reason})`);
+    expect(planSummary[4]).toBe(`Checks on Acme Corp: ${shown.join(', ')} and 9994 more`);
+    expect(planSummary[4].length).toBeLessThan(700);
+    expect(planSummary).toHaveLength(safeSummary.length);
   });
 
   it('cuts long plans to 50 lines and keeps the caveat', () => {

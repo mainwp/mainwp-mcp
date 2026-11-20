@@ -54,6 +54,7 @@ export interface UpdatePlan {
 
 const MAX_FIELD_LENGTH = 80;
 const MAX_LINES = 50;
+const MAX_CHECKS_SHOWN = 6;
 const VERSION_CAVEAT =
   'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.';
 
@@ -444,12 +445,15 @@ function safeUpdateItem(value: unknown): SafeUpdateItem | undefined {
   const name = displayText(own(value, 'name'));
   const from = displayText(own(value, 'old_version'));
   const to = displayText(own(value, 'new_version'));
+  // The Dashboard refuses to start a run with an empty slug or new_version.
   if (
     type === undefined ||
     slug === undefined ||
+    slug === '' ||
     name === undefined ||
     from === undefined ||
     to === undefined ||
+    to === '' ||
     (name.trim() === '' && slug.trim() === '')
   )
     return undefined;
@@ -489,7 +493,9 @@ function safeUpdateSite(value: unknown): SafeUpdateSite | undefined {
     backupLabel === undefined ||
     typeof own(value, 'override_available') !== 'boolean' ||
     !checks ||
-    skipReason === undefined
+    skipReason === undefined ||
+    // The Dashboard sends exactly '' for a site the run includes.
+    (skipReason !== '' && skipReason.trim() === '')
   )
     return undefined;
   return { siteId, name, items, backupLabel, checks, skipReason };
@@ -515,17 +521,23 @@ function checkPhrase(check: SafeUpdateCheck): string {
 function buildSafeUpdatePlanSummary(sites: SafeUpdateSite[]): string[] {
   const lines: string[] = [];
   const label = (site: SafeUpdateSite) => (site.name.trim() ? site.name : `Site ${site.siteId}`);
-  const running = sites.filter(site => site.skipReason.trim() === '');
+  const running = sites.filter(site => site.skipReason === '');
   for (const site of running) {
     for (const item of site.items) lines.push(`${label(site)}: ${versionChange(item)}`);
   }
   for (const site of running) {
     lines.push(`Backup on ${label(site)}: ${site.backupLabel}`);
-    const checks = site.checks.length ? site.checks.map(checkPhrase).join(', ') : 'none';
+    const shown = site.checks.slice(0, MAX_CHECKS_SHOWN).map(checkPhrase).join(', ');
+    const hidden = site.checks.length - MAX_CHECKS_SHOWN;
+    const checks = !site.checks.length
+      ? 'none'
+      : hidden > 0
+        ? `${shown} and ${hidden} more`
+        : shown;
     lines.push(`Checks on ${label(site)}: ${checks}`);
   }
   for (const site of sites) {
-    if (site.skipReason.trim()) lines.push(`Left out: ${label(site)} (${site.skipReason})`);
+    if (site.skipReason !== '') lines.push(`Left out: ${label(site)} (${site.skipReason})`);
   }
   // The confirmed call selects the pending versions again; this dry run issues no token to pin them.
   if (lines.length + 1 <= MAX_LINES) return [...lines, VERSION_CAVEAT];

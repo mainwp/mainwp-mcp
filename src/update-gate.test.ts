@@ -850,6 +850,23 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(dryRun.data).toEqual(upstream);
     });
 
+    it.each([
+      ['an empty slug', { slug: '' }],
+      ['an empty new_version', { new_version: '' }],
+    ])('returns no plan_summary for an item with %s', async (_label, change) => {
+      const upstream = makeSafeUpdatePreview();
+      Object.assign(upstream.would_affect.sites[0].items[0], change);
+      hostilePreview = upstream;
+      const confirmed = await preview(await connect(), 'run_safe_update_v1', safeArgs);
+      expect(confirmed.preview).toEqual(upstream);
+      expect(confirmed).not.toHaveProperty('plan_summary');
+      const dryRun = await call(await connect(), 'run_safe_update_v1', {
+        ...safeArgs,
+        dry_run: true,
+      });
+      expect(dryRun.data).toEqual(upstream);
+    });
+
     it('leaves other update tools alone when they return the Safe Updates shape', async () => {
       hostilePreview = makeSafeUpdatePreview();
       const confirmed = await preview(await connect());
