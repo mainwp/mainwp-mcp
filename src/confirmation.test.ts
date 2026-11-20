@@ -9,6 +9,7 @@ import {
   capturePreviewToken,
   clearPendingPreviews,
   getPendingPreviewCounts,
+  getPreviewKey,
 } from './confirmation.js';
 import { clearToolsCache } from './tools.js';
 import { clearKnownSecrets } from './security.js';
@@ -27,6 +28,19 @@ const updateAbilityNames = [
   'mainwp/update-site-themes-v1',
   'mainwp/update-site-translations-v1',
 ];
+
+describe('getPreviewKey defaults', () => {
+  it('hashes an omitted __proto__ default like the same explicit value', () => {
+    const schema = {
+      type: 'object',
+      properties: JSON.parse('{"__proto__": {"type": "object", "default": {"a": 1}}}'),
+    };
+    const key = (args: Record<string, unknown>) =>
+      getPreviewKey('s', 'run_updates_v1', args, 'confirm', false, schema);
+    expect(key({})).toBe(key(JSON.parse('{"__proto__": {"a": 1}}')));
+    expect(key({})).not.toBe(key(JSON.parse('{"__proto__": {"a": 2}}')));
+  });
+});
 
 describe('capturePreviewToken', () => {
   const tokenSchema = { type: ['string', 'null'] };
@@ -536,7 +550,7 @@ describe('preview_token confirmation flow', () => {
     const token = await preview(client);
     const result = await confirm(client, token, args);
     expect(result.isError).toBe(true);
-    expect(responseData(result).error).toBe('PREVIEW_REQUIRED');
+    expect(responseData(result).error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(upstreamInputs()).toHaveLength(1);
   });
 
@@ -583,7 +597,7 @@ describe('preview_token confirmation flow', () => {
         preview_token: 'changed_preview_token_0123456789',
       });
       expect(result.isError).toBe(true);
-      expect(responseData(result).error).toBe('PREVIEW_REQUIRED');
+      expect(responseData(result).error).toBe('PREVIEW_ARGS_MISMATCH');
       expect(upstreamInputs()).toEqual(before);
     }
   );

@@ -51,7 +51,7 @@ export interface Config {
   requestTimeout: number;
   /** Maximum response size in bytes (default: 10485760 = 10MB) */
   maxResponseSize: number;
-  /** Safe mode: prevents destructive operations by stripping confirm parameter */
+  /** Safe mode: blocks destructive tools except update dry runs, and strips the confirm parameter */
   safeMode: boolean;
   /** Require explicit user confirmation for destructive operations via two-phase preview flow */
   requireUserConfirmation: boolean;
@@ -145,7 +145,7 @@ export interface SettingsFile {
   skipSslVerify?: boolean;
   /** Whether HTTP URLs are explicitly allowed (insecure) */
   allowHttp?: boolean;
-  /** Safe mode: prevents destructive operations by stripping confirm parameter */
+  /** Safe mode: blocks destructive tools except update dry runs, and strips the confirm parameter */
   safeMode?: boolean;
   /** Require explicit user confirmation for destructive operations via two-phase preview flow */
   requireUserConfirmation?: boolean;

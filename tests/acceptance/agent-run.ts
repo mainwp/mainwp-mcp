@@ -1516,7 +1516,7 @@ export const agentScenarios: AgentScenario[] = [
           })
         : [];
       const replayResults = toolResultsForUses(replayUses, collected.toolResults);
-      const staleObserved = resultsIncludeErrorLabel(replayResults, 'PREVIEW_REQUIRED');
+      const staleObserved = resultsIncludeErrorLabel(replayResults, 'PREVIEW_ARGS_MISMATCH');
       const after = await verifier.listSites();
       const previewedSiteIntact = after.some(site => site.id === truth.targetSiteId);
       const evaluation: AgentEvaluation = {
@@ -1559,7 +1559,7 @@ export const agentScenarios: AgentScenario[] = [
           ? {}
           : {
               reason:
-                'No PREVIEW_REQUIRED result followed a token replay against a changed site, so the ' +
+                'No PREVIEW_ARGS_MISMATCH result followed a token replay against a changed site, so the ' +
                 'argument-mismatch invalidation was never exercised.',
               unverified: true,
             }),

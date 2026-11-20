@@ -392,7 +392,102 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests[1].input).toEqual({ ...batchArgs, confirm: true });
   });
 
-  it('rejects changed arguments with PREVIEW_REQUIRED without executing', async () => {
+  describe('confirmed update with no response', () => {
+    const unknownOutcome =
+      'The server stopped waiting for the Dashboard, and the update may still be running. Assume it may have applied and re-read state before doing anything else.';
+    let writes: number;
+
+    // Previews answer normally; the confirmed write hangs or gets a gateway status.
+    function stallWrites(gatewayStatus?: number) {
+      const answer = mockFetch.getMockImplementation()!;
+      writes = 0;
+      mockFetch.mockImplementation(async (rawUrl: string, options: RequestInit) => {
+        const confirmed = options.body
+          ? JSON.parse(String(options.body)).input?.confirm === true
+          : new URL(rawUrl).searchParams.get('input[confirm]') === '1';
+        if (!rawUrl.includes('/run') || !confirmed) return answer(rawUrl, options);
+        writes += 1;
+        if (gatewayStatus !== undefined) {
+          return new Response('<html>Gateway Timeout</html>', { status: gatewayStatus });
+        }
+        return new Promise((_resolve, reject) => {
+          options.signal!.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          );
+        });
+      });
+    }
+
+    it.each(['run_updates_v1', 'update_all_v1', 'update_site_plugins_v1'])(
+      'reports a local timeout on %s as an unknown outcome after one write',
+      async name => {
+        const args = name === 'update_site_plugins_v1' ? { site_id_or_domain: 1 } : batchArgs;
+        const client = await connect({ requestTimeout: 50, retryEnabled: true });
+        const data = await preview(client, name, args);
+        stallWrites();
+        const response = await call(client, name, confirmation(args, data.confirmation_token));
+        expect(response.result.isError).toBe(true);
+        expect(response.data).toEqual({ error: { code: -32001, message: unknownOutcome } });
+        expect(JSON.stringify(response.data)).not.toMatch(/job/i);
+        expect(writes).toBe(1);
+      }
+    );
+
+    it.each([504, 524])('reports HTTP %i on run_updates_v1 as an unknown outcome', async status => {
+      const client = await connect({ retryEnabled: true });
+      const data = await preview(client);
+      stallWrites(status);
+      const response = await call(
+        client,
+        'run_updates_v1',
+        confirmation(batchArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error.code).toBe(-32000);
+      expect(response.data.error.message).toBe(unknownOutcome);
+      expect(writes).toBe(1);
+    });
+
+    it('keeps the plain timeout message for tools outside the update list', async () => {
+      const client = await connect({ requestTimeout: 50 });
+      const data = await preview(client, 'unignore_site_updates_v1', unignoreArgs);
+      stallWrites();
+      const response = await call(
+        client,
+        'unignore_site_updates_v1',
+        confirmation(unignoreArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error.code).toBe(-32001);
+      expect(response.data.error.message).toMatch(/^Request timeout after 50ms/);
+    });
+
+    it.each([
+      ['a safe mode dry run', { safeMode: true }, { dry_run: true }],
+      ['a confirm: true preview', {}, { confirm: true }],
+      [
+        "dry_run: 'true' with confirmation off",
+        { requireUserConfirmation: false },
+        { dry_run: 'true' },
+      ],
+    ])(
+      'keeps the gateway message for %s, which applies nothing',
+      async (_label, overrides, extra) => {
+        const client = await connect({ ...overrides, retryEnabled: true });
+        mockFetch.mockImplementation(async (rawUrl: string) =>
+          rawUrl.includes('/run')
+            ? new Response('<html>Gateway Timeout</html>', { status: 504 })
+            : new Response(JSON.stringify(catalog))
+        );
+        const response = await call(client, 'run_updates_v1', { ...batchArgs, ...extra });
+        expect(response.result.isError).toBe(true);
+        expect(response.data.error.code).toBe(-32000);
+        expect(response.data.error.message).not.toBe(unknownOutcome);
+      }
+    );
+  });
+
+  it('rejects changed arguments with PREVIEW_ARGS_MISMATCH without executing', async () => {
     const client = await connect();
     const data = await preview(client);
     const response = await call(
@@ -401,8 +496,71 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       confirmation({ site_ids_or_domains: [2] }, data.confirmation_token)
     );
     expect(response.result.isError).toBe(true);
-    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(requests).toHaveLength(1);
+  });
+
+  describe('run_updates arguments equal to their declared defaults', () => {
+    // Dashboard 6.5 declares these defaults on run-updates-v1.
+    beforeEach(() => {
+      const entry = catalog.find(candidate => candidate.name === 'mainwp/run-updates-v1')!;
+      const properties = entry.input_schema!.properties as Record<string, unknown>;
+      properties.specific_items = { type: 'array', items: { type: 'string' }, default: [] };
+      properties.ignore_backup_gate = { type: 'boolean', default: false };
+    });
+
+    const explicitDefaults = { types: [], specific_items: [], ignore_backup_gate: false };
+
+    it.each([
+      [
+        'preview omits them and confirm sends them',
+        batchArgs,
+        { ...batchArgs, ...explicitDefaults },
+      ],
+      [
+        'preview sends them and confirm omits them',
+        { ...batchArgs, ...explicitDefaults },
+        batchArgs,
+      ],
+    ])('confirms when the %s', async (_label, previewArgs, confirmArgs) => {
+      const client = await connect();
+      const data = await preview(client, 'run_updates_v1', previewArgs);
+      const response = await call(
+        client,
+        'run_updates_v1',
+        confirmation(confirmArgs, data.confirmation_token)
+      );
+      expect(response.result.isError).toBeUndefined();
+      expect(response.data).toEqual(makeExecutedUpdates());
+      expect(requests).toHaveLength(2);
+      expect(requests[1].input).toEqual({ ...confirmArgs, confirm: true });
+    });
+
+    it.each([
+      ['string site IDs', { site_ids_or_domains: ['1', '2', '3'] }],
+      ['reordered site IDs', { site_ids_or_domains: [3, 2, 1] }],
+    ])(
+      'rejects %s with PREVIEW_ARGS_MISMATCH and deletes the token',
+      async (_label, confirmArgs) => {
+        const client = await connect();
+        const data = await preview(client, 'run_updates_v1', batchArgs);
+        const response = await call(
+          client,
+          'run_updates_v1',
+          confirmation(confirmArgs, data.confirmation_token)
+        );
+        expect(response.result.isError).toBe(true);
+        expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
+        const retry = await call(
+          client,
+          'run_updates_v1',
+          confirmation(batchArgs, data.confirmation_token)
+        );
+        expect(retry.result.isError).toBe(true);
+        expect(retry.data.error).toBe('PREVIEW_REQUIRED');
+        expect(requests).toHaveLength(1);
+      }
+    );
   });
 
   it('pins ignore_backup_gate to the confirm preview and rejects adding the override without executing', async () => {
@@ -422,7 +580,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       confirmation({ ...args, ignore_backup_gate: true }, data.confirmation_token)
     );
     expect(response.result.isError).toBe(true);
-    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
     expect(requests).toHaveLength(1);
     expect(requests[0].input).toEqual({ ...args, dry_run: true });
   });
@@ -462,6 +620,40 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('keeps PREVIEW_REQUIRED for an expired token sent with changed arguments', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-04T12:00:00Z'));
+    const client = await connect();
+    const data = await preview(client);
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000 + 1);
+    const response = await call(
+      client,
+      'run_updates_v1',
+      confirmation({ site_ids_or_domains: [2] }, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('keeps defaults significant for destructive tools outside the update list', async () => {
+    const entry = catalog.find(candidate => candidate.name === 'mainwp/unignore-site-updates-v1')!;
+    (entry.input_schema!.properties as Record<string, unknown>).include_archived = {
+      type: 'boolean',
+      default: false,
+    };
+    const client = await connect();
+    const data = await preview(client, 'unignore_site_updates_v1', unignoreArgs);
+    const response = await call(
+      client,
+      'unignore_site_updates_v1',
+      confirmation({ ...unignoreArgs, include_archived: false }, data.confirmation_token)
+    );
+    expect(response.result.isError).toBe(true);
+    expect(response.data.error).toBe('PREVIEW_ARGS_MISMATCH');
+    expect(requests).toHaveLength(1);
+  });
+
   it('rejects token reuse with PREVIEW_REQUIRED after one execution', async () => {
     const client = await connect();
     const data = await preview(client);
@@ -491,6 +683,91 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(requests).toHaveLength(0);
     }
   );
+
+  describe('safe mode dry runs', () => {
+    const argsFor = (ability: string) =>
+      ability === UPDATE_ABILITIES[0] || ability === UPDATE_ABILITIES[1]
+        ? batchArgs
+        : { site_id_or_domain: 1 };
+
+    it.each(UPDATE_ABILITIES)('lets literal dry_run: true preview %s', async ability => {
+      const client = await connect({ safeMode: true });
+      const args = argsFor(ability);
+      const response = await call(client, toolName(ability), { ...args, dry_run: true });
+      expect(response.result.isError).toBeUndefined();
+      expect(response.data.dry_run).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ ability, method: 'POST' });
+      expect(requests[0].input).toEqual({ ...args, dry_run: true });
+    });
+
+    it('strips confirm from a safe mode dry run', async () => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'run_updates_v1', {
+        ...batchArgs,
+        dry_run: true,
+        confirm: true,
+      });
+      expect(response.result.isError).toBeUndefined();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].input).toEqual({ ...batchArgs, dry_run: true });
+    });
+
+    it.each([
+      ['dry_run: false', { dry_run: false }],
+      ['no dry_run', {}],
+      ["dry_run: 'true'", { dry_run: 'true' }],
+      ['dry_run: 1', { dry_run: 1 }],
+      ['dry_run with user_confirmed', { dry_run: true, user_confirmed: true }],
+      ['dry_run with user_confirmed: false', { dry_run: true, user_confirmed: false }],
+    ])('blocks run_updates_v1 with %s', async (_label, extra) => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'run_updates_v1', { ...batchArgs, ...extra });
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error).toBe('SAFE_MODE_BLOCKED');
+      expect(requests).toHaveLength(0);
+    });
+
+    it('blocks dry_run on a destructive tool outside the update list', async () => {
+      const client = await connect({ safeMode: true });
+      const response = await call(client, 'unignore_site_updates_v1', {
+        ...unignoreArgs,
+        dry_run: true,
+      });
+      expect(response.result.isError).toBe(true);
+      expect(response.data.error).toBe('SAFE_MODE_BLOCKED');
+      expect(requests).toHaveLength(0);
+    });
+
+    it('keeps the tool blocklist ahead of the dry run allowance', async () => {
+      const client = await connect({ safeMode: true, blockedTools: ['run_updates_v1'] });
+      const result = await client.callTool({
+        name: 'run_updates_v1',
+        arguments: { ...batchArgs, dry_run: true },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('Tool is not allowed');
+      expect(requests).toHaveLength(0);
+    });
+
+    it.each([
+      ['no dry_run property', undefined],
+      ['a non-boolean dry_run property', { type: 'string' }],
+    ])('blocks an update tool whose schema has %s', async (_label, dryRunSchema) => {
+      const entry = catalog.find(candidate => candidate.name === 'mainwp/run-updates-v1')!;
+      const properties = entry.input_schema!.properties as Record<string, unknown>;
+      delete properties.dry_run;
+      if (dryRunSchema) properties.dry_run = dryRunSchema;
+      const client = await connect({ safeMode: true });
+      const result = await client.callTool({
+        name: 'run_updates_v1',
+        arguments: { ...batchArgs, dry_run: true },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('SAFE_MODE_BLOCKED');
+      expect(requests).toHaveLength(0);
+    });
+  });
 
   it('confirmation off passes confirm directly through in one call', async () => {
     const client = await connect({ requireUserConfirmation: false });

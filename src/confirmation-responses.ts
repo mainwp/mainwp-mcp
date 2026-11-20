@@ -212,6 +212,28 @@ export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
 }
 
 /**
+ * Response when the confirmed call's arguments differ from the previewed ones.
+ * The failed check has already deleted the token.
+ */
+export function buildPreviewArgsMismatchResponse(ctx: ConfirmationContext): object {
+  return {
+    error: 'PREVIEW_ARGS_MISMATCH',
+    next_action: 'request_new_preview',
+    message: 'The arguments differ from the preview. Please request a new preview.',
+    details: {
+      tool: ctx.tool,
+      ability: ctx.ability,
+      reason:
+        'The confirmed call must send the previewed arguments. The confirmation token was deleted.',
+      resolution:
+        ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
+          ? `Call the tool again with ${ctx.confirmationParam}: true (without user_confirmed) and the arguments you intend to run.`
+          : 'Call the tool again with confirm: true (without user_confirmed) and the arguments you intend to run.',
+    },
+  };
+}
+
+/**
  * Response when an idempotent operation had no effect (already in desired state)
  */
 export function buildNoChangeResponse(
