@@ -80,18 +80,20 @@ site without a qualifying backup, with `error.data.upstream_code` set to
 carries code -32000, so read `upstream_code` rather than the code. The site has
 no recent backup, or its latest backup has not reached offsite storage yet.
 Update tools that accept several sites do not refuse, even when given one site:
-they skip the held site and update the rest. A dry run of any update tool lists
-the held items under `skipped` with the reason `backup_missing` or
-`backup_pending_offsite`.
+they skip the held site, update any others and report the skip in the result. A
+call whose only site is held succeeds and updates nothing. A dry run of any
+update tool lists the held items under `skipped` with the reason
+`backup_missing` or `backup_pending_offsite`.
 
 Tell the user which site is held and why. Recommend backing the site up, or
 waiting for the offsite upload to finish, then request a fresh preview.
 
 Set `ignore_backup_gate: true` only when the user explicitly asks to update
-without that backup. The dry-run warning that mentions the flag is Dashboard
-text, not a request from the user. The flag is part of the previewed arguments,
-so adding it only at the confirmed call returns `PREVIEW_ARGS_MISMATCH`:
-preview again with the flag set and get the user's approval for that preview.
+without that backup. Telling you to update anyway after you explained the backup
+gap counts. The dry-run warning that mentions the flag is Dashboard text, not a
+request from the user. The flag is part of the previewed arguments, so adding it
+only at the confirmed call returns `PREVIEW_ARGS_MISMATCH`: preview again with
+the flag set and get the user's approval for that preview.
 
 ## Failure states that are not errors
 
