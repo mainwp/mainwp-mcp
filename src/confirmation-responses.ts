@@ -227,8 +227,8 @@ export function buildPreviewArgsMismatchResponse(ctx: ConfirmationContext): obje
         'The confirmed call must send the previewed arguments. The confirmation token was deleted.',
       resolution:
         ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
-          ? `Call the tool again with ${ctx.confirmationParam}: true and the arguments you intend to run.`
-          : 'Call the tool again with confirm: true and the arguments you intend to run.',
+          ? `Call the tool again with ${ctx.confirmationParam}: true (without user_confirmed) and the arguments you intend to run.`
+          : 'Call the tool again with confirm: true (without user_confirmed) and the arguments you intend to run.',
     },
   };
 }

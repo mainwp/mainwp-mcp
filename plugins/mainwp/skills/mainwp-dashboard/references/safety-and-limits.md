@@ -13,9 +13,9 @@ order:
    ability is resolved, so a blocked tool cannot be distinguished from a
    nonexistent one.
 2. `safe-mode-blocked`: destructive tool while safe mode is on. Outranks
-   confirmation, so a valid token cannot bypass it. One exception: the update
-   tools (`run_updates`, `update_all` and `update_site_*`) run when the call
-   carries the boolean `dry_run: true` and no `user_confirmed`.
+   confirmation, so a valid token cannot bypass it. One exception: the Dashboard
+   update tools run a dry run that carries the boolean `dry_run: true` and no
+   `user_confirmed`.
 3. `needs-confirmation`: destructive tool while confirmation is required.
 4. `allow`.
 
