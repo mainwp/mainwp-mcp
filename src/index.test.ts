@@ -1033,7 +1033,7 @@ describe('MCP request handlers', () => {
 
     for (const result of [help, abilities]) {
       const text = (result.contents as Array<{ text: string }>)[0].text;
-      expect(text).not.toContain('I'.repeat(301));
+      expect(text).not.toContain('I'.repeat(1001));
       expect(text).not.toContain('S'.repeat(501));
     }
     await client.close();

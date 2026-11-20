@@ -89,8 +89,12 @@ export interface AbilityAnnotations {
 const MAX_LABEL_LENGTH = 200;
 const MAX_CATEGORY_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 2000;
-/** Shared with tool-schema.ts, which re-sanitizes instructions at description composition. */
-export const MAX_INSTRUCTIONS_LENGTH = 300;
+/**
+ * Shared with tool-schema.ts, which re-sanitizes instructions at description
+ * composition. Dashboard 6.5 update abilities send up to 461 characters, so
+ * a 300 cap cut real guidance mid-sentence.
+ */
+export const MAX_INSTRUCTIONS_LENGTH = 1000;
 const MAX_CATEGORY_DESC_LENGTH = 500;
 
 /**
