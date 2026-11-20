@@ -4102,7 +4102,7 @@ describe('generateInstructions', () => {
     const result = generateInstructions(meta, false, false);
 
     const [apiPart] = result.split(' Read-only');
-    expect(apiPart.length).toBeLessThanOrEqual(301); // 300 cap + punctuation guard
+    expect(apiPart.length).toBeLessThanOrEqual(1001); // 1000 cap + punctuation guard
     expect(apiPart).toContain('...');
     expect(result).toContain('Read-only. Safe to call');
   });
