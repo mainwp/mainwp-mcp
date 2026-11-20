@@ -3,6 +3,60 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] - 2026-11-20
+
+### Added
+
+Support for site tools whose use the Dashboard approves: running PHP, running WP-CLI, writing site files and running a
+site's own abilities. The tools appear only when the connected Dashboard provides them, so nothing changes on
+Dashboards without that support. The server's local confirmation step is skipped for these tools, and the server has
+no way to approve them itself. While a request waits for approval, the tool returns a normal result with the approval
+link, and keeps the operation and request IDs so the client can resume after approval.
+
+Requests now carry the connecting client's name and version in an `X-MainWP-MCP-Client` header, so the Dashboard can
+show which AI app made a change in its activity log. It is a label only and is never used for access decisions.
+
+Safe Update previews now include a readable plan summary like the other update previews: one line per item, a backup
+line and a checks line per site, and a line for each site left out. The update-workflow prompt and plugin command use
+Safe Update runs to apply an approved plan when the Dashboard offers them. Dashboards without Safe Updates get the same
+steps as before.
+
+### Changed
+
+Site writes wait up to 150 seconds. When a write still times out, or a proxy in front of the Dashboard gives up first
+(504, or 524 from Cloudflare), the tool returns "The change may still be running. Check the site before trying
+again." instead of an error, so clients don't retry blindly. Reads keep the configured timeout.
+
+When the Dashboard rejects the credentials without naming a bad user or password, the error now says the host may
+strip the Authorization header or a security or two-factor plugin may block application passwords, with a link to the
+troubleshooting guide. The hint comes before any host response text, so it is never cut off.
+
+Update previews now list items the Dashboard's pre-update backup check holds back (no recent backup, or latest
+backup not yet in offsite storage) instead of dropping the plan summary. A plain `dry_run: true` call to an update tool
+now returns the same plan summary.
+
+Ability instructions can now be up to 1,000 characters instead of 300, so the update tools keep their full guidance,
+including the note about sites the backup check skips.
+
+With safe mode on, the update tools accept `dry_run: true`, so a plan can be previewed. Real updates and every other
+destructive tool stay blocked.
+
+A confirmed call whose arguments differ from its preview now returns `PREVIEW_ARGS_MISMATCH` instead of
+`PREVIEW_REQUIRED`, and says to preview again.
+
+The server instructions now tell agents to set `ignore_backup_gate` only when the user asks, and otherwise to recommend
+a backup. The `mainwp-dashboard` skill explains backup check refusals and how to recover from them.
+
+Locked dependencies are updated to their current patch releases.
+
+### Fixed
+
+For the update tools, an argument equal to its declared default now counts the same as leaving it out. A confirmed call
+that adds `specific_items: []` after a preview that left it out no longer fails.
+
+When a confirmed update hits the request timeout, or a 504 or 524, the error now says the update may still be running
+and to check the site before trying again.
+
 ## [1.5.1] - 2026-10-13
 
 ### Changed
