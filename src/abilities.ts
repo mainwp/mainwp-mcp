@@ -91,7 +91,7 @@ const MAX_CATEGORY_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 2000;
 /**
  * Shared with tool-schema.ts, which re-sanitizes instructions at description
- * composition. Dashboard 6.5 sends up to 417 characters (run-updates-v1), so
+ * composition. Dashboard 6.5 update abilities send up to 461 characters, so
  * a 300 cap cut real guidance mid-sentence.
  */
 export const MAX_INSTRUCTIONS_LENGTH = 1000;

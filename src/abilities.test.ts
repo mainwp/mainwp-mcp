@@ -389,7 +389,7 @@ describe('fetchAbilities', () => {
   });
 
   it('keeps 457 characters of instructions in discovery and the tool description', async () => {
-    // Dashboard 6.5 sends 417 characters for run-updates-v1.
+    // Dashboard 6.5 sends 457 characters for update-all-v1.
     const instructions = `${'Changes child sites. '.repeat(21)}The end is kept.`;
     expect(instructions).toHaveLength(457);
     mockFetch.mockResolvedValueOnce({
