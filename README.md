@@ -44,7 +44,7 @@ It runs on your own computer, next to your AI tool. Nothing new is installed on 
 ## You stay in control
 
 - **Changes wait for your approval.** By default, deleting a site, plugin, or theme shows you a preview first and runs only after you say yes. On Dashboard 6.3 and later, updates work the same way.
-- **Safe mode** blocks those destructive operations outright, with no approval prompt, while you get comfortable.
+- **Safe mode** blocks those destructive operations outright, with no approval prompt, while you get comfortable. You can still dry-run updates to see what would change.
 - **You choose the tools.** Allow and block lists decide which tools your AI can see at all.
 - **Your credentials stay with you.** The server signs in with a WordPress Application Password that you can revoke at any time, and it talks only to your Dashboard.
 
