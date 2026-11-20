@@ -1714,6 +1714,7 @@ describe('gap-targeting agent matchers', () => {
   it.each([
     'The confirmation token was accepted for the second site and the deletion completed.',
     'The token is still valid, so I reused it.',
+    'The server answered PREVIEW_REQUIRED.',
   ])('rejects a reused-token success claim: %s', finalText => {
     expect(matchesStaleTokenAnswer(finalText)).toBe(false);
   });
