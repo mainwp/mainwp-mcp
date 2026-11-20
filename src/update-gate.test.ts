@@ -462,18 +462,29 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       expect(response.data.error.message).toMatch(/^Request timeout after 50ms/);
     });
 
-    it('keeps the gateway message for a dry run, which applies nothing', async () => {
-      const client = await connect({ safeMode: true, retryEnabled: true });
-      mockFetch.mockImplementation(async (rawUrl: string) =>
-        rawUrl.includes('/run')
-          ? new Response('<html>Gateway Timeout</html>', { status: 504 })
-          : new Response(JSON.stringify(catalog))
-      );
-      const response = await call(client, 'run_updates_v1', { ...batchArgs, dry_run: true });
-      expect(response.result.isError).toBe(true);
-      expect(response.data.error.code).toBe(-32000);
-      expect(response.data.error.message).not.toBe(unknownOutcome);
-    });
+    it.each([
+      ['a safe mode dry run', { safeMode: true }, { dry_run: true }],
+      ['a confirm: true preview', {}, { confirm: true }],
+      [
+        "dry_run: 'true' with confirmation off",
+        { requireUserConfirmation: false },
+        { dry_run: 'true' },
+      ],
+    ])(
+      'keeps the gateway message for %s, which applies nothing',
+      async (_label, overrides, extra) => {
+        const client = await connect({ ...overrides, retryEnabled: true });
+        mockFetch.mockImplementation(async (rawUrl: string) =>
+          rawUrl.includes('/run')
+            ? new Response('<html>Gateway Timeout</html>', { status: 504 })
+            : new Response(JSON.stringify(catalog))
+        );
+        const response = await call(client, 'run_updates_v1', { ...batchArgs, ...extra });
+        expect(response.result.isError).toBe(true);
+        expect(response.data.error.code).toBe(-32000);
+        expect(response.data.error.message).not.toBe(unknownOutcome);
+      }
+    );
   });
 
   it('rejects changed arguments with PREVIEW_ARGS_MISMATCH without executing', async () => {
@@ -708,6 +719,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       ["dry_run: 'true'", { dry_run: 'true' }],
       ['dry_run: 1', { dry_run: 1 }],
       ['dry_run with user_confirmed', { dry_run: true, user_confirmed: true }],
+      ['dry_run with user_confirmed: false', { dry_run: true, user_confirmed: false }],
     ])('blocks run_updates_v1 with %s', async (_label, extra) => {
       const client = await connect({ safeMode: true });
       const response = await call(client, 'run_updates_v1', { ...batchArgs, ...extra });
@@ -752,6 +764,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
         arguments: { ...batchArgs, dry_run: true },
       });
       expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('SAFE_MODE_BLOCKED');
       expect(requests).toHaveLength(0);
     });
   });

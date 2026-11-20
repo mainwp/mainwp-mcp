@@ -116,8 +116,8 @@ network-wide operation and get agreement before running it.
   tokens are dropped. A token can therefore
   become unusable before its 5 minutes are up during heavy use.
 - The token key is the Dashboard identity hash, the tool name, and the
-  canonicalized non-confirmation arguments, with an omitted top-level argument
-  counted as its declared default. Nested
+  canonicalized non-confirmation arguments. For the update tools only, an
+  omitted top-level argument counts as its declared default. Nested
   values are canonicalized recursively, so a change anywhere in the argument
   tree, at any depth, invalidates the token.
 - Token checks that all return `PREVIEW_REQUIRED`: missing token, unknown or

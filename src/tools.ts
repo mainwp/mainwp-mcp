@@ -300,7 +300,7 @@ export async function executeTool(
     const safeModePreview =
       isUpdateAbility(abilityName) &&
       args.dry_run === true &&
-      args.user_confirmed !== true &&
+      !Object.hasOwn(args, 'user_confirmed') &&
       declaresUsableBooleanParam(ability.input_schema?.properties, 'dry_run');
     if (decision === 'safe-mode-blocked' && !safeModePreview) {
       callLogger.warning('Destructive operation blocked by safe mode', { toolName, abilityName });
@@ -352,7 +352,14 @@ export async function executeTool(
       effectiveArgs = confirmResult.effectiveArgs;
     }
 
-    writeSent = effectiveArgs.dry_run !== true;
+    // Read dry_run the way the Dashboard's rest_sanitize_boolean does, so a
+    // string "true" forwarded with confirmation off still counts as a dry run.
+    const dryRun = effectiveArgs.dry_run;
+    writeSent = !(
+      dryRun === true ||
+      (typeof dryRun === 'number' && dryRun !== 0) ||
+      (typeof dryRun === 'string' && !['', '0', 'false'].includes(dryRun.toLowerCase()))
+    );
     const result = await executeAbility(
       config,
       abilityName,
