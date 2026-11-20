@@ -12,3 +12,6 @@ package-lock.json
 
 # Private planning and review material (gitignored)
 .mwpdev/
+
+# Local git worktrees
+.worktrees/

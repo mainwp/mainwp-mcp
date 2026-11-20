@@ -55,6 +55,7 @@ export default tseslint.config(
       'test-results/',
       '.context/',
       'logs/',
+      '.worktrees/',
     ],
   }
 );
