@@ -219,15 +219,6 @@ export function capturePreviewToken(
   return token;
 }
 
-const BOUND_PREVIEW_TOKEN_ABILITIES = [
-  'mainwp/run-updates-v1',
-  'mainwp/update-all-v1',
-  'mainwp/update-site-core-v1',
-  'mainwp/update-site-plugins-v1',
-  'mainwp/update-site-themes-v1',
-  'mainwp/update-site-translations-v1',
-];
-
 /**
  * Whether the confirmed call always sends the token captured from this
  * ability's preview. Only these MainWP updates bind it; other abilities let a
@@ -243,7 +234,7 @@ function bindsPreviewToken(
     usesPreviewToken &&
     typeof upstreamToken === 'string' &&
     config.abilityNamespaces[0] === 'mainwp' &&
-    BOUND_PREVIEW_TOKEN_ABILITIES.includes(ability.name)
+    isUpdateAbility(ability.name)
   );
 }
 
