@@ -49,13 +49,18 @@ export function decidePolicy(
   toolName: string,
   isDestructive = false,
   abilityName?: string,
-  annotations?: { readonly?: unknown }
+  annotations?: { readonly?: unknown; destructive?: unknown }
 ): PolicyDecision {
   if (config.blockedTools?.includes(toolName)) return 'blocked-by-policy';
   if (config.allowedTools?.length && !config.allowedTools.includes(toolName)) {
     return 'blocked-by-policy';
   }
-  if (config.readOnly && annotations?.readonly !== true) return 'blocked-by-policy';
+  // An ability claiming readonly while marked destructive, or with no
+  // destructive flag, is destructive under the fail-closed rule, so read-only
+  // access hides it too.
+  if (config.readOnly && (annotations?.readonly !== true || annotations.destructive !== false)) {
+    return 'blocked-by-policy';
+  }
   if (isDestructive) {
     if (config.safeMode) return 'safe-mode-blocked';
     if (config.requireUserConfirmation && !isDashboardGatedAbility(abilityName))
@@ -108,7 +113,11 @@ export function isUpdateAbility(abilityName: string | undefined): boolean {
   ].includes(abilityName ?? '');
 }
 
-/** Return whether a tool is permitted by the configured allow/block lists. */
+/**
+ * Return whether a tool is permitted by the configured allow/block lists.
+ * This runs before the ability is resolved, when no annotations exist yet, so
+ * read-only access is checked separately once the ability is looked up.
+ */
 export function isToolAllowed(config: PolicyGateConfig, toolName: string): boolean {
   return decidePolicy({ ...config, readOnly: false }, toolName) === 'allow';
 }

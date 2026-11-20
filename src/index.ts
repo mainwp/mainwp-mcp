@@ -422,7 +422,7 @@ export async function createServer(
                 .map((site: { id: number }) => String(site.id));
             }
           } else if (listSitesAbility) {
-            logger.info('Site-id completion skipped: policy blocks destructive execution', {
+            logger.info('Site-id completion skipped: policy does not allow the site list tool', {
               toolName: listSitesToolName,
             });
           }

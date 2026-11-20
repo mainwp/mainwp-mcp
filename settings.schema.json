@@ -139,7 +139,7 @@
     "readOnly": {
       "type": "boolean",
       "default": false,
-      "description": "Expose and execute only abilities whose readonly annotation is the boolean true. Other abilities are hidden and denied, including dry runs. Allow and block lists still apply. Setup tools remain available."
+      "description": "Expose and execute only abilities the Dashboard marks read-only (readonly: true) and not destructive (destructive: false). Other abilities are hidden and denied, including dry runs. Allow and block lists still apply. Setup tools remain available."
     }
   }
 }

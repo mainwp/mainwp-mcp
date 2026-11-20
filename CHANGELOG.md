@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated `readonly: true` are exposed and executable; allow and block lists still apply. Setup tools remain available.
+Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated `readonly: true` and `destructive: false` are exposed and executable; allow and block lists still apply. Setup tools remain available.
 
 ## [1.6.0] - 2026-11-20
 

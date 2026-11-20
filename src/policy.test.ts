@@ -492,13 +492,29 @@ describe('read-only policy annotations', () => {
     }
   );
   it('allows only literal true and still applies the blocklist', () => {
+    const readOnlyAbility = { readonly: true, destructive: false };
     expect(
-      decidePolicy(makeBaseConfig({ readOnly: true }), 't', false, undefined, { readonly: true })
+      decidePolicy(makeBaseConfig({ readOnly: true }), 't', false, undefined, readOnlyAbility)
     ).toBe('allow');
     expect(
-      decidePolicy(makeBaseConfig({ readOnly: true, blockedTools: ['t'] }), 't', false, undefined, {
-        readonly: true,
-      })
+      decidePolicy(
+        makeBaseConfig({ readOnly: true, blockedTools: ['t'] }),
+        't',
+        false,
+        undefined,
+        readOnlyAbility
+      )
     ).toBe('blocked-by-policy');
   });
+  it.each([undefined, null, true, 'false', 0])(
+    'denies readonly=true with destructive=%s',
+    destructive => {
+      expect(
+        decidePolicy(makeBaseConfig({ readOnly: true }), 't', false, undefined, {
+          readonly: true,
+          destructive,
+        })
+      ).toBe('blocked-by-policy');
+    }
+  );
 });

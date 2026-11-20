@@ -218,17 +218,56 @@ describe('read-only access through MCP', () => {
     fetchMock.mockImplementation(
       async () => new Response(JSON.stringify([ability('visible', true), ability('write', false)]))
     );
+    // Reading mainwp://status here would refresh the catalog and clear the
+    // tool-list cache, which would hide a cache shared across the two modes.
     for (const readOnly of [first, !first]) {
       const { client, close } = await connect(readOnly);
       try {
         const names = (await client.listTools()).tools.map(t => t.name);
         expect(names.includes('write_v1')).toBe(!readOnly);
-        const status = JSON.parse(text(await client.readResource({ uri: 'mainwp://status' })));
-        expect(status.abilitiesCount).toBe(2);
         expect(client.getInstructions()?.includes('You have read-only access')).toBe(readOnly);
       } finally {
         await close();
       }
+    }
+  });
+
+  it('keeps the status ability count unfiltered', async () => {
+    fetchMock.mockImplementation(
+      async () => new Response(JSON.stringify([ability('visible', true), ability('write', false)]))
+    );
+    const { client, close } = await connect(true);
+    try {
+      const status = JSON.parse(text(await client.readResource({ uri: 'mainwp://status' })));
+      expect(status.abilitiesCount).toBe(2);
+    } finally {
+      await close();
+    }
+  });
+
+  it.each([
+    ['marked destructive', { readonly: true, destructive: true }],
+    ['without a destructive flag', { readonly: true }],
+  ])('hides and denies a readonly ability %s', async (_label, annotations) => {
+    fetchMock.mockImplementation(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.includes('/run')
+              ? { ok: true }
+              : [{ ...ability('wipe', true), meta: { annotations } }, ability('visible', true)]
+          )
+        )
+    );
+    const { client, close } = await connect(true, { requireUserConfirmation: false });
+    try {
+      expect((await client.listTools()).tools.map(t => t.name)).toEqual(['visible_v1']);
+      const result = await client.callTool({ name: 'wipe_v1', arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('not allowed');
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/run'))).toHaveLength(0);
+    } finally {
+      await close();
     }
   });
 
