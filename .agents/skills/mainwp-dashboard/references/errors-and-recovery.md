@@ -78,8 +78,8 @@ When the Dashboard's pre-update backup setting is on, a confirmed
 `error.data.upstream_code` set to `mainwp_backup_gate_blocked`. The Dashboard
 answers 409, but the tool result carries code -32000, so read `upstream_code`
 rather than the code. The site has no recent backup, or its latest backup has
-not reached offsite storage yet. `run_updates` and `update_all` do not
-refuse: they skip the held site and update the rest. A dry run of any of the six
+not reached offsite storage yet. The batch update tools do not refuse: they
+skip the held site and update the rest. A dry run of any of the six update tools
 lists the held items under `skipped` with the reason `backup_missing` or
 `backup_pending_offsite`.
 
