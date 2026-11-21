@@ -620,7 +620,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it('keeps PREVIEW_REQUIRED for an expired token sent with changed arguments', async () => {
+  it('reports PREVIEW_EXPIRED for an expired token sent with changed arguments', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-04T12:00:00Z'));
     const client = await connect();
@@ -632,7 +632,7 @@ describe('Dashboard 6.3 update gates through MCP handlers', () => {
       confirmation({ site_ids_or_domains: [2] }, data.confirmation_token)
     );
     expect(response.result.isError).toBe(true);
-    expect(response.data.error).toBe('PREVIEW_REQUIRED');
+    expect(response.data.error).toBe('PREVIEW_EXPIRED');
     expect(requests).toHaveLength(1);
   });
 

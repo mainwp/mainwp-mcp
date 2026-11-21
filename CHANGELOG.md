@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated `readonly: true` and `destructive: false` are exposed and executable; allow and block lists still apply. Setup tools remain available.
 
+### Changed
+
+Confirming an expired preview with changed arguments now returns `PREVIEW_EXPIRED` instead of `PREVIEW_REQUIRED`
+until cleanup removes the expired preview. Recovery messages for mismatched, expired and missing previews now explain how to
+preview again, then repeat identical arguments with `user_confirmed: true` and the new `confirmation_token`.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added

@@ -554,6 +554,59 @@ describe('preview_token confirmation flow', () => {
     expect(upstreamInputs()).toHaveLength(1);
   });
 
+  it('requires a new preview after an argument mismatch and accepts its matching confirm', async () => {
+    const { client } = await connectedClient();
+    const token = await preview(client);
+    const mismatch = await confirm(client, token, { ...previewArgs, setting: 'changed-value' });
+    expect(mismatch.isError).toBe(true);
+    expect(responseData(mismatch)).toMatchObject({
+      error: 'PREVIEW_ARGS_MISMATCH',
+      next_action: 'request_new_preview',
+      message:
+        'Confirmed call does not match the previewed request. The preview was discarded. Preview again, then repeat the identical call with user_confirmed: true and the new confirmation_token.',
+    });
+    expect(getPendingPreviewCounts().tokens).toBe(0);
+    const replay = await confirm(client, token);
+    expect(replay.isError).toBe(true);
+    expect(responseData(replay)).toMatchObject({
+      error: 'PREVIEW_REQUIRED',
+      message: 'No preview found. Call with confirm: true and the full arguments to preview first.',
+    });
+    expect(upstreamInputs()).toHaveLength(1);
+
+    const nextToken = await preview(client);
+    expect(nextToken).not.toBe(token);
+    const confirmed = await confirm(client, nextToken);
+    expect(confirmed.isError).toBeFalsy();
+    expect(responseData(confirmed)).toEqual({ updated: true });
+    expect(upstreamInputs()).toHaveLength(3);
+  });
+
+  it.each(['code omitted', 'operation_id only'])(
+    'rejects confirmation with %s and discards its token',
+    async shape => {
+      Object.assign(ability.input_schema!.properties!, {
+        operation_id: { type: 'string' },
+        code: { type: 'string' },
+      });
+      const args = { ...previewArgs, operation_id: 'operation-1', code: 'return 1;' };
+      const { client } = await connectedClient();
+      const token = await preview(client, args);
+      const changed =
+        shape === 'code omitted'
+          ? { ...previewArgs, operation_id: args.operation_id }
+          : { operation_id: args.operation_id };
+      const result = await confirm(client, token, changed);
+      expect(result.isError).toBe(true);
+      expect(responseData(result).error).toBe('PREVIEW_ARGS_MISMATCH');
+      expect(getPendingPreviewCounts().tokens).toBe(0);
+      const repeated = await confirm(client, token, args);
+      expect(repeated.isError).toBe(true);
+      expect(responseData(repeated).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs()).toHaveLength(1);
+    }
+  );
+
   it.each(['non-null string', 'no dry_run', 'no preview_token'])(
     'preserves full upstream payloads for %s',
     async shape => {
@@ -667,17 +720,37 @@ describe('preview_token confirmation flow', () => {
     }
   );
 
-  it('expires a preview and refuses its token thereafter', async () => {
-    let now = Date.now();
-    vi.spyOn(Date, 'now').mockImplementation(() => now);
+  it.each(['matching', 'changed'])(
+    'reports expiry for %s arguments and refuses token reuse',
+    async shape => {
+      let now = Date.now();
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const { client } = await connectedClient();
+      const token = await preview(client);
+      now += 5 * 60 * 1000 + 1;
+      const args =
+        shape === 'matching' ? previewArgs : { ...previewArgs, setting: 'changed-value' };
+      const expired = await confirm(client, token, args);
+      expect(expired.isError).toBe(true);
+      expect(responseData(expired)).toMatchObject({
+        error: 'PREVIEW_EXPIRED',
+        message: 'Preview has expired. Run the preview again before confirming.',
+      });
+      expect(responseData(await confirm(client, token)).error).toBe('PREVIEW_REQUIRED');
+      expect(upstreamInputs()).toHaveLength(1);
+    }
+  );
+
+  it('requests a preview first when no token is stored', async () => {
     const { client } = await connectedClient();
-    const token = await preview(client);
-    now += 5 * 60 * 1000 + 1;
-    const expired = await confirm(client, token);
-    expect(expired.isError).toBe(true);
-    expect(responseData(expired).error).toBe('PREVIEW_EXPIRED');
-    expect(responseData(await confirm(client, token)).error).toBe('PREVIEW_REQUIRED');
-    expect(upstreamInputs()).toHaveLength(1);
+    const result = await confirm(client, 'unknown-token');
+    expect(result.isError).toBe(true);
+    expect(responseData(result)).toMatchObject({
+      error: 'PREVIEW_REQUIRED',
+      next_action: 'request_preview_first',
+      message: 'No preview found. Call with confirm: true and the full arguments to preview first.',
+    });
+    expect(upstreamInputs()).toHaveLength(0);
   });
 
   it('removes expired entries when another preview is requested', async () => {

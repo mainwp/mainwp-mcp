@@ -10,6 +10,7 @@ import {
   buildConfirmationRequiredResponse,
   buildPreviewRequiredResponse,
   buildPreviewExpiredResponse,
+  buildPreviewArgsMismatchResponse,
   buildNoChangeResponse,
   type ConfirmationContext,
 } from './confirmation-responses.js';
@@ -206,6 +207,22 @@ describe('buildPreviewExpiredResponse', () => {
 
     expect(response.details.resolution).toContain('confirm: true');
   });
+});
+
+describe('buildPreviewArgsMismatchResponse', () => {
+  it.each(['confirm', 'confirm_delete'])(
+    'names the preview and execution parameters for %s',
+    confirmationParam => {
+      const response = buildPreviewArgsMismatchResponse({ ...ctx, confirmationParam }) as {
+        error: string;
+        details: { resolution: string };
+      };
+      expect(response.error).toBe('PREVIEW_ARGS_MISMATCH');
+      expect(response.details.resolution).toBe(
+        `Call with ${confirmationParam}: true (without user_confirmed) and the full arguments to preview again. Then repeat the identical call with user_confirmed: true and the new confirmation_token.`
+      );
+    }
+  );
 });
 
 describe('buildNoChangeResponse', () => {
