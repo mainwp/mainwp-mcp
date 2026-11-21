@@ -53,6 +53,8 @@ export interface Config {
   maxResponseSize: number;
   /** Safe mode: blocks destructive tools except update dry runs, and strips the confirm parameter */
   safeMode: boolean;
+  /** Expose and execute only abilities explicitly annotated readonly. */
+  readOnly: boolean;
   /** Require explicit user confirmation for destructive operations via two-phase preview flow */
   requireUserConfirmation: boolean;
   /** Maximum cumulative response data per server session in bytes (default: 52428800 = 50MB) */
@@ -147,6 +149,7 @@ export interface SettingsFile {
   allowHttp?: boolean;
   /** Safe mode: blocks destructive tools except update dry runs, and strips the confirm parameter */
   safeMode?: boolean;
+  readOnly?: boolean;
   /** Require explicit user confirmation for destructive operations via two-phase preview flow */
   requireUserConfirmation?: boolean;
   /** Rate limit: max API requests per minute (0 = disabled) */
@@ -207,6 +210,7 @@ const SETTINGS_FIELD_TYPES: Record<string, 'string' | 'boolean' | 'number' | 'st
   skipSslVerify: 'boolean',
   allowHttp: 'boolean',
   safeMode: 'boolean',
+  readOnly: 'boolean',
   requireUserConfirmation: 'boolean',
   retryEnabled: 'boolean',
   rateLimit: 'number',
@@ -661,6 +665,12 @@ export function resolveConfig(): ConfigResolution {
     settings?.safeMode,
     false
   );
+  const readOnly = getBoolean(
+    'MAINWP_READ_ONLY',
+    process.env.MAINWP_READ_ONLY,
+    settings?.readOnly,
+    false
+  );
   const requireUserConfirmation = getBoolean(
     'MAINWP_REQUIRE_USER_CONFIRMATION',
     process.env.MAINWP_REQUIRE_USER_CONFIRMATION,
@@ -852,6 +862,7 @@ export function resolveConfig(): ConfigResolution {
     requestTimeout,
     maxResponseSize,
     safeMode,
+    readOnly,
     requireUserConfirmation,
     maxSessionData,
     schemaVerbosity,

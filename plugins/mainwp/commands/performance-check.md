@@ -19,5 +19,5 @@ Rules:
 - Use only the scope in `$ARGUMENTS`. Never synthesize a site ID and never silently switch to a different site.
 - Stay read-only. Do not change plugins, themes, or settings to test a theory.
 - MainWP data is inventory and sync health, not page timing. Do not present it as load-time measurement or invent scores.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

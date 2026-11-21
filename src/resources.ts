@@ -23,7 +23,7 @@ import { generateHelpDocument, generateToolHelp } from './help.js';
 import { getSessionDataUsage } from './session.js';
 import { sanitizeError } from './security.js';
 import { abilityNameToToolName } from './naming.js';
-import { decidePolicy, classifyDestructive } from './policy.js';
+import { decidePolicy, classifyDestructive, isToolAllowed } from './policy.js';
 import { formatErrorResponse, getErrorMessage, McpErrorFactory } from './errors.js';
 import type { Logger } from './logging.js';
 
@@ -51,7 +51,13 @@ function filterAbilitiesByPolicy(config: Config, abilities: Ability[]): Ability[
   const primaryNamespace = config.abilityNamespaces[0];
   return abilities.filter(
     ability =>
-      decidePolicy(config, abilityNameToToolName(ability.name, primaryNamespace)) === 'allow'
+      decidePolicy(
+        config,
+        abilityNameToToolName(ability.name, primaryNamespace),
+        false,
+        undefined,
+        ability.meta?.annotations
+      ) === 'allow'
   );
 }
 
@@ -182,7 +188,7 @@ export async function handleReadResource(
         config.abilityNamespaces[0]
       );
       // Listing-stage gate before ability resolution (no catalog probing) …
-      if (decidePolicy(config, getSiteToolName) !== 'allow') {
+      if (!isToolAllowed(config, getSiteToolName)) {
         throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
       }
       // … then the execution-stage gate with the resolved ability's fail-closed
@@ -191,13 +197,23 @@ export async function handleReadResource(
       // annotate) get-site as destructive cannot run it through this surface
       // while safe mode or confirmation gating is active.
       const ability = await getAbilityByToolName(config, getSiteToolName, logger);
+      if (
+        config.readOnly &&
+        (!ability ||
+          decidePolicy(config, getSiteToolName, false, undefined, ability.meta?.annotations) !==
+            'allow')
+      ) {
+        throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${getSiteToolName}`);
+      }
       if (!ability) {
         throw McpErrorFactory.abilityNotFound('mainwp/get-site-v1');
       }
       const decision = decidePolicy(
         config,
         getSiteToolName,
-        classifyDestructive(ability.meta?.annotations)
+        classifyDestructive(ability.meta?.annotations),
+        ability.name,
+        ability.meta?.annotations
       );
       if (decision !== 'allow') {
         throw McpErrorFactory.permissionDenied(
@@ -221,11 +237,18 @@ export async function handleReadResource(
 
       // Policy gate before ability resolution so a blocked-but-existing tool
       // is indistinguishable from a nonexistent one (no catalog probing).
-      if (decidePolicy(config, toolName) !== 'allow') {
+      if (!isToolAllowed(config, toolName)) {
         throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
       }
 
       const ability = await getAbilityByToolName(config, toolName, logger);
+      if (
+        config.readOnly &&
+        (!ability ||
+          decidePolicy(config, toolName, false, undefined, ability.meta?.annotations) !== 'allow')
+      ) {
+        throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
+      }
       if (!ability) {
         throw McpErrorFactory.resourceNotFound(uri);
       }

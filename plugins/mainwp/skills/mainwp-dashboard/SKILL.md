@@ -50,14 +50,14 @@ Dashboards with the knowledge abilities keep records at three levels: agency (ev
 
 ## Filtering is silent
 
-`MAINWP_ALLOWED_TOOLS` and `MAINWP_BLOCKED_TOOLS` remove tools from `tools/list`
-with no marker, and a blocked tool is deliberately indistinguishable from a
+`MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` and `MAINWP_READ_ONLY` remove
+tools from `tools/list` with no marker, and a blocked tool is deliberately indistinguishable from a
 nonexistent one at every policy-filtered surface.
 
 - A missing tool is not evidence the Dashboard lacks the capability. Say the
   capability is not exposed in this session and name `MAINWP_ALLOWED_TOOLS`,
-  `MAINWP_BLOCKED_TOOLS`, and `MAINWP_ABILITY_NAMESPACES` as the things to
-  check.
+  `MAINWP_BLOCKED_TOOLS`, `MAINWP_READ_ONLY`, and `MAINWP_ABILITY_NAMESPACES`
+  as the things to check.
 - Never route around a filter. No alternate tool, no resource path, no prompt
   completion, no batch tool that reaches the same capability. Filtering is
   enforced at resources, tool-help, and completions too, and working around it
@@ -71,7 +71,8 @@ nonexistent one at every policy-filtered surface.
 `MAINWP_SAFE_MODE=true` keeps destructive tools listed and fails them at
 execution with `SAFE_MODE_BLOCKED`. Safe mode outranks confirmation, so a valid
 confirmation token never bypasses it. Update tools can still preview, so you
-can show the user an update plan; nothing is applied.
+can show the user an update plan; nothing is applied. With read-only access on
+as well, update tools are hidden and there is no preview to offer.
 
 Report the block and stop. Do not hunt for a differently annotated tool, a
 resource, or a batch operation that achieves the same effect. Only the user

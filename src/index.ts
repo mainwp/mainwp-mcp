@@ -32,7 +32,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { resolveConfig, Config, MissingConfigError, formatConnectionSources } from './config.js';
 import { getTools, executeTool } from './tools.js';
-import { decidePolicy, classifyDestructive } from './policy.js';
+import { decidePolicy, classifyDestructive, isToolAllowed } from './policy.js';
 import { formatBytes } from './session.js';
 import {
   fetchAbilities,
@@ -191,7 +191,9 @@ export async function createServer(
         logging: {},
         completions: {},
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions:
+        SERVER_INSTRUCTIONS +
+        (state.policy.readOnly ? '\nYou have read-only access to Dashboard abilities.' : ''),
     }
   );
 
@@ -387,7 +389,7 @@ export async function createServer(
           'mainwp/list-sites-v1',
           config.abilityNamespaces[0]
         );
-        if (decidePolicy(config, listSitesToolName) !== 'allow') {
+        if (!isToolAllowed(config, listSitesToolName)) {
           throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${listSitesToolName}`);
         }
         try {
@@ -401,7 +403,9 @@ export async function createServer(
             decidePolicy(
               config,
               listSitesToolName,
-              classifyDestructive(listSitesAbility.meta?.annotations)
+              classifyDestructive(listSitesAbility.meta?.annotations),
+              listSitesAbility.name,
+              listSitesAbility.meta?.annotations
             ) === 'allow'
           ) {
             const result = await executeAbility(
@@ -418,7 +422,7 @@ export async function createServer(
                 .map((site: { id: number }) => String(site.id));
             }
           } else if (listSitesAbility) {
-            logger.info('Site-id completion skipped: policy blocks destructive execution', {
+            logger.info('Site-id completion skipped: policy does not allow the site list tool', {
               toolName: listSitesToolName,
             });
           }

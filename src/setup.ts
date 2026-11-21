@@ -34,7 +34,7 @@ import { CredentialRejectedError, validateCredentials } from './credential-check
 import { getErrorMessage, McpErrorFactory } from './errors.js';
 import { withSecretRedaction, type Logger } from './logging.js';
 import { CONFIGURE_TOOL, RESERVED_TOOL_NAMES, SETUP_STATUS_TOOL } from './naming.js';
-import { decidePolicy } from './policy.js';
+import { isToolAllowed } from './policy.js';
 import {
   appPasswordCanonicalForm,
   appPasswordSecret,
@@ -425,7 +425,7 @@ export function getSetupTools(state: ConfigState): Tool[] {
       },
     },
   ];
-  return tools.filter(tool => decidePolicy(policy, tool.name) === 'allow');
+  return tools.filter(tool => isToolAllowed(policy, tool.name));
 }
 
 export function isSetupToolName(name: string): boolean {
@@ -540,7 +540,7 @@ async function handleSetupStatus(
   notify: SetupNotifier
 ): Promise<ToolCallResult> {
   const policy = state.policy;
-  const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
+  const chatSetupAvailable = isToolAllowed(policy, CONFIGURE_TOOL);
 
   // No retry here: config is loaded once, so a retry would resend a login
   // WordPress already refused, and repeated failures can trip the lockouts
@@ -876,7 +876,7 @@ export async function executeSetupTool(
   logger: Logger,
   notify: SetupNotifier
 ): Promise<ToolCallResult> {
-  if (decidePolicy(state.policy, name) !== 'allow') {
+  if (!isToolAllowed(state.policy, name)) {
     throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${name}`);
   }
   if (name === SETUP_STATUS_TOOL) {
@@ -894,8 +894,8 @@ export async function executeSetupTool(
  */
 export function notReadyResult(state: ConfigState): ToolCallResult {
   const policy = state.policy;
-  const chatSetupAvailable = decidePolicy(policy, CONFIGURE_TOOL) === 'allow';
-  const statusToolAvailable = decidePolicy(policy, SETUP_STATUS_TOOL) === 'allow';
+  const chatSetupAvailable = isToolAllowed(policy, CONFIGURE_TOOL);
+  const statusToolAvailable = isToolAllowed(policy, SETUP_STATUS_TOOL);
   let guidance: string;
   if (state.state === 'credentials_rejected') {
     guidance = rejectedGuidance(

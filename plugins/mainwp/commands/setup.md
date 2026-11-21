@@ -14,6 +14,7 @@ Step 1. Run this probe exactly as written, with no additions:
 [ -n "$MAINWP_APP_PASSWORD" ] && echo "MAINWP_APP_PASSWORD set" || echo "MAINWP_APP_PASSWORD unset"
 [ -n "$MAINWP_TOKEN" ] && echo "MAINWP_TOKEN set" || echo "MAINWP_TOKEN unset"
 [ -n "$MAINWP_SAFE_MODE" ] && echo "MAINWP_SAFE_MODE set" || echo "MAINWP_SAFE_MODE unset"
+[ -n "$MAINWP_READ_ONLY" ] && echo "MAINWP_READ_ONLY set" || echo "MAINWP_READ_ONLY unset"
 [ -n "$MAINWP_REQUIRE_USER_CONFIRMATION" ] && echo "MAINWP_REQUIRE_USER_CONFIRMATION set" || echo "MAINWP_REQUIRE_USER_CONFIRMATION unset"
 [ -n "$MAINWP_ALLOWED_TOOLS" ] && echo "MAINWP_ALLOWED_TOOLS set" || echo "MAINWP_ALLOWED_TOOLS unset"
 [ -n "$MAINWP_BLOCKED_TOOLS" ] && echo "MAINWP_BLOCKED_TOOLS set" || echo "MAINWP_BLOCKED_TOOLS unset"

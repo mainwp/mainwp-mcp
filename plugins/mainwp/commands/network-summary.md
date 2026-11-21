@@ -16,5 +16,5 @@ Rules:
 
 - This command takes no arguments. Do not narrow the summary to a subset of sites or invent site IDs and filters.
 - Stay read-only. This is a reporting command.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`. Report the summary as partial instead of estimating the missing parts.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`. Report the summary as partial instead of estimating the missing parts.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

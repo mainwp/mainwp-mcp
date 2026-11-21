@@ -40,7 +40,7 @@
     "safeMode": {
       "type": "boolean",
       "default": false,
-      "description": "Block tools the Dashboard marks destructive, and strip the 'confirm' parameter as a second layer. Dashboard 6.5 marks updates and plugin or theme activation destructive. The update tools (run_updates, update_all and update_site_*) still accept dry_run: true, which returns the update plan without applying it. Not read-only: non-destructive writes such as syncing stay available. Use allowedTools for read-only access."
+      "description": "Block tools the Dashboard marks destructive, and strip the 'confirm' parameter as a second layer. Dashboard 6.5 marks updates and plugin or theme activation destructive. The update tools (run_updates, update_all and update_site_*) still accept dry_run: true, which returns the update plan without applying it. Not read-only: non-destructive writes such as syncing stay available. Use readOnly for read-only access."
     },
     "requireUserConfirmation": {
       "type": "boolean",
@@ -135,6 +135,11 @@
       "maximum": 30000,
       "default": 2000,
       "description": "Maximum delay between retries in milliseconds. Must be between 500ms and 30000ms and >= retryBaseDelay. Caps exponential backoff to prevent excessive waits. Default is 2000ms (2 seconds)."
+    },
+    "readOnly": {
+      "type": "boolean",
+      "default": false,
+      "description": "Expose and execute only abilities the Dashboard marks read-only (readonly: true) and not destructive (destructive: false). Other abilities are hidden and denied, including dry runs. Allow and block lists still apply. Setup tools remain available."
     }
   }
 }

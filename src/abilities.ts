@@ -440,6 +440,7 @@ function cacheSignature(config: Config): string {
     authIdentity,
     config.skipSslVerify,
     config.maxResponseSize,
+    config.readOnly,
   ]);
 }
 
@@ -1347,7 +1348,8 @@ export async function executeAbility(
         if (target && config.abilityNamespaces.includes(target.name.split('/')[0])) {
           const toolName = abilityNameToToolName(target.name, config.abilityNamespaces[0]);
           if (
-            decidePolicy(config, toolName) !== 'blocked-by-policy' &&
+            decidePolicy(config, toolName, false, undefined, target.meta?.annotations) !==
+              'blocked-by-policy' &&
             redactKnownSecrets(toolName) === toolName &&
             !writeOnlyRedactor.mentions(toolName)
           ) {
