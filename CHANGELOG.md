@@ -12,7 +12,7 @@ Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abil
 ### Changed
 
 Confirming an expired preview with changed arguments now returns `PREVIEW_EXPIRED` instead of `PREVIEW_REQUIRED`
-while the entry is retained. Recovery messages for mismatched, expired and missing previews now explain how to
+until cleanup removes the expired preview. Recovery messages for mismatched, expired and missing previews now explain how to
 preview again, then repeat identical arguments with `user_confirmed: true` and the new `confirmation_token`.
 
 ## [1.6.0] - 2026-11-20
