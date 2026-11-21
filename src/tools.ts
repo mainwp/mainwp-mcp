@@ -227,16 +227,23 @@ export async function executeTool(
     // fetchAbilities. This handles both primary-namespace (unprefixed) tools
     // and prefixed `{ns}__tool` names from non-primary namespaces.
     const ability = await getAbilityByToolName(config, toolName, reqLogger);
-    if (
-      (!ability && config.readOnly) ||
-      (ability &&
-        decidePolicy(config, toolName, false, undefined, ability.meta?.annotations) ===
-          'blocked-by-policy')
-    ) {
-      throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
-    }
     if (!ability) {
+      // Under read-only access an unknown tool gets the same error as a hidden
+      // one, so the error doesn't reveal which hidden tools exist.
+      if (config.readOnly) {
+        throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
+      }
       throw McpErrorFactory.toolNotFound(toolName);
+    }
+    const policyDecision = decidePolicy(
+      config,
+      toolName,
+      false,
+      undefined,
+      ability.meta?.annotations
+    );
+    if (policyDecision === 'blocked-by-policy') {
+      throw McpErrorFactory.permissionDenied(`Tool is not allowed: ${toolName}`);
     }
     abilityName = ability.name;
 

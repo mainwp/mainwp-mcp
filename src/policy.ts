@@ -55,11 +55,14 @@ export function decidePolicy(
   if (config.allowedTools?.length && !config.allowedTools.includes(toolName)) {
     return 'blocked-by-policy';
   }
-  // An ability claiming readonly while marked destructive, or with no
-  // destructive flag, is destructive under the fail-closed rule, so read-only
-  // access hides it too.
-  if (config.readOnly && (annotations?.readonly !== true || annotations.destructive !== false)) {
-    return 'blocked-by-policy';
+  if (config.readOnly) {
+    const markedReadOnly = annotations?.readonly === true;
+    // An ability claiming readonly while marked destructive, or with no
+    // destructive flag, is destructive under the fail-closed rule, so read-only
+    // access hides it too.
+    const markedNonDestructive = annotations?.destructive === false;
+    if (!markedReadOnly) return 'blocked-by-policy';
+    if (!markedNonDestructive) return 'blocked-by-policy';
   }
   if (isDestructive) {
     if (config.safeMode) return 'safe-mode-blocked';
