@@ -488,7 +488,9 @@ describe('read-only policy annotations', () => {
     'denies readonly=%s even with an allowlist',
     readonly => {
       const config = makeBaseConfig({ readOnly: true, allowedTools: ['t'] });
-      expect(decidePolicy(config, 't', false, undefined, { readonly })).toBe('blocked-by-policy');
+      expect(decidePolicy(config, 't', false, undefined, { readonly, destructive: false })).toBe(
+        'blocked-by-policy'
+      );
     }
   );
   it('allows only literal true and still applies the blocklist', () => {

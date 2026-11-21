@@ -71,7 +71,8 @@ nonexistent one at every policy-filtered surface.
 `MAINWP_SAFE_MODE=true` keeps destructive tools listed and fails them at
 execution with `SAFE_MODE_BLOCKED`. Safe mode outranks confirmation, so a valid
 confirmation token never bypasses it. Update tools can still preview, so you
-can show the user an update plan; nothing is applied.
+can show the user an update plan; nothing is applied. With read-only access on
+as well, update tools are hidden and there is no preview to offer.
 
 Report the block and stop. Do not hunt for a differently annotated tool, a
 resource, or a batch operation that achieves the same effect. Only the user
