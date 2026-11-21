@@ -590,6 +590,7 @@ describe('MCP request handlers', () => {
       'even after reading one record or a list: neither shows which client and agency records apply',
       "For client-wide work call get_client_knowledge_v1 if available, then each site's summary",
       'If you cannot, say which knowledge was not loaded',
+      'Before editing a site, get its access, tools and builder_guides from get_site_agent_status_v1; follow the guides.',
     ]) {
       expect(SERVER_INSTRUCTIONS).toContain(rule);
     }
