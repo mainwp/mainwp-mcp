@@ -18,5 +18,5 @@ Rules:
 - Use only the resolved sites: empty arguments or `"all"` means the Dashboard's full site list, anything else means exactly the sites given. Never synthesize site IDs or widen a non-empty scope on your own.
 - Stay read-only. Do not start, schedule, or delete backups from this command.
 - Backup visibility depends on what the Dashboard and its extensions report. Absence of data is not proof a backup is missing; label it as unknown.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

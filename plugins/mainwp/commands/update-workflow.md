@@ -27,5 +27,5 @@ Rules:
 - If the tool catalog offers Safe Update runs, apply the plan with them instead of the plain update tools. A Safe Update run checks each site for a recent backup before updating and runs site checks before and after. It takes the same site, type and item selection, so the rule above about splitting calls applies to it as well. After confirming, follow the run's progress and report which sites need attention. Do not roll back, retest or mark a check as expected unless the user asks.
 - Never remove an item from the ignore list to force it through unless the user explicitly asks for that.
 - A policy filter can block update execution outright. On Dashboard 6.3 and later, which marks update tools as destructive, safe mode blocks them too. If that happens, say so and leave the plan as the deliverable.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

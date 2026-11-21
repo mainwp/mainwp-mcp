@@ -18,5 +18,5 @@ Rules:
 - Use only the resolved sites: empty arguments or `"all"` means the Dashboard's full site list, anything else means exactly the sites given. Never synthesize site IDs, add sites the user did not ask for, or drop sites to make the report tidier.
 - Stay read-only. Do not apply security updates from this command.
 - Do not call a plugin or theme vulnerable on a version number alone. Say what the Dashboard reports and where a manual check is needed.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`, then mark that section of the audit as not covered.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`, then mark that section of the audit as not covered.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

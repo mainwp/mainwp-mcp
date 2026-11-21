@@ -20,5 +20,5 @@ Rules:
 - Never guess the site. Do not default to the first site in the list, and do not act on a fuzzy name match until you have named the specific site and URL back to the user and they confirmed it.
 - If the user narrows the focus, for example to connectivity, performance, security, or updates, keep that focus instead of running the full sweep.
 - Stay read-only unless the user asks for a fix. Any repair action goes through the server's confirmation flow, never as an automatic follow-up.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.

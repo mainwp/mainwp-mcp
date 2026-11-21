@@ -65,7 +65,7 @@ to make a local build or a test run pass.
 
 **No tool-name enumeration.** The tool list comes from the Dashboard's ability
 catalog at runtime and varies with the Dashboard version, installed extensions,
-and `MAINWP_ALLOWED_TOOLS`/`MAINWP_BLOCKED_TOOLS`. A hardcoded list goes stale
+and `MAINWP_ALLOWED_TOOLS`/`MAINWP_BLOCKED_TOOLS`/`MAINWP_READ_ONLY`. A hardcoded list goes stale
 and teaches the agent to call tools that do not exist on that connection. Point
 at the `mainwp://help` and `mainwp://categories` resources instead, and
 describe capabilities in plain language.
@@ -138,6 +138,7 @@ env_vars = [
   "MAINWP_APP_PASSWORD",
   "MAINWP_TOKEN",
   "MAINWP_SAFE_MODE",
+  "MAINWP_READ_ONLY",
   "MAINWP_REQUIRE_USER_CONFIRMATION",
   "MAINWP_ALLOWED_TOOLS",
   "MAINWP_BLOCKED_TOOLS",

@@ -14,7 +14,7 @@ Steps:
 
 Rules:
 
-- The category and status resources are not policy-filtered. They can list capability groups whose tools are hidden from the tool list by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`, so a category appearing here is not a promise that its tools are callable.
+- The category and status resources are not policy-filtered. They can list capability groups whose tools are hidden from the tool list by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`, so a category appearing here is not a promise that its tools are callable.
 - If the user asks for something you cannot find, say it may be filtered by policy rather than absent from the Dashboard, and tell them where to check.
 - The catalog is per Dashboard and changes with installed extensions. Report what this connection returns now; do not describe MainWP features in general as if they were available.
 - Stay read-only. This command inspects the catalog, it does not run anything from it.

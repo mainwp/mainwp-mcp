@@ -18,5 +18,5 @@ Rules:
 
 - This command takes no arguments. Do not invent site IDs, filters, or time windows to narrow the sweep.
 - Stay read-only. Recommend updates, do not apply them from here.
-- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS` or `MAINWP_BLOCKED_TOOLS`. Do not substitute an unrelated tool to fill the gap.
+- If a capability you need is not in the tool catalog, say it is not exposed on this Dashboard and note it may be filtered by `MAINWP_ALLOWED_TOOLS`, `MAINWP_BLOCKED_TOOLS` or `MAINWP_READ_ONLY`. Do not substitute an unrelated tool to fill the gap.
 - Your client may also expose this workflow as a MainWP MCP prompt; either entry point is fine.
