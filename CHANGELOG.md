@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated `readonly: true` and `destructive: false` are exposed and executable; allow and block lists still apply. Setup tools remain available.
 
+### Changed
+
+Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge provides it, and to follow the plugin guides it returns.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added
