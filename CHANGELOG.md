@@ -11,7 +11,7 @@ Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abil
 
 ### Changed
 
-The server instructions now tell clients to call `get_site_agent_status_v1` for a site and follow its Agent Bridge guides before editing it.
+Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge provides it, and to follow the plugin guides it returns.
 
 ## [1.6.0] - 2026-11-20
 
