@@ -3,7 +3,7 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.7.0] - 2026-11-25
 
 ### Added
 
