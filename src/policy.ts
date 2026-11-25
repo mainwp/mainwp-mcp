@@ -94,6 +94,7 @@ export function isDashboardGatedAbility(abilityName: string | undefined): boolea
     'mainwp/run-site-php-v1',
     'mainwp/run-site-wpcli-v1',
     'mainwp/write-site-files-v1',
+    'mainwp/restore-site-file-v1',
     'mainwp/run-site-ability-write-v1',
     'mainwp/run-site-ability-destructive-v1',
   ].includes(abilityName ?? '');
