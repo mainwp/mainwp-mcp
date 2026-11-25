@@ -177,8 +177,8 @@ export function buildPreviewRequiredResponse(
     next_action: 'request_preview_first',
     message:
       ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
-        ? `No confirmation token found. You must first call with ${ctx.confirmationParam}: true to request a token.`
-        : 'No preview found. You must first call with confirm: true to generate a preview.',
+        ? `No confirmation token found. Call with ${ctx.confirmationParam}: true and the full arguments to request a token first.`
+        : 'No preview found. Call with confirm: true and the full arguments to preview first.',
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
@@ -198,15 +198,15 @@ export function buildPreviewExpiredResponse(ctx: ConfirmationContext): object {
   return {
     error: 'PREVIEW_EXPIRED',
     next_action: 'request_new_preview',
-    message: 'Preview has expired. Please request a new preview.',
+    message: 'Preview has expired. Run the preview again before confirming.',
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
       reason: 'Preview expired after 5 minutes',
       resolution:
         ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
-          ? `Call the tool again with ${ctx.confirmationParam}: true to request a fresh token.`
-          : 'Call the tool again with confirm: true to generate a fresh preview.',
+          ? `Call the tool again with ${ctx.confirmationParam}: true (without user_confirmed) and the full arguments to request a fresh token.`
+          : 'Call the tool again with confirm: true (without user_confirmed) and the full arguments to generate a fresh preview.',
     },
   };
 }
@@ -219,16 +219,14 @@ export function buildPreviewArgsMismatchResponse(ctx: ConfirmationContext): obje
   return {
     error: 'PREVIEW_ARGS_MISMATCH',
     next_action: 'request_new_preview',
-    message: 'The arguments differ from the preview. Please request a new preview.',
+    message:
+      'Confirmed call does not match the previewed request. The preview was discarded. Preview again, then repeat the identical call with user_confirmed: true and the new confirmation_token.',
     details: {
       tool: ctx.tool,
       ability: ctx.ability,
       reason:
         'The confirmed call must send the previewed arguments. The confirmation token was deleted.',
-      resolution:
-        ctx.confirmationParam && ctx.confirmationParam !== 'confirm'
-          ? `Call the tool again with ${ctx.confirmationParam}: true (without user_confirmed) and the arguments you intend to run.`
-          : 'Call the tool again with confirm: true (without user_confirmed) and the arguments you intend to run.',
+      resolution: `Call with ${ctx.confirmationParam ?? 'confirm'}: true (without user_confirmed) and the full arguments to preview again. Then repeat the identical call with user_confirmed: true and the new confirmation_token.`,
     },
   };
 }

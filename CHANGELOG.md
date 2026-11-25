@@ -13,6 +13,10 @@ Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abil
 
 Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge provides it, and to follow the plugin guides it returns.
 
+Confirming an expired preview with changed arguments now returns `PREVIEW_EXPIRED` instead of `PREVIEW_REQUIRED`
+until cleanup removes the expired preview. Recovery messages for mismatched, expired and missing previews now explain how to
+preview again, then repeat identical arguments with `user_confirmed: true` and the new `confirmation_token`.
+
 ### Fixed
 
 The Agent Bridge file restore tool now follows Dashboard approval like the other site write tools. A resume with

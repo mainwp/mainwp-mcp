@@ -549,19 +549,22 @@ export async function handleConfirmationFlow(
     if (currentPreviewKey !== tokenPreviewKey) {
       tokenIndex.delete(confirmationToken);
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });
-      // A token whose preview is gone or expired answers as before, whatever
-      // the arguments; only a live preview reports the mismatch itself.
+      // Cleanup removes expiry evidence, so only a retained entry can report expiry.
       const tokenEntry = pendingPreviews.get(tokenPreviewKey);
-      const live = tokenEntry !== undefined && Date.now() - tokenEntry.ts <= PREVIEW_EXPIRY_MS;
+      let response: object;
+      if (tokenEntry === undefined) {
+        response = buildPreviewRequiredResponse(ctx);
+      } else if (Date.now() - tokenEntry.ts > PREVIEW_EXPIRY_MS) {
+        response = buildPreviewExpiredResponse(ctx);
+      } else {
+        response = buildPreviewArgsMismatchResponse(ctx);
+      }
       return {
         action: 'respond',
         response: [
           {
             type: 'text',
-            text: formatJson(
-              config,
-              live ? buildPreviewArgsMismatchResponse(ctx) : buildPreviewRequiredResponse(ctx)
-            ),
+            text: formatJson(config, response),
           },
         ],
         isError: true,
