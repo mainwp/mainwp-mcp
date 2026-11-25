@@ -7,15 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated `readonly: true` and `destructive: false` are exposed and executable; allow and block lists still apply. Setup tools remain available.
+Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abilities explicitly annotated
+`readonly: true` and `destructive: false` are exposed and executable; allow and block lists still apply. Setup tools
+remain available.
 
 ### Changed
 
-Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge provides it, and to follow the plugin guides it returns.
+Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge
+provides it, and to follow the plugin guides it returns.
 
 Confirming an expired preview with changed arguments now returns `PREVIEW_EXPIRED` instead of `PREVIEW_REQUIRED`
-until cleanup removes the expired preview. Recovery messages for mismatched, expired and missing previews now explain how to
-preview again, then repeat identical arguments with `user_confirmed: true` and the new `confirmation_token`.
+until cleanup removes the expired preview. Recovery messages for mismatched, expired and missing previews now explain
+how to preview again, then repeat identical arguments with `user_confirmed: true` and the new `confirmation_token`.
+
+Locked dependencies are updated to their current patch releases.
 
 ### Fixed
 
