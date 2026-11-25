@@ -13,6 +13,12 @@ Read-only access through `MAINWP_READ_ONLY` or the `readOnly` setting. Only abil
 
 Server instructions now tell clients to call `get_site_agent_status_v1` before editing a site, when Agent Bridge provides it, and to follow the plugin guides it returns.
 
+### Fixed
+
+The Agent Bridge file restore tool now follows Dashboard approval like the other site write tools. A resume with
+`operation_id` alone reaches the Dashboard instead of failing with a local preview error, and a restore waiting for
+approval returns the approval link, operation ID and request ID.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added

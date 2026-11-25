@@ -15,6 +15,7 @@ const mutations = [
   'run-site-php',
   'run-site-wpcli',
   'write-site-files',
+  'restore-site-file',
   'run-site-ability-write',
   'run-site-ability-destructive',
 ];
@@ -277,7 +278,14 @@ describe('Dashboard agent approvals', () => {
   it('does not expose outcome references from an unrelated tool', async () => {
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify([{ ...abilities[3], name: 'mainwp/update-site-v1' }]))
+      new Response(
+        JSON.stringify([
+          {
+            ...abilities.find(ability => ability.name === 'mainwp/run-site-ability-write-v1')!,
+            name: 'mainwp/update-site-v1',
+          },
+        ])
+      )
     );
     fetchMock.mockResolvedValueOnce(
       new Response(
@@ -711,6 +719,149 @@ describe('Dashboard agent approvals', () => {
         'If a write times out, check the site before trying again; do not resend it blindly.'
       );
     }
+  });
+});
+
+describe('file restore approvals', () => {
+  // Trimmed copies of the Agent Bridge file tool schemas, with its annotations.
+  const fileTool = (name: string, extra: Record<string, unknown>): Ability => ({
+    name,
+    label: name,
+    description: name,
+    category: 'mainwp-agent-bridge',
+    input_schema: {
+      type: 'object',
+      properties: {
+        site_id: { type: 'integer', minimum: 1 },
+        operation_id: { type: 'string', maxLength: 36 },
+        task_grant: { type: 'string', maxLength: 36 },
+        dry_run: { type: 'boolean' },
+        confirm: { type: 'boolean' },
+        path: { type: 'string', maxLength: 4096 },
+        ...extra,
+      },
+      additionalProperties: false,
+      anyOf: [{ required: ['operation_id'] }, { required: ['site_id'] }],
+    },
+    meta: { annotations: { readonly: false, destructive: true, idempotent: false } },
+  });
+  const restore = fileTool('mainwp/restore-site-file-v1', {
+    backup_ref: { type: 'string', pattern: '^backup-[A-Za-z0-9]{32}$', maxLength: 39 },
+  });
+  const write = fileTool('mainwp/write-site-files-v1', {
+    action: { type: 'string', enum: ['write', 'delete'] },
+    content: { type: 'string', maxLength: 2097152 },
+  });
+  const restoreArgs = {
+    site_id: 1,
+    path: 'wp-content/themes/example/style.css',
+    backup_ref: `backup-${'a'.repeat(32)}`,
+  };
+  const runCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/run'));
+  const pending = {
+    code: 'agent_approval_required',
+    message: 'Approval required',
+    data: {
+      operation_id: 'op-restore',
+      request_id: 'req-restore',
+      approval_url: 'https://test.local/wp-admin/admin.php?page=approve&op=op-restore',
+    },
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(Response.json([restore, write]));
+  });
+
+  it('sends an operation_id-only resume to the Dashboard unchanged', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ success: true }));
+    const result = await executeTool(
+      makeBaseConfig(),
+      'restore_site_file_v1',
+      { operation_id: 'op-restore' },
+      makeMockLogger()
+    );
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).not.toContain('preview_token');
+    expect(result.content[0].text).not.toContain('confirmation_token');
+    expect(JSON.parse(result.content[0].text)).toEqual({ success: true });
+    expect(runCalls()).toHaveLength(1);
+    expect(runCalls()[0][1].method).toBe('POST');
+    expect(JSON.parse(runCalls()[0][1].body)).toEqual({ input: { operation_id: 'op-restore' } });
+  });
+
+  it('sends a new restore to the Dashboard without a local preview step', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json(pending, { status: 409 }));
+    await executeTool(makeBaseConfig(), 'restore_site_file_v1', restoreArgs, makeMockLogger());
+    expect(runCalls()).toHaveLength(1);
+    expect(JSON.parse(runCalls()[0][1].body)).toEqual({ input: restoreArgs });
+  });
+
+  it('returns the approval link and IDs the same way as a file write', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json(pending, { status: 409 }));
+    const restored = await executeTool(
+      makeBaseConfig(),
+      'restore_site_file_v1',
+      restoreArgs,
+      makeMockLogger()
+    );
+    fetchMock.mockResolvedValueOnce(Response.json(pending, { status: 409 }));
+    const written = await executeTool(
+      makeBaseConfig(),
+      'write_site_files_v1',
+      { site_id: 1, path: restoreArgs.path, content: 'body {}' },
+      makeMockLogger()
+    );
+    expect(restored.isError).toBeUndefined();
+    expect(restored.content[0].text).toContain(`Approval link: ${pending.data.approval_url}`);
+    expect(JSON.parse(restored.content[1].text)).toMatchObject({
+      status: 'approval_required',
+      code: 'agent_approval_required',
+      operation_id: 'op-restore',
+      request_id: 'req-restore',
+      approval_url: pending.data.approval_url,
+    });
+    expect(restored.content).toEqual(written.content);
+  });
+
+  it('reports a refused restore with its operation ID', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        {
+          code: 'agent_approval_cancelled',
+          message: 'The request was refused in the Dashboard.',
+          data: { operation_id: 'op-restore' },
+        },
+        { status: 409 }
+      )
+    );
+    const result = await executeTool(
+      makeBaseConfig(),
+      'restore_site_file_v1',
+      { operation_id: 'op-restore' },
+      makeMockLogger()
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.data).toEqual({
+      upstream_code: 'agent_approval_cancelled',
+      operation_id: 'op-restore',
+    });
+    expect(runCalls()).toHaveLength(1);
+  });
+
+  it.each([
+    ['safe mode', { safeMode: true }],
+    ['read-only access', { readOnly: true }],
+    ['the block list', { blockedTools: ['restore_site_file_v1'] }],
+  ])('refuses a restore under %s without calling the Dashboard', async (_label, overrides) => {
+    const result = await executeTool(
+      makeBaseConfig(overrides),
+      'restore_site_file_v1',
+      { operation_id: 'op-restore' },
+      makeMockLogger()
+    );
+    expect(result.isError).toBe(true);
+    expect(runCalls()).toHaveLength(0);
   });
 });
 
