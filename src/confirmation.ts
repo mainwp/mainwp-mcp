@@ -551,12 +551,14 @@ export async function handleConfirmationFlow(
       logger.warning('Confirmation failed - arguments do not match preview', { toolName });
       // Cleanup removes expiry evidence, so only a retained entry can report expiry.
       const tokenEntry = pendingPreviews.get(tokenPreviewKey);
-      const response =
-        tokenEntry === undefined
-          ? buildPreviewRequiredResponse(ctx)
-          : Date.now() - tokenEntry.ts > PREVIEW_EXPIRY_MS
-            ? buildPreviewExpiredResponse(ctx)
-            : buildPreviewArgsMismatchResponse(ctx);
+      let response: object;
+      if (tokenEntry === undefined) {
+        response = buildPreviewRequiredResponse(ctx);
+      } else if (Date.now() - tokenEntry.ts > PREVIEW_EXPIRY_MS) {
+        response = buildPreviewExpiredResponse(ctx);
+      } else {
+        response = buildPreviewArgsMismatchResponse(ctx);
+      }
       return {
         action: 'respond',
         response: [
