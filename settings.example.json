@@ -11,6 +11,7 @@
   "skipSslVerify": false,
   "allowHttp": false,
   "safeMode": false,
+  "readOnly": false,
   "requireUserConfirmation": true,
 
   "rateLimit": 60,
