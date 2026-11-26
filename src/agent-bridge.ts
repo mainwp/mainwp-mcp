@@ -1,8 +1,22 @@
 import type { Config } from './config.js';
-import { isSchemaObject as record, isValidId } from './security.js';
+import { isSchemaObject as record, isValidId, sanitizeError } from './security.js';
 
 export const AGENT_APPROVAL_INSTRUCTIONS =
-  'Give approval_url to the user and wait for them to approve in the Dashboard. Never open or approve the link yourself or claim approval from chat. After approval, call the same tool with operation_id only. If agent_backup_running is returned, follow its poll hint with the same operation_id.';
+  'Give approval_url to the user and wait for them to approve in the Dashboard. Never open or approve the link yourself or claim approval from chat. A call with only an operation_id continues a change you already allowed, after its safety backup or approval. If agent_backup_running is returned, follow its poll hint with the same operation_id.';
+
+// Agent Bridge refuses gated writes with these codes before anything runs, and
+// each message already says what to do next. agent_child_unchecked is left out
+// because it arrives as a 502. Only 4xx responses set the upstream error code.
+export const AGENT_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  'agent_access_off',
+  'agent_code_off',
+  'agent_read_only',
+  'agent_rule_blocked',
+  'agent_store_blocked',
+  'agent_backup_unavailable',
+  'agent_approval_cancelled',
+  'agent_child_outdated',
+]);
 
 // The Child gives PHP and WP-CLI up to 120 seconds, plus the Dashboard round trip.
 export const AGENT_WRITE_TIMEOUT_MS = 150_000;
@@ -27,9 +41,25 @@ export function getAgentGrant(identity: string, grantId: string): Grant | undefi
   return grant;
 }
 
+// The reason text from the Dashboard is shown in the transcript as plain text.
+// It is flattened to one line so it cannot add lines to the pending text, and
+// sanitizeError redacts it and caps it at 500 characters.
+function approvalReason(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const reason = sanitizeError(
+    value
+      .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+  return reason || undefined;
+}
+
 export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   if (record(value)) {
+    const reason = approvalReason(value.approval_reason);
+    if (reason) fields.approval_reason = reason;
     for (const key of [
       'operation_id',
       'request_id',
@@ -87,11 +117,13 @@ export function approvalFields(value: unknown, config: Config): Record<string, u
 
 /**
  * Text for a write that is waiting on Dashboard approval: a status line, the
- * link and operation ID when the Dashboard sent valid ones, then the
- * instructions from approvalFields.
+ * Dashboard's reason when it gave one, the link and operation ID when the
+ * Dashboard sent valid ones, then the instructions from approvalFields.
  */
 export function approvalPendingText(approval: Record<string, unknown>): string {
   const lines = ['Waiting for your approval in MainWP'];
+  if (typeof approval.approval_reason === 'string')
+    lines.push(`Reason: ${approval.approval_reason}`);
   if (typeof approval.approval_url === 'string')
     lines.push(`Approval link: ${approval.approval_url}`);
   if (typeof approval.operation_id === 'string')
