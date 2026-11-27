@@ -3,6 +3,20 @@
 All notable changes to mainwp-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+When Agent Bridge says why a site write waits for approval, the waiting result shows that reason on a `Reason:` line
+and in `approval_reason`. The reason is kept to one line of at most 500 characters, with credentials and server paths
+removed. When a result has no reason, no reason line is added. The approval instructions now say that a call with only
+an `operation_id` continues a change the user already allowed, after its safety backup or approval.
+
+When Agent Bridge refuses a site write because of agent access, a Block rule, the WooCommerce store guard, a missing
+backup system, a cancelled approval or an outdated MainWP Child, the error message is the Dashboard's own text without
+the `Ability execution failed:` prefix. The error is still marked as failed and keeps its `upstream_code`. Other
+errors are unchanged.
+
 ## [1.7.0] - 2026-11-25
 
 ### Added

@@ -8,7 +8,7 @@
 import crypto from 'crypto';
 import { Config, getAbilitiesApiUrl } from './config.js';
 import { McpErrorFactory, UpstreamHttpError, createHttpError, getErrorMessage } from './errors.js';
-import { AGENT_WRITE_TIMEOUT_MS, agentOutcomeFields } from './agent-bridge.js';
+import { AGENT_REFUSAL_CODES, AGENT_WRITE_TIMEOUT_MS, agentOutcomeFields } from './agent-bridge.js';
 import { isDashboardGatedAbility } from './policy.js';
 import {
   describeCredentialRejection,
@@ -1406,6 +1406,14 @@ export async function executeAbility(
       // A host's 401 page can fill the 500-character error cap, so the
       // credential note goes first to keep its troubleshooting link whole.
       const note = credentialNote(errorCode);
+      if (
+        upstreamCode &&
+        AGENT_REFUSAL_CODES.has(upstreamCode) &&
+        isDashboardGatedAbility(abilityName) &&
+        safeMessage
+      ) {
+        throw executionError(safeErrorCode, safeMessage);
+      }
       throw executionError(
         safeErrorCode,
         note
