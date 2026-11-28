@@ -78,23 +78,31 @@ function dashboardLink(value: unknown, config: Config): string | undefined {
   }
 }
 
-function isSeconds(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+// The operation card link must point at the operation the response names.
+function operationLink(value: unknown, operationId: unknown, config: Config): string | undefined {
+  if (typeof operationId !== 'string' || !operationId || operationId.length > 255) return undefined;
+  const link = dashboardLink(value, config);
+  return link && new URL(link).searchParams.get('operation') === operationId ? link : undefined;
 }
 
-// Elapsed time is required. The estimate comes from the Dashboard and may be
-// null or absent when the site has no earlier snapshot; a malformed estimate
-// is dropped together with its source.
+function isSeconds(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+// elapsed_seconds is required. An estimate is kept only with the source that
+// explains it: null with "unknown", or a positive whole number with
+// "site_db_history". Any other combination drops both.
 function backupWait(value: unknown): Record<string, unknown> | undefined {
   if (!record(value) || !isSeconds(value.elapsed_seconds)) return undefined;
   const wait: Record<string, unknown> = { elapsed_seconds: value.elapsed_seconds };
-  if (value.estimated_seconds === null || isSeconds(value.estimated_seconds)) {
-    wait.estimated_seconds = value.estimated_seconds;
-    if (
-      typeof value.estimate_source === 'string' &&
-      /^[a-z0-9_]{1,64}$/.test(value.estimate_source)
-    )
-      wait.estimate_source = value.estimate_source;
+  const estimate = value.estimated_seconds;
+  const source = value.estimate_source;
+  if (
+    (estimate === null && source === 'unknown') ||
+    (isSeconds(estimate) && estimate > 0 && source === 'site_db_history')
+  ) {
+    wait.estimated_seconds = estimate;
+    wait.estimate_source = source;
   }
   return wait;
 }
@@ -172,16 +180,20 @@ export function agentOutcomeFields(
   ]) {
     if (Object.hasOwn(value, key)) fields[key] = value[key];
   }
-  if (code === 'agent_backup_running') {
-    const approvalUrl = dashboardLink(value.approval_url, config);
-    if (approvalUrl) fields.approval_url = approvalUrl;
-    const rulesUrl = dashboardLink(value.backup_rules_url, config);
-    if (rulesUrl) fields.backup_rules_url = rulesUrl;
-    const wait = backupWait(value.backup_wait);
-    if (wait) fields.backup_wait = wait;
-    fields.instructions =
-      'A safety backup is running. Follow the poll hint and resume the same tool with operation_id only; do not submit a new write. Without backup_wait.estimated_seconds, do not guess how long the backup will take. approval_url and backup_rules_url are Dashboard pages for the user. Never open them or act on them yourself.';
-  }
+  if (code !== 'agent_backup_running' && code !== 'agent_backup_failed') return fields;
+  if (Object.hasOwn(value, 'request_id')) fields.request_id = value.request_id;
+  const approvalUrl = operationLink(value.approval_url, value.operation_id, config);
+  if (approvalUrl) fields.approval_url = approvalUrl;
+  const rulesUrl = dashboardLink(value.backup_rules_url, config);
+  if (rulesUrl) fields.backup_rules_url = rulesUrl;
+  const wait = backupWait(value.backup_wait);
+  if (wait) fields.backup_wait = wait;
+  const links =
+    'approval_url and backup_rules_url are Dashboard pages for the user. Never open them or act on them yourself.';
+  fields.instructions =
+    code === 'agent_backup_running'
+      ? `A safety backup is running. Follow the poll hint and resume the same tool with operation_id only; do not submit a new write. Without backup_wait.estimated_seconds, do not guess how long the backup will take. ${links}`
+      : `The safety backup failed, so nothing changed. Follow the message for what to do next, and do not work around the backup with another tool. ${links}`;
   return fields;
 }
 
