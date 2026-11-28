@@ -367,6 +367,297 @@ describe('Dashboard agent approvals', () => {
       poll: { after_seconds: 5 },
     });
   });
+  // Shapes follow the Agent Bridge agent_backup_running and agent_backup_failed
+  // responses, with the Dashboard host replaced by the test host.
+  describe('safety backup metadata', () => {
+    const runningId = '4602369c-2b24-4ca4-be97-3ddc646ee350';
+    const measuredId = 'fd600677-cfac-4ff5-9d44-d25a62cc7396';
+    const cardUrl = (id: string) =>
+      `https://test.local/wp-admin/admin.php?page=mainwp-agent-approvals&operation=${id}`;
+    const rulesUrl = 'https://test.local/wp-admin/admin.php?page=mainwp-agent-approvals&tab=rules';
+    const unknownWait = { elapsed_seconds: 1, estimated_seconds: null, estimate_source: 'unknown' };
+    const measuredWait = {
+      elapsed_seconds: 1,
+      estimated_seconds: 2,
+      estimate_source: 'site_db_history',
+    };
+    const details = (id: string, requestId: string, wait: Record<string, unknown>) => ({
+      operation_id: id,
+      request_id: requestId,
+      approval_url: cardUrl(id),
+      backup_rules_url: rulesUrl,
+      backup_wait: wait,
+    });
+    const unknownRun = details(runningId, '5ef3231a-89fb-4f51-9e59-bb6a26b64e31', unknownWait);
+    const measuredRun = details(measuredId, '877abe25-058d-4116-a4c3-8cb1b9cc6dea', measuredWait);
+    const failedRun = details(runningId, '5ef3231a-89fb-4f51-9e59-bb6a26b64e31', {
+      elapsed_seconds: 14400,
+      estimated_seconds: null,
+      estimate_source: 'unknown',
+    });
+    const runningMessage = `A safety backup is running. An administrator can change safety backups in the Dashboard: ${cardUrl(runningId)} Rules: ${rulesUrl}`;
+    const failedMessage =
+      "The safety backup failed, so nothing changed. The site's backup plugin did not respond.";
+    type Code = 'agent_backup_running' | 'agent_backup_failed';
+    type Envelope = 'flat 200' | 'nested 200' | 'nested 409';
+    const envelopes: Envelope[] = ['flat 200', 'nested 200', 'nested 409'];
+    const codes: Code[] = ['agent_backup_running', 'agent_backup_failed'];
+    const cases = codes.flatMap(code => envelopes.map(envelope => [code, envelope] as const));
+    const run = async (
+      code: Code,
+      envelope: Envelope,
+      data: Record<string, unknown>,
+      extra = {}
+    ) => {
+      const message = code === 'agent_backup_running' ? runningMessage : failedMessage;
+      const poll = code === 'agent_backup_running' ? { poll: { after_seconds: 5 } } : {};
+      const body =
+        envelope === 'flat 200'
+          ? { code, message, ...data, ...poll, status: 409, ...extra }
+          : { code, message, data: { ...data, ...poll, status: 409 }, ...extra };
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify(body), { status: envelope === 'nested 409' ? 409 : 200 })
+      );
+      const result = await executeTool(
+        makeBaseConfig(),
+        'run_site_php_v1',
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      const text = result.content.map(part => part.text).join('\n');
+      const parsed = JSON.parse(result.content[0].text);
+      const outcomes: Record<string, unknown>[] =
+        envelope === 'nested 409'
+          ? [parsed.error.data]
+          : envelope === 'nested 200'
+            ? [parsed, parsed.data]
+            : [parsed];
+      return { result, text, parsed, outcomes };
+    };
+
+    it.each(
+      envelopes.flatMap(envelope =>
+        (
+          [
+            ['no history', unknownRun],
+            ['measured history', measuredRun],
+          ] as const
+        ).map(([label, data]) => [envelope, label, data] as const)
+      )
+    )('keeps a running backup with %s: %s', async (envelope, _label, data) => {
+      const { result, outcomes } = await run('agent_backup_running', envelope, data);
+      expect(result.isError).toBe(envelope === 'nested 409' ? true : undefined);
+      for (const outcome of outcomes) {
+        expect(outcome).toMatchObject({ ...data, poll: { after_seconds: 5 } });
+        expect(outcome.instructions).toContain('operation_id only');
+        expect(outcome.instructions).toContain('Never open them');
+      }
+    });
+
+    it.each(envelopes)('keeps a failed backup and its reason (%s)', async envelope => {
+      const { result, parsed, outcomes } = await run('agent_backup_failed', envelope, failedRun);
+      expect(result.isError).toBe(envelope === 'nested 409' ? true : undefined);
+      for (const outcome of outcomes) {
+        expect(outcome).toMatchObject(failedRun);
+        expect(outcome.instructions).toContain('nothing changed');
+        expect(outcome.instructions).not.toContain('operation_id only');
+      }
+      const message = envelope === 'nested 409' ? parsed.error.message : parsed.message;
+      expect(message).toContain("The site's backup plugin did not respond.");
+    });
+
+    it.each(
+      cases.flatMap(([code, envelope]) =>
+        [
+          ['another host', 'https://elsewhere.local/wp-admin/admin.php'],
+          ['credentials', `https://u:p@test.local/wp-admin/admin.php?operation=${runningId}`],
+          ['a script URL', 'javascript:alert(1)'],
+          ['a relative path', '/wp-admin/admin.php'],
+          ['an over-long link', `https://test.local/${'x'.repeat(4100)}`],
+          ['a non-string', { href: 'https://test.local/' }],
+        ].map(([label, url]) => [code, envelope, label, url] as const)
+      )
+    )('withholds %s links in %s with %s', async (code, envelope, _label, url) => {
+      const { text, outcomes } = await run(code, envelope, {
+        ...unknownRun,
+        approval_url: url,
+        backup_rules_url: url,
+      });
+      for (const outcome of outcomes) {
+        expect(outcome).not.toHaveProperty('approval_url');
+        expect(outcome).not.toHaveProperty('backup_rules_url');
+        expect(outcome).toMatchObject({ operation_id: runningId, backup_wait: unknownWait });
+      }
+      expect(text).not.toContain('elsewhere.local');
+      expect(text).not.toContain('u:p@');
+      expect(text).not.toContain('javascript:');
+    });
+
+    it.each(cases)(
+      'withholds an approval link for another operation (%s, %s)',
+      async (code, envelope) => {
+        const other = await run(code, envelope, {
+          ...unknownRun,
+          approval_url: cardUrl(measuredId),
+        });
+        const missing = await run(code, envelope, { ...unknownRun, operation_id: undefined });
+        for (const outcome of [...other.outcomes, ...missing.outcomes]) {
+          expect(outcome).not.toHaveProperty('approval_url');
+          expect(outcome.backup_rules_url).toBe(rulesUrl);
+        }
+        for (const outcome of other.outcomes) expect(outcome.operation_id).toBe(runningId);
+      }
+    );
+
+    it.each(['nested 200', 'nested 409'] as const)(
+      'drops unvalidated top-level extras beside a %s envelope',
+      async envelope => {
+        const { text, outcomes } = await run(
+          'agent_backup_running',
+          envelope,
+          { operation_id: runningId },
+          {
+            approval_url: 'https://elsewhere.local/a',
+            backup_rules_url: 'https://elsewhere.local/b',
+            backup_wait: { elapsed_seconds: 'forged' },
+          }
+        );
+        expect(text).not.toContain('elsewhere.local');
+        expect(text).not.toContain('forged');
+        for (const outcome of outcomes) expect(outcome.operation_id).toBe(runningId);
+      }
+    );
+
+    it.each(
+      cases.flatMap(([code, envelope]) =>
+        [
+          ['a string', '42'],
+          ['a negative number', -1],
+          ['a fraction', 1.5],
+          ['an unsafe integer', 2 ** 53],
+          ['null', null],
+          ['a missing value', undefined],
+        ].map(([label, elapsed]) => [code, envelope, label, elapsed] as const)
+      )
+    )(
+      'drops %s wait details in %s when elapsed time is %s',
+      async (code, envelope, _l, elapsed) => {
+        const { outcomes } = await run(code, envelope, {
+          ...unknownRun,
+          backup_wait: { ...unknownWait, elapsed_seconds: elapsed },
+        });
+        for (const outcome of outcomes) {
+          expect(outcome).not.toHaveProperty('backup_wait');
+          expect(outcome).toMatchObject({
+            operation_id: runningId,
+            approval_url: cardUrl(runningId),
+          });
+        }
+      }
+    );
+
+    it.each(cases)(
+      'keeps only elapsed time for an unpaired estimate (%s, %s)',
+      async (code, envelope) => {
+        for (const estimate of [
+          { estimated_seconds: null, estimate_source: 'site_db_history' },
+          { estimated_seconds: 2, estimate_source: 'unknown' },
+          { estimated_seconds: 0, estimate_source: 'site_db_history' },
+          { estimated_seconds: 1.5, estimate_source: 'site_db_history' },
+          { estimated_seconds: -5, estimate_source: 'site_db_history' },
+          { estimated_seconds: '2', estimate_source: 'site_db_history' },
+          { estimated_seconds: 90, estimate_source: 'last_db_snapshot' },
+          { estimated_seconds: 90 },
+          { estimate_source: 'unknown' },
+          {},
+        ]) {
+          const { outcomes } = await run(code, envelope, {
+            ...unknownRun,
+            backup_wait: { elapsed_seconds: 7, ...estimate },
+          });
+          for (const outcome of outcomes)
+            expect(outcome.backup_wait).toEqual({ elapsed_seconds: 7 });
+        }
+      }
+    );
+
+    it.each(cases)('drops unknown wait fields (%s, %s)', async (code, envelope) => {
+      const { text, outcomes } = await run(code, envelope, {
+        ...measuredRun,
+        backup_wait: { ...measuredWait, skip_url: 'https://elsewhere.local/skip', note: 'forged' },
+      });
+      for (const outcome of outcomes) expect(outcome.backup_wait).toEqual(measuredWait);
+      expect(text).not.toContain('elsewhere.local');
+      expect(text).not.toContain('forged');
+    });
+
+    it.each(cases)('drops wait details that are not an object (%s, %s)', async (code, envelope) => {
+      const { outcomes } = await run(code, envelope, { ...unknownRun, backup_wait: [42] });
+      for (const outcome of outcomes) expect(outcome).not.toHaveProperty('backup_wait');
+    });
+
+    it('does not add backup links or wait details to a refusal', async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: 'agent_backup_unavailable',
+            message: 'The safety backup failed.',
+            data: { ...unknownRun },
+          }),
+          { status: 409 }
+        )
+      );
+      const result = await executeTool(
+        makeBaseConfig(),
+        'run_site_php_v1',
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      const error = JSON.parse(result.content[0].text).error;
+      expect(result.isError).toBe(true);
+      expect(error.message).toBe('The safety backup failed.');
+      expect(error.data).not.toHaveProperty('approval_url');
+      expect(error.data).not.toHaveProperty('backup_rules_url');
+      expect(error.data).not.toHaveProperty('backup_wait');
+    });
+
+    it('keeps approval-required output unchanged by the backup fields', async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: 'agent_approval_required',
+            message: 'Approval required',
+            data: { ...unknownRun, operation_id: 'op-a' },
+          }),
+          { status: 403 }
+        )
+      );
+      const result = await executeTool(
+        makeBaseConfig(),
+        'run_site_php_v1',
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      const body = JSON.parse(result.content[1].text);
+      expect(result.isError).toBeUndefined();
+      expect(body).toMatchObject({ operation_id: 'op-a', approval_url: cardUrl(runningId) });
+      expect(body).not.toHaveProperty('backup_rules_url');
+      expect(body).not.toHaveProperty('backup_wait');
+      expect(body.instructions).toBe(AGENT_APPROVAL_INSTRUCTIONS);
+    });
+
+    it('returns a tool-specific successful result unchanged', async () => {
+      fetchMock.mockResolvedValueOnce(Response.json({ site_id: 3, untrusted_content: true }));
+      const result = await executeTool(
+        makeBaseConfig(),
+        'run_site_php_v1',
+        { site_id: 1 },
+        makeMockLogger()
+      );
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ site_id: 3, untrusted_content: true });
+    });
+  });
   it('keeps the operation ID when an HTTP approval URL is withheld', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(

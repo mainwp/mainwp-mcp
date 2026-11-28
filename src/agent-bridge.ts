@@ -55,39 +55,15 @@ function approvalReason(value: unknown): string | undefined {
   return reason || undefined;
 }
 
-export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
-  const fields: Record<string, unknown> = {};
-  if (record(value)) {
-    const reason = approvalReason(value.approval_reason);
-    if (reason) fields.approval_reason = reason;
-    for (const key of [
-      'operation_id',
-      'request_id',
-      'poll',
-      'expires_at',
-      'preview',
-      'task_grant',
-      'grant_id',
-      'site_ids',
-    ]) {
-      if (Object.hasOwn(value, key)) fields[key] = value[key];
-    }
-  }
-  if (
-    !record(value) ||
-    typeof value.operation_id !== 'string' ||
-    !value.operation_id ||
-    value.operation_id.length > 255 ||
-    typeof value.approval_url !== 'string' ||
-    value.approval_url.length > 4096
-  )
-    return {
-      ...fields,
-      instructions:
-        'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-    };
+const APPROVAL_FALLBACK_INSTRUCTIONS =
+  'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.';
+
+// A link is passed on only when it is an http(s) page on the configured
+// Dashboard origin with no credentials in it.
+function dashboardLink(value: unknown, config: Config): string | undefined {
+  if (typeof value !== 'string' || value.length > 4096) return undefined;
   try {
-    const url = new URL(value.approval_url);
+    const url = new URL(value);
     const dashboard = new URL(config.dashboardUrl);
     if (
       url.origin !== dashboard.origin ||
@@ -95,24 +71,70 @@ export function approvalFields(value: unknown, config: Config): Record<string, u
       url.username ||
       url.password
     )
-      return {
-        ...fields,
-        instructions:
-          'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-      };
-    return {
-      ...fields,
-      operation_id: value.operation_id,
-      approval_url: value.approval_url,
-      instructions: AGENT_APPROVAL_INSTRUCTIONS,
-    };
+      return undefined;
+    return value;
   } catch {
-    return {
-      ...fields,
-      instructions:
-        'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-    };
+    return undefined;
   }
+}
+
+// The operation card link must point at the operation the response names.
+function operationLink(value: unknown, operationId: unknown, config: Config): string | undefined {
+  if (typeof operationId !== 'string' || !operationId || operationId.length > 255) return undefined;
+  const link = dashboardLink(value, config);
+  return link && new URL(link).searchParams.get('operation') === operationId ? link : undefined;
+}
+
+function isSeconds(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+// elapsed_seconds is required. An estimate is kept only with the source that
+// explains it: null with "unknown", or a positive whole number with
+// "site_db_history". Any other combination drops both.
+function backupWait(value: unknown): Record<string, unknown> | undefined {
+  if (!record(value) || !isSeconds(value.elapsed_seconds)) return undefined;
+  const wait: Record<string, unknown> = { elapsed_seconds: value.elapsed_seconds };
+  const estimate = value.estimated_seconds;
+  const source = value.estimate_source;
+  const unknownEstimate = estimate === null && source === 'unknown';
+  const measuredEstimate = isSeconds(estimate) && estimate > 0 && source === 'site_db_history';
+  if (unknownEstimate || measuredEstimate) {
+    wait.estimated_seconds = estimate;
+    wait.estimate_source = source;
+  }
+  return wait;
+}
+
+export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (!record(value)) return { instructions: APPROVAL_FALLBACK_INSTRUCTIONS };
+  const reason = approvalReason(value.approval_reason);
+  if (reason) fields.approval_reason = reason;
+  for (const key of [
+    'operation_id',
+    'request_id',
+    'poll',
+    'expires_at',
+    'preview',
+    'task_grant',
+    'grant_id',
+    'site_ids',
+  ]) {
+    if (Object.hasOwn(value, key)) fields[key] = value[key];
+  }
+  const operationId = value.operation_id;
+  const link =
+    typeof operationId === 'string' && operationId && operationId.length <= 255
+      ? dashboardLink(value.approval_url, config)
+      : undefined;
+  if (!link) return { ...fields, instructions: APPROVAL_FALLBACK_INSTRUCTIONS };
+  return {
+    ...fields,
+    operation_id: operationId,
+    approval_url: link,
+    instructions: AGENT_APPROVAL_INSTRUCTIONS,
+  };
 }
 
 /**
@@ -157,9 +179,20 @@ export function agentOutcomeFields(
   ]) {
     if (Object.hasOwn(value, key)) fields[key] = value[key];
   }
-  if (code === 'agent_backup_running')
-    fields.instructions =
-      'Follow the poll hint and resume the same tool with operation_id only; do not submit a new write.';
+  if (code !== 'agent_backup_running' && code !== 'agent_backup_failed') return fields;
+  if (Object.hasOwn(value, 'request_id')) fields.request_id = value.request_id;
+  const approvalUrl = operationLink(value.approval_url, value.operation_id, config);
+  if (approvalUrl) fields.approval_url = approvalUrl;
+  const rulesUrl = dashboardLink(value.backup_rules_url, config);
+  if (rulesUrl) fields.backup_rules_url = rulesUrl;
+  const wait = backupWait(value.backup_wait);
+  if (wait) fields.backup_wait = wait;
+  const links =
+    'approval_url and backup_rules_url are Dashboard pages for the user. Never open them or act on them yourself.';
+  fields.instructions =
+    code === 'agent_backup_running'
+      ? `A safety backup is running. Follow the poll hint and resume the same tool with operation_id only; do not submit a new write. Without backup_wait.estimated_seconds, do not guess how long the backup will take. ${links}`
+      : `The safety backup failed, so nothing changed. Follow the message for what to do next, and do not work around the backup with another tool. ${links}`;
   return fields;
 }
 
@@ -205,7 +238,14 @@ export function describeAgentResponse(
   if (typeof value.code === 'string' && value.code.startsWith('agent_')) {
     const nested = record(value.data);
     const fields = agentOutcomeFields(payload, value.code, config);
-    const { approval_url: _url, ...outcome } = value;
+    // Links and wait details reach the client only after agentOutcomeFields
+    // validates them, so the unchecked copies are removed from either envelope.
+    const {
+      approval_url: _url,
+      backup_rules_url: _rulesUrl,
+      backup_wait: _wait,
+      ...outcome
+    } = value;
     return { ...outcome, ...(nested ? { data: fields } : {}), ...fields };
   }
   const grantId = typeof grant.grant_id === 'string' ? grant.grant_id : taskGrant;
