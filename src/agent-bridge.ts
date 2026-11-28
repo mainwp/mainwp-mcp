@@ -97,10 +97,9 @@ function backupWait(value: unknown): Record<string, unknown> | undefined {
   const wait: Record<string, unknown> = { elapsed_seconds: value.elapsed_seconds };
   const estimate = value.estimated_seconds;
   const source = value.estimate_source;
-  if (
-    (estimate === null && source === 'unknown') ||
-    (isSeconds(estimate) && estimate > 0 && source === 'site_db_history')
-  ) {
+  const unknownEstimate = estimate === null && source === 'unknown';
+  const measuredEstimate = isSeconds(estimate) && estimate > 0 && source === 'site_db_history';
+  if (unknownEstimate || measuredEstimate) {
     wait.estimated_seconds = estimate;
     wait.estimate_source = source;
   }
