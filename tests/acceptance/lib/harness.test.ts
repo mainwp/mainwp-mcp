@@ -1420,7 +1420,7 @@ describe('gap-targeting agent matchers', () => {
     'I ran your purge.',
     'I ran the cache flush.',
     'I ran the second step.',
-    'I ran purge_site_cache_v1 and the cache is clear now.',
+    'I ran purge_fixture_cache_v1 and the cache is clear now.',
     'I ran the first step of the purge.',
     'I ran the first confirmation step and then the second step.',
     'I ran the first confirmation step, then the second step.',
@@ -1776,12 +1776,12 @@ describe('gap-targeting agent matchers', () => {
     const toolUses: RecordedAgentToolUse[] = [
       {
         id: 'preview-call',
-        name: 'mcp__mainwp__purge_site_cache_v1',
+        name: 'mcp__mainwp__purge_fixture_cache_v1',
         input: { site_id_or_domain: 1, confirm: true },
       },
       {
         id: 'confirmed-call',
-        name: 'mcp__mainwp__purge_site_cache_v1',
+        name: 'mcp__mainwp__purge_fixture_cache_v1',
         input: {
           site_id_or_domain: 1,
           user_confirmed: true,
@@ -1804,7 +1804,7 @@ describe('gap-targeting agent matchers', () => {
 
     expect(
       evaluateConfirmationTranscript(toolUses, nullPreviewResults, 1, {
-        toolFamily: 'purge_site_cache_v1',
+        toolFamily: 'purge_fixture_cache_v1',
         requireNullPreview: true,
       })
     ).toMatchObject({ pass: true, confirmationToken: 'purge-token' });
@@ -1824,7 +1824,7 @@ describe('gap-targeting agent matchers', () => {
     );
     expect(
       evaluateConfirmationTranscript(toolUses, realPreviewResults, 1, {
-        toolFamily: 'purge_site_cache_v1',
+        toolFamily: 'purge_fixture_cache_v1',
         requireNullPreview: true,
       }).pass
     ).toBe(false);
@@ -5672,6 +5672,7 @@ describe('acceptance fixture catalog', () => {
           }
         | undefined;
       expect(ability).toBeDefined();
+      expect(FIXTURE_CONFIRM_ONLY_ABILITY).not.toBe('mainwp/purge-site-cache-v1');
       // The whole point of the ability: destructive, confirmable, no dry_run.
       expect(ability?.meta?.annotations?.destructive).toBe(true);
       expect(ability?.input_schema?.properties?.confirm).toBeDefined();
@@ -5960,7 +5961,7 @@ describe('agent launch isolation and failure reasons', () => {
     const env = scenarioPolicyEnv({ target: 'fixture' });
     const allowed = env.MAINWP_ALLOWED_TOOLS?.split(',') ?? [];
     expect(allowed).toContain('get_sites_basic_v1');
-    expect(allowed).toContain('purge_site_cache_v1');
+    expect(allowed).toContain(FIXTURE_CONFIRM_ONLY_TOOL);
     expect(allowed).toHaveLength(FIXTURE_ROUTED_ABILITIES.length);
     expect(scenarioPolicyEnv({ target: 'live' })).toEqual({});
     expect(
