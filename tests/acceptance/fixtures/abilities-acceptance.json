@@ -1,7 +1,7 @@
 [
   {
-    "name": "mainwp/purge-site-cache-v1",
-    "label": "Purge Site Cache",
+    "name": "mainwp/purge-fixture-cache-v1",
+    "label": "Purge Fixture Cache",
     "description": "Permanently purge every cached page and object on a MainWP child site. Requires confirmation. This ability cannot preview its effect.",
     "category": "mainwp-sites",
     "input_schema": {

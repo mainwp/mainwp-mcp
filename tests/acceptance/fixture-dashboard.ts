@@ -24,9 +24,13 @@ export const FIXTURE_DELAY_SEARCH = '__mainwp_acceptance_delayed_response__';
  * acceptance-only catalog rather than `tests/evals/fixtures/abilities-full.json`
  * because `tests/evals/safety-coverage.test.ts` asserts every destructive
  * confirm-capable ability there also declares `dry_run`.
+ *
+ * The name is synthetic. The Cache Control add-on registers
+ * `mainwp/purge-site-cache-v1` as non-destructive with no `confirm` input, so
+ * reusing that name would describe a real ability wrongly.
  */
-export const FIXTURE_CONFIRM_ONLY_ABILITY = 'mainwp/purge-site-cache-v1';
-export const FIXTURE_CONFIRM_ONLY_TOOL = 'purge_site_cache_v1';
+export const FIXTURE_CONFIRM_ONLY_ABILITY = 'mainwp/purge-fixture-cache-v1';
+export const FIXTURE_CONFIRM_ONLY_TOOL = 'purge_fixture_cache_v1';
 
 /** Oracle marker the confirm-only ability writes on the site it purges. */
 export const FIXTURE_CACHE_PURGED_NOTE = 'Cache purged by the acceptance fixture.';
