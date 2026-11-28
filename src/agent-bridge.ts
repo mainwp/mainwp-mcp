@@ -55,39 +55,15 @@ function approvalReason(value: unknown): string | undefined {
   return reason || undefined;
 }
 
-export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
-  const fields: Record<string, unknown> = {};
-  if (record(value)) {
-    const reason = approvalReason(value.approval_reason);
-    if (reason) fields.approval_reason = reason;
-    for (const key of [
-      'operation_id',
-      'request_id',
-      'poll',
-      'expires_at',
-      'preview',
-      'task_grant',
-      'grant_id',
-      'site_ids',
-    ]) {
-      if (Object.hasOwn(value, key)) fields[key] = value[key];
-    }
-  }
-  if (
-    !record(value) ||
-    typeof value.operation_id !== 'string' ||
-    !value.operation_id ||
-    value.operation_id.length > 255 ||
-    typeof value.approval_url !== 'string' ||
-    value.approval_url.length > 4096
-  )
-    return {
-      ...fields,
-      instructions:
-        'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-    };
+const APPROVAL_FALLBACK_INSTRUCTIONS =
+  'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.';
+
+// A link is passed on only when it is an http(s) page on the configured
+// Dashboard origin with no credentials in it.
+function dashboardLink(value: unknown, config: Config): string | undefined {
+  if (typeof value !== 'string' || value.length > 4096) return undefined;
   try {
-    const url = new URL(value.approval_url);
+    const url = new URL(value);
     const dashboard = new URL(config.dashboardUrl);
     if (
       url.origin !== dashboard.origin ||
@@ -95,24 +71,63 @@ export function approvalFields(value: unknown, config: Config): Record<string, u
       url.username ||
       url.password
     )
-      return {
-        ...fields,
-        instructions:
-          'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-      };
-    return {
-      ...fields,
-      operation_id: value.operation_id,
-      approval_url: value.approval_url,
-      instructions: AGENT_APPROVAL_INSTRUCTIONS,
-    };
+      return undefined;
+    return value;
   } catch {
-    return {
-      ...fields,
-      instructions:
-        'Ask the user to approve the pending operation in the Dashboard. Wait for their confirmation, then resume the same tool with operation_id only. Never approve or claim approval yourself.',
-    };
+    return undefined;
   }
+}
+
+function isSeconds(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+// Elapsed time is required. The estimate comes from the Dashboard and may be
+// null or absent when the site has no earlier snapshot; a malformed estimate
+// is dropped together with its source.
+function backupWait(value: unknown): Record<string, unknown> | undefined {
+  if (!record(value) || !isSeconds(value.elapsed_seconds)) return undefined;
+  const wait: Record<string, unknown> = { elapsed_seconds: value.elapsed_seconds };
+  if (value.estimated_seconds === null || isSeconds(value.estimated_seconds)) {
+    wait.estimated_seconds = value.estimated_seconds;
+    if (
+      typeof value.estimate_source === 'string' &&
+      /^[a-z0-9_]{1,64}$/.test(value.estimate_source)
+    )
+      wait.estimate_source = value.estimate_source;
+  }
+  return wait;
+}
+
+export function approvalFields(value: unknown, config: Config): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (!record(value)) return { instructions: APPROVAL_FALLBACK_INSTRUCTIONS };
+  const reason = approvalReason(value.approval_reason);
+  if (reason) fields.approval_reason = reason;
+  for (const key of [
+    'operation_id',
+    'request_id',
+    'poll',
+    'expires_at',
+    'preview',
+    'task_grant',
+    'grant_id',
+    'site_ids',
+  ]) {
+    if (Object.hasOwn(value, key)) fields[key] = value[key];
+  }
+  const operationId = value.operation_id;
+  const link =
+    typeof operationId === 'string' && operationId && operationId.length <= 255
+      ? dashboardLink(value.approval_url, config)
+      : undefined;
+  if (!link) return { ...fields, instructions: APPROVAL_FALLBACK_INSTRUCTIONS };
+  return {
+    ...fields,
+    operation_id: operationId,
+    approval_url: link,
+    instructions: AGENT_APPROVAL_INSTRUCTIONS,
+  };
 }
 
 /**
@@ -157,9 +172,16 @@ export function agentOutcomeFields(
   ]) {
     if (Object.hasOwn(value, key)) fields[key] = value[key];
   }
-  if (code === 'agent_backup_running')
+  if (code === 'agent_backup_running') {
+    const approvalUrl = dashboardLink(value.approval_url, config);
+    if (approvalUrl) fields.approval_url = approvalUrl;
+    const rulesUrl = dashboardLink(value.backup_rules_url, config);
+    if (rulesUrl) fields.backup_rules_url = rulesUrl;
+    const wait = backupWait(value.backup_wait);
+    if (wait) fields.backup_wait = wait;
     fields.instructions =
-      'Follow the poll hint and resume the same tool with operation_id only; do not submit a new write.';
+      'A safety backup is running. Follow the poll hint and resume the same tool with operation_id only; do not submit a new write. Without backup_wait.estimated_seconds, do not guess how long the backup will take. approval_url and backup_rules_url are Dashboard pages for the user. Never open them or act on them yourself.';
+  }
   return fields;
 }
 
@@ -205,7 +227,14 @@ export function describeAgentResponse(
   if (typeof value.code === 'string' && value.code.startsWith('agent_')) {
     const nested = record(value.data);
     const fields = agentOutcomeFields(payload, value.code, config);
-    const { approval_url: _url, ...outcome } = value;
+    // Links and wait details reach the client only after agentOutcomeFields
+    // validates them, so the unchecked copies are removed from either envelope.
+    const {
+      approval_url: _url,
+      backup_rules_url: _rulesUrl,
+      backup_wait: _wait,
+      ...outcome
+    } = value;
     return { ...outcome, ...(nested ? { data: fields } : {}), ...fields };
   }
   const grantId = typeof grant.grant_id === 'string' ? grant.grant_id : taskGrant;
